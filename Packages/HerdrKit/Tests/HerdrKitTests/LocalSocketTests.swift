@@ -25,7 +25,7 @@ final class LocalSocketTests: XCTestCase {
 
     func testServiceConnectSnapshotAndLists() async throws {
         try requireLocalHerdr()
-        let service = HerdrService(device: .local)
+        let service = HerdrService(device: .local, autoStartLocalServer: false)
         _ = try await service.connect()
 
         let snapshot = try await service.snapshot()
@@ -103,7 +103,7 @@ final class LocalSocketTests: XCTestCase {
 
     func testEventStreamDeliversTabLifecycle() async throws {
         try requireLocalHerdr()
-        let service = HerdrService(device: .local)
+        let service = HerdrService(device: .local, autoStartLocalServer: false)
         _ = try await service.connect()
         let stream = try await service.events()
 

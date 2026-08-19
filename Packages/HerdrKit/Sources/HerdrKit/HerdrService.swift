@@ -5,14 +5,28 @@ public actor HerdrService {
     public let device: Device
     private var tunnel: SSHTunnel?
     private var rpc: SocketRPC?
+    /// nil for remote devices and when auto-start is off; remotes are the user's to run.
+    private let localServer: LocalHerdrServer?
+    /// Auto-start is for a server that was never there, not for one that went away: see
+    /// `ping(_:socketPath:)`.
+    private var everConnected = false
 
     public static let minimumProtocolVersion = 17
 
-    public init(device: Device) {
+    public init(device: Device, autoStartLocalServer: Bool = true) {
+        self.init(
+            device: device,
+            localServer: device.isLocal && autoStartLocalServer ? LocalHerdrServer() : nil
+        )
+    }
+
+    /// Seam for tests: injects the auto-start collaborator, nil turning it off.
+    init(device: Device, localServer: LocalHerdrServer?) {
         self.device = device
         if let target = device.sshTarget {
             self.tunnel = SSHTunnel(target: target, credentialID: device.id)
         }
+        self.localServer = localServer
     }
 
     // MARK: - Connection
@@ -28,12 +42,53 @@ public actor HerdrService {
             socketPath = try await tunnel.ensureUp()
         }
         let client = SocketRPC(socketPath: socketPath)
-        let pong = try await client.request(method: "ping", params: .object([:]), as: PingResult.self)
+        let pong = try await ping(client, socketPath: socketPath)
         guard pong.protocolVersion >= Self.minimumProtocolVersion else {
             throw HerdrError.incompatibleProtocol(pong.protocolVersion)
         }
         rpc = client
+        everConnected = true
         return pong
+    }
+
+    /// Test seam: whether this service would start a local server at all.
+    var autoStartsLocalServer: Bool { localServer != nil }
+
+    /// Pings; when the local server was never reachable in this session, starts it and pings
+    /// again, so the app boots without the user opening a terminal to run `herdr`.
+    ///
+    /// A server that already answered here and is gone now was stopped deliberately — by
+    /// `herdr server stop`, or by the restart in the middle of `herdr update` — and bringing
+    /// it back would both undo the user's decision and let herdrm win the bind race that
+    /// `herdr update` needs. The guard is per service instance rather than per process on
+    /// purpose: Reconnect and the backoff loop must still be able to start a server for
+    /// someone who installed or repaired herdr after opening the app.
+    private func ping(_ client: SocketRPC, socketPath: String) async throws -> PingResult {
+        do {
+            return try await client.request(method: "ping", params: .object([:]), as: PingResult.self)
+        } catch let error as HerdrError where Self.isServerDown(error) {
+            guard let localServer, !everConnected else { throw error }
+            try await localServer.ensureRunning(socketPath: socketPath)
+            return try await client.request(method: "ping", params: .object([:]), as: PingResult.self)
+        }
+    }
+
+    /// The two shapes a missing server takes: no socket file at all, or a file whose
+    /// `connect()` is refused because nobody is listening.
+    ///
+    /// Nothing else qualifies, and the strictness is the point: `SocketRPC` reports a failed
+    /// `read()` (the 15 s timeout — a hung but live server), `write()` or `socket()` through
+    /// the same `connectionFailed` case, and every one of those proves somebody was on the
+    /// other end. Treating them as "no server" would start a second daemon on top of a live
+    /// one. Matched on the text `SocketRPC.connect` builds — `"connect(): \(strerror)"` — the
+    /// way `AppModel.isSSHAuthenticationFailure` already matches OpenSSH's wording.
+    static func isServerDown(_ error: HerdrError) -> Bool {
+        switch error {
+        case .socketUnavailable: return true
+        case .connectionFailed(let reason):
+            return reason.contains("connect():") && reason.contains("Connection refused")
+        default: return false
+        }
     }
 
     public func disconnect() async {

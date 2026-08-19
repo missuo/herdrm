@@ -165,6 +165,7 @@ public struct HerdrEvent: Sendable {
 public enum HerdrError: Error, LocalizedError, Sendable {
     case socketUnavailable(String)
     case connectionFailed(String)
+    case herdrNotInstalled
     case rpc(code: String, message: String)
     case malformedResponse(String)
     case incompatibleProtocol(Int)
@@ -174,6 +175,7 @@ public enum HerdrError: Error, LocalizedError, Sendable {
         switch self {
         case .socketUnavailable(let path): return "herdr socket not found at \(path)"
         case .connectionFailed(let reason): return "connection failed: \(reason)"
+        case .herdrNotInstalled: return "herdr not found on herdrm's PATH — install it with \"brew install herdr\""
         case .rpc(let code, let message): return "herdr error \(code): \(message)"
         case .malformedResponse(let reason): return "malformed response: \(reason)"
         case .incompatibleProtocol(let version): return "herdr protocol \(version) is too old (need >= 17)"
