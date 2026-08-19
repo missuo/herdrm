@@ -76,6 +76,10 @@ struct SidebarView: View {
                     ForEach(model.visibleSpaces) { entry in
                         spaceRow(entry)
                             .contextMenu {
+                                Button("Rename Space…") {
+                                    model.spaceToRename = entry
+                                }
+                                Divider()
                                 Button("Close Space \"\(entry.workspace.label)\"…", role: .destructive) {
                                     model.requestCloseSpace(entry)
                                 }

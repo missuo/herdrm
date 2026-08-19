@@ -163,6 +163,16 @@ public actor HerdrService {
         return (id, result["root_pane"]?["pane_id"]?.stringValue)
     }
 
+    public func renameWorkspace(workspaceID: String, label: String) async throws {
+        _ = try await client().request(
+            method: "workspace.rename",
+            params: .object([
+                "workspace_id": .string(workspaceID),
+                "label": .string(label),
+            ])
+        )
+    }
+
     /// Creates a tab (optionally in a workspace/cwd) and returns the new pane id.
     public func createTab(workspaceID: String?, cwd: String?, label: String?) async throws -> String {
         var params: [String: JSONValue] = ["focus": .bool(false)]

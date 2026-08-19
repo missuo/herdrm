@@ -46,6 +46,7 @@ final class AppModel: ObservableObject {
     /// In-window device panel (NSPopover crashes in ViewBridge on macOS 26+ betas).
     @Published var showDevicePanel = false
     @Published var deviceToEdit: Device?
+    @Published var spaceToRename: SpaceEntry?
     /// Transient action failures: shown as an alert, never by tearing down sessions.
     @Published var actionError: String?
 
@@ -415,6 +416,22 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - Actions
+
+    func renameSpace(_ entry: SpaceEntry, label: String) {
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty, label != entry.workspace.label else { return }
+        Task {
+            do {
+                try await service(for: entry.device).renameWorkspace(
+                    workspaceID: entry.workspace.workspaceID,
+                    label: label
+                )
+                await refresh(entry.device.id)
+            } catch {
+                actionError = error.localizedDescription
+            }
+        }
+    }
 
     /// Creates a workspace rooted at the given directory ("~" expands to the device's
     /// home, local or remote), then goes straight into the New Agent sheet for it.
