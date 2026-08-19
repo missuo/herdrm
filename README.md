@@ -93,3 +93,15 @@ make kit-test  # HerdrKit integration tests (needs a running local herdr)
 - [Sparkle](https://sparkle-project.org) — auto-updates.
 - [Lobe Icons](https://github.com/lobehub/lobe-icons) and
   [Simple Icons](https://simpleicons.org) — agent and OS brand icons.
+
+## Star History
+
+<p align="center">
+  <a href="https://star-history.com/#missuo/herdrm&Date">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=missuo/herdrm&type=Date&theme=dark" />
+      <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=missuo/herdrm&type=Date" />
+      <img src="https://api.star-history.com/svg?repos=missuo/herdrm&type=Date" width="600" alt="Star History Chart for missuo/herdrm" />
+    </picture>
+  </a>
+</p>
