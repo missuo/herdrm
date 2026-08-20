@@ -50,7 +50,8 @@ working, blocked, or done. **herdrm** puts a native macOS window on top of it:
 - [herdr](https://herdr.dev) installed locally (herdrm starts the local server
   itself if it isn't running) and running on your remote machines
 - For remote devices: OpenSSH access through your SSH config/agent, Tailscale
-  SSH, or a password stored in the macOS login Keychain
+  SSH, or a password stored in the macOS login Keychain. Tailscale SSH requires
+  Tailscale 1.98.0 or newer on the remote host for Unix-socket forwarding.
 
 ## Install
 

@@ -11,6 +11,28 @@ struct SSHAuthenticationConfiguration {
     }
 }
 
+/// Collects asynchronous OpenSSH diagnostics without blocking its stderr pipe.
+private final class SSHErrorBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        if data.count > 16_384 {
+            data = data.suffix(16_384)
+        }
+        lock.unlock()
+    }
+
+    var text: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
 /// Forwards a remote herdr Unix socket to a local one using the system OpenSSH client
 /// (`ssh -N -L local.sock:remote.sock target`), so remote devices reuse SocketRPC as-is.
 /// Auth uses OpenSSH config/agent/Tailscale SSH, with Keychain-backed askpass as a fallback.
@@ -19,6 +41,8 @@ public actor SSHTunnel {
     public private(set) var localSocketPath: String?
     private let credentialID: UUID?
     private var process: Process?
+    private var errorOutput: Pipe?
+    private var errorBuffer: SSHErrorBuffer?
     private var remoteHome: String?
 
     /// PATH prepended on the remote side; sshd exec is not a login shell (mirrors Heeler).
@@ -67,6 +91,7 @@ public actor SSHTunnel {
         }
         process?.terminate()
         process = nil
+        resetErrorCapture()
 
         let remoteSock = try await remoteSocketPath()
         let dir = FileManager.default.temporaryDirectory
@@ -91,12 +116,23 @@ public actor SSHTunnel {
         ]
         proc.environment = ProcessInfo.processInfo.environment.merging(authentication.environment) { _, new in new }
         let errorOutput = Pipe()
+        let errorBuffer = SSHErrorBuffer()
+        errorOutput.fileHandleForReading.readabilityHandler = { handle in
+            errorBuffer.append(handle.availableData)
+        }
         proc.standardOutput = FileHandle.nullDevice
         proc.standardError = errorOutput
+        self.errorOutput = errorOutput
+        self.errorBuffer = errorBuffer
         // The probe above can suspend for seconds; if the session was cancelled meanwhile
         // (app quitting), spawning here would leak an ssh nobody is left to tear down.
-        try Task.checkCancellation()
-        try proc.run()
+        do {
+            try Task.checkCancellation()
+            try proc.run()
+        } catch {
+            resetErrorCapture()
+            throw error
+        }
         process = proc
 
         // Wait for the local socket to appear (ssh creates it once the session is up).
@@ -106,22 +142,56 @@ public actor SSHTunnel {
                 return localSock
             }
             if !proc.isRunning {
-                let errorData = errorOutput.fileHandleForReading.readDataToEndOfFile()
-                throw HerdrError.tunnelFailed(Self.failureReason(status: proc.terminationStatus, stderr: errorData))
+                let errorText = finishErrorCapture()
+                throw HerdrError.tunnelFailed(Self.failureReason(status: proc.terminationStatus, stderr: errorText))
             }
             try await Task.sleep(nanoseconds: 250_000_000)
         }
         proc.terminate()
+        process = nil
+        resetErrorCapture()
         throw HerdrError.tunnelFailed("timed out waiting for forwarded socket")
     }
 
     public func tearDown() {
         process?.terminate()
         process = nil
+        resetErrorCapture()
         if let localSocketPath {
             try? FileManager.default.removeItem(atPath: localSocketPath)
         }
         localSocketPath = nil
+    }
+
+    /// Returns an asynchronous forwarding error emitted after a client used the local socket.
+    public func forwardingFailure() async -> String? {
+        // OpenSSH writes channel failures just after the forwarded connection closes.
+        try? await Task.sleep(nanoseconds: 150_000_000)
+        guard let errorBuffer else { return nil }
+        return Self.forwardingFailure(in: errorBuffer.text)
+    }
+
+    static func forwardingFailure(in stderr: String) -> String? {
+        stderr
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .last { $0.contains("open failed:") }
+    }
+
+    private func finishErrorCapture() -> String {
+        guard let errorOutput, let errorBuffer else { return "" }
+        errorOutput.fileHandleForReading.readabilityHandler = nil
+        errorBuffer.append(errorOutput.fileHandleForReading.readDataToEndOfFile())
+        let text = errorBuffer.text
+        self.errorOutput = nil
+        self.errorBuffer = nil
+        return text
+    }
+
+    private func resetErrorCapture() {
+        errorOutput?.fileHandleForReading.readabilityHandler = nil
+        errorOutput = nil
+        errorBuffer = nil
     }
 
     /// Sniffs the remote OS: "macos", an os-release ID like "ubuntu"/"debian", or a uname fallback.
@@ -215,9 +285,12 @@ public actor SSHTunnel {
     }
 
     private static func failureReason(status: Int32, stderr: Data) -> String {
-        let detail = String(data: stderr, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let detail, !detail.isEmpty else { return "ssh exited \(status)" }
+        failureReason(status: status, stderr: String(data: stderr, encoding: .utf8) ?? "")
+    }
+
+    private static func failureReason(status: Int32, stderr: String) -> String {
+        let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !detail.isEmpty else { return "ssh exited \(status)" }
         return String(detail.suffix(2_000))
     }
 }

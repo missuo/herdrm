@@ -42,7 +42,16 @@ public actor HerdrService {
             socketPath = try await tunnel.ensureUp()
         }
         let client = SocketRPC(socketPath: socketPath)
-        let pong = try await ping(client, socketPath: socketPath)
+        let pong: PingResult
+        do {
+            pong = try await ping(client, socketPath: socketPath)
+        } catch {
+            if let tunnel, let forwardingFailure = await tunnel.forwardingFailure() {
+                await tunnel.tearDown()
+                throw HerdrError.tunnelFailed(forwardingFailure)
+            }
+            throw error
+        }
         guard pong.protocolVersion >= Self.minimumProtocolVersion else {
             throw HerdrError.incompatibleProtocol(pong.protocolVersion)
         }

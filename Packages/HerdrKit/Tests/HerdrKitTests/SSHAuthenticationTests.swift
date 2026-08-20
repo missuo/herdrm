@@ -3,6 +3,23 @@ import Security
 @testable import HerdrKit
 
 final class SSHAuthenticationTests: XCTestCase {
+    func testForwardingFailureExtractsTheLastOpenSSHChannelError() {
+        let stderr = """
+        Warning: Permanently added 'remote' to the list of known hosts.
+        channel 1: open failed: unknown channel type: unsupported channel type
+        channel 2: open failed: connect failed: dial unix /tmp/herdr.sock: connect: connection refused
+        """
+
+        XCTAssertEqual(
+            SSHTunnel.forwardingFailure(in: stderr),
+            "channel 2: open failed: connect failed: dial unix /tmp/herdr.sock: connect: connection refused"
+        )
+    }
+
+    func testForwardingFailureIgnoresUnrelatedSSHWarnings() {
+        XCTAssertNil(SSHTunnel.forwardingFailure(in: "Warning: remote host identification changed"))
+    }
+
     func testKeychainCredentialConfiguresAskPassAuthentication() throws {
         let deviceID = UUID()
         defer { try? SSHCredentialStore.removePassword(for: deviceID) }
