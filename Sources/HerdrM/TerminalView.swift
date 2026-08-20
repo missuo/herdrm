@@ -25,6 +25,30 @@ enum TerminalDefaults {
     }
 }
 
+/// Sends ESC CR for Shift+Return so agent TUIs insert a line break instead of
+/// submitting: legacy terminal encoding sends the same bare `\r` for Enter and
+/// Shift+Enter, so the modifier never reaches the TUI. SwiftTerm's `keyDown`
+/// and `doCommand` are public, not open, so `interpretKeyEvents` is the only
+/// hook a subclass can take — and it only sees Return in legacy mode, leaving
+/// this inert when a TUI negotiates the kitty keyboard protocol.
+final class LineBreakTerminalView: LocalProcessTerminalView {
+    override func interpretKeyEvents(_ eventArray: [NSEvent]) {
+        if eventArray.count == 1,
+           let event = eventArray.first,
+           event.type == .keyDown,
+           event.keyCode == 36 || event.keyCode == 76,  // Return, keypad Enter
+           !hasMarkedText() {
+            let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            if modifiers.contains(.shift),
+               modifiers.isDisjoint(with: [.command, .control, .option]) {
+                send(txt: "\u{1b}\r")
+                return
+            }
+        }
+        super.interpretKeyEvents(eventArray)
+    }
+}
+
 /// Embeds a SwiftTerm terminal running `herdr agent attach` (directly or over ssh).
 struct AttachTerminalView: NSViewRepresentable {
     let device: Device
@@ -40,7 +64,7 @@ struct AttachTerminalView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
-        let view = LocalProcessTerminalView(frame: .zero)
+        let view = LineBreakTerminalView(frame: .zero)
         view.processDelegate = context.coordinator
         configureAppearance(view)
 

@@ -7,6 +7,12 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+- Shift+Enter in the agent terminal inserts a line break instead of submitting
+  — sent as ESC+CR, which coding-agent TUIs already understand. Inert when a
+  TUI negotiates the kitty keyboard protocol (it already distinguishes the
+  modifier).
+
 ## [0.3.0] - 2026-08-19
 
 ### Added
