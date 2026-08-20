@@ -2,6 +2,7 @@ import AppKit
 import HerdrKit
 import SwiftTerm
 import SwiftUI
+import UniformTypeIdentifiers
 
 enum TerminalDefaults {
     static let fontNameKey = "terminal.fontName"   // "" = system monospaced
@@ -70,6 +71,25 @@ enum TerminalDefaults {
             guard let font = NSFont(name: family, size: 12) else { return false }
             return font.isFixedPitch
         }.sorted()
+    }
+}
+
+private struct ClipboardFile: Sendable {
+    let localURL: URL
+    let removeAfterUpload: Bool
+}
+
+private enum ClipboardFileError: LocalizedError {
+    case unsupportedItem
+    case imageEncodingFailed
+    case transferUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .unsupportedItem: return "Remote paste supports regular files, not folders or special files."
+        case .imageEncodingFailed: return "The clipboard image could not be encoded as PNG."
+        case .transferUnavailable: return "The remote file transfer service is unavailable."
+        }
     }
 }
 
@@ -206,6 +226,174 @@ final class LineBreakTerminalView: LocalProcessTerminalView {
         }
         super.interpretKeyEvents(eventArray)
     }
+
+    var forwardsLocalImagePaste = false
+    var handlesRemoteFilePaste = false
+    var attachmentService: HerdrService?
+    var onAttachmentError: ((String) -> Void)?
+    private var remotePasteTask: Task<Void, Never>?
+
+    deinit {
+        remotePasteTask?.cancel()
+    }
+
+    override func paste(_ sender: Any) {
+        if handlesRemoteFilePaste {
+            do {
+                if let files = try Self.clipboardFiles(in: NSPasteboard.general) {
+                    enqueueRemotePaste(files)
+                    return
+                }
+            } catch {
+                reportAttachmentError(error)
+                return
+            }
+        }
+
+        guard forwardsLocalImagePaste,
+              Self.containsImage(in: NSPasteboard.general)
+        else {
+            super.paste(sender)
+            return
+        }
+
+        guard let controlV = NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .control,
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window?.windowNumber ?? 0,
+            context: nil,
+            characters: "\u{16}",
+            charactersIgnoringModifiers: "v",
+            isARepeat: false,
+            keyCode: 9
+        ) else {
+            let bytes: [UInt8] = [0x16]
+            send(source: self, data: bytes[...])
+            return
+        }
+        super.keyDown(with: controlV)
+    }
+
+    private func enqueueRemotePaste(_ files: [ClipboardFile]) {
+        guard let attachmentService else {
+            reportAttachmentError(ClipboardFileError.transferUnavailable)
+            return
+        }
+        let previousTask = remotePasteTask
+        remotePasteTask = Task { [weak self] in
+            defer {
+                for file in files where file.removeAfterUpload {
+                    try? FileManager.default.removeItem(at: file.localURL)
+                }
+            }
+            await previousTask?.value
+            guard !Task.isCancelled else { return }
+
+            do {
+                var remotePaths: [String] = []
+                for file in files {
+                    try Task.checkCancellation()
+                    remotePaths.append(
+                        try await attachmentService.stageAttachment(from: file.localURL)
+                    )
+                }
+                try Task.checkCancellation()
+                await MainActor.run { [weak self] in
+                    self?.sendPastedText(remotePaths.joined(separator: " "))
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.reportAttachmentError(error)
+                }
+            }
+        }
+    }
+
+    private func sendPastedText(_ text: String) {
+        if terminal.bracketedPasteMode {
+            let start = Array("\u{1B}[200~".utf8)
+            send(source: self, data: start[...])
+        }
+        let bytes = Array(text.utf8)
+        send(source: self, data: bytes[...])
+        if terminal.bracketedPasteMode {
+            let end = Array("\u{1B}[201~".utf8)
+            send(source: self, data: end[...])
+        }
+    }
+
+    private func reportAttachmentError(_ error: Error) {
+        onAttachmentError?("Remote paste failed: \(error.localizedDescription)")
+    }
+
+    private static func clipboardFiles(in pasteboard: NSPasteboard) throws -> [ClipboardFile]? {
+        if let fileURLs = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL], !fileURLs.isEmpty {
+            return try fileURLs.map { url in
+                let values = try url.resourceValues(forKeys: [.isRegularFileKey])
+                guard values.isRegularFile == true else {
+                    throw ClipboardFileError.unsupportedItem
+                }
+                return ClipboardFile(localURL: url, removeAfterUpload: false)
+            }
+        }
+
+        guard let image = pasteboard.readObjects(
+            forClasses: [NSImage.self],
+            options: nil
+        )?.first as? NSImage else {
+            return nil
+        }
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:])
+        else {
+            throw ClipboardFileError.imageEncodingFailed
+        }
+
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("herdrm-clipboard", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+        let localURL = directory.appendingPathComponent("\(UUID().uuidString.lowercased()).png")
+        try png.write(to: localURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: localURL.path
+        )
+        return [ClipboardFile(localURL: localURL, removeAfterUpload: true)]
+    }
+
+    private static func containsImage(in pasteboard: NSPasteboard) -> Bool {
+        if pasteboard.canReadObject(forClasses: [NSImage.self], options: nil) {
+            return true
+        }
+        guard let fileURLs = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) as? [URL] else {
+            return false
+        }
+        return fileURLs.contains { url in
+            guard let values = try? url.resourceValues(forKeys: [.contentTypeKey]),
+                  let contentType = values.contentType
+            else { return false }
+            return contentType.conforms(to: .image)
+        }
+    }
 }
 
 /// Embeds a SwiftTerm terminal running `herdr agent attach` (directly or over ssh).
@@ -214,6 +402,7 @@ struct AttachTerminalView: NSViewRepresentable {
     let paneID: String
     /// The device's herdr server version, so attach picks a matching CLI binary.
     var serverVersion: String?
+    let agentKind: String
     var fontName: String = ""
     var fontSize: Double = TerminalDefaults.defaultFontSize
     /// From SwiftUI's environment so theme switches re-render immediately.
@@ -221,15 +410,20 @@ struct AttachTerminalView: NSViewRepresentable {
     /// When false, mouse drags always select text locally even if the TUI
     /// requested mouse reporting (Shift+drag bypasses it either way).
     var mouseReporting: Bool = true
+    var onAttachmentError: (String) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> LocalProcessTerminalView {
         let view = LineBreakTerminalView(frame: .zero)
+        view.forwardsLocalImagePaste = device.isLocal
+        view.handlesRemoteFilePaste = !device.isLocal && ["claude", "copilot"].contains(agentKind)
+        view.onAttachmentError = onAttachmentError
         view.processDelegate = context.coordinator
         configureAppearance(view)
 
         let service = HerdrService(device: device)
+        view.attachmentService = service
         let command = service.attachCommand(paneID: paneID, serverVersion: serverVersion)
         var environment = Terminal.getEnvironmentVariables(termName: "xterm-256color")
         environment.append("LANG=en_US.UTF-8")
@@ -248,6 +442,9 @@ struct AttachTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: LocalProcessTerminalView, context: Context) {
+        if let view = nsView as? LineBreakTerminalView {
+            view.onAttachmentError = onAttachmentError
+        }
         configureAppearance(nsView)
     }
 

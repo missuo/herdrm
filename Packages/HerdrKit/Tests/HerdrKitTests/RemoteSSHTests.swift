@@ -50,6 +50,28 @@ final class RemoteSSHTests: XCTestCase {
         await service.disconnect()
     }
 
+    func testUploadFileRoundTrip() async throws {
+        guard let target else { throw XCTSkip("HERDRM_E2E_SSH_TARGET not set") }
+        let localURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("herdrm-e2e-\(UUID().uuidString).txt")
+        let payload = "herdrm remote upload \(UUID().uuidString)"
+        try Data(payload.utf8).write(to: localURL)
+        defer { try? FileManager.default.removeItem(at: localURL) }
+
+        let tunnel = SSHTunnel(target: target)
+        let remotePath = try await tunnel.uploadFile(from: localURL)
+        XCTAssertTrue(remotePath.hasPrefix("/"))
+        XCTAssertTrue(remotePath.hasSuffix(".txt"))
+
+        let quotedPath = shellQuote(remotePath)
+        let output = try await SSHTunnel.runSSH(
+            target: target,
+            command: "cat \(quotedPath); rm -f \(quotedPath)",
+            timeout: 15
+        )
+        XCTAssertEqual(output, payload)
+    }
+
     func testForwardedSocketStartsAgentInNewPane() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let socketPath = environment["HERDRM_E2E_SOCKET_PATH"] else {
@@ -87,5 +109,9 @@ final class RemoteSSHTests: XCTestCase {
             throw error
         }
         await service.disconnect()
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
     }
 }

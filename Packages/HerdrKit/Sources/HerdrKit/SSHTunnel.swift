@@ -37,6 +37,8 @@ private final class SSHErrorBuffer: @unchecked Sendable {
 /// (`ssh -N -L local.sock:remote.sock target`), so remote devices reuse SocketRPC as-is.
 /// Auth uses OpenSSH config/agent/Tailscale SSH, with Keychain-backed askpass as a fallback.
 public actor SSHTunnel {
+    static let maximumUploadBytes = 50 * 1024 * 1024
+
     public let target: String
     public private(set) var localSocketPath: String?
     private let credentialID: UUID?
@@ -274,6 +276,116 @@ public actor SSHTunnel {
         let os = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !os.isEmpty else { throw HerdrError.tunnelFailed("empty OS probe result") }
         return os
+    }
+
+    // MARK: - File transfer
+
+    /// Streams one regular file to a private cache on the remote host and returns
+    /// its absolute remote path. The generated name preserves only a safe extension.
+    public func uploadFile(from localURL: URL) async throws -> String {
+        guard localURL.isFileURL else {
+            throw HerdrError.tunnelFailed("file upload requires a local file URL")
+        }
+        let values = try localURL.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard values.isRegularFile == true else {
+            throw HerdrError.tunnelFailed("file upload supports regular files only")
+        }
+        let fileSize = values.fileSize ?? 0
+        guard fileSize <= Self.maximumUploadBytes else {
+            throw HerdrError.tunnelFailed("file is larger than the 50 MB upload limit")
+        }
+
+        return try await Self.uploadFile(
+            target: target,
+            localURL: localURL,
+            remoteFilename: Self.uploadFilename(for: localURL),
+            credentialID: credentialID
+        )
+    }
+
+    static func uploadFile(
+        target: String,
+        localURL: URL,
+        remoteFilename: String,
+        credentialID: UUID?,
+        executableURL: URL = URL(fileURLWithPath: "/usr/bin/ssh")
+    ) async throws -> String {
+        let command = """
+        umask 077
+        dir="${XDG_CACHE_HOME:-$HOME/.cache}/herdrm/attachments"
+        mkdir -p "$dir" && chmod 700 "$dir"
+        find "$dir" -type f -mtime +7 -delete 2>/dev/null || true
+        tmp="$dir/.\(remoteFilename).part"
+        path="$dir/\(remoteFilename)"
+        if cat > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$path"; then
+            printf '%s\\n' "$path"
+        else
+            rm -f "$tmp"
+            exit 1
+        fi
+        """
+
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let proc = Process()
+                proc.executableURL = executableURL
+                let authentication = authenticationConfiguration(for: credentialID)
+                defer { authentication.discardAuthorization() }
+                proc.arguments = authentication.arguments + [
+                    "-o", "StrictHostKeyChecking=accept-new",
+                    "-o", "ConnectTimeout=8",
+                    "-o", "ServerAliveInterval=15",
+                    sshDestination(target),
+                    command,
+                ]
+                proc.environment = ProcessInfo.processInfo.environment.merging(authentication.environment) { _, new in new }
+                let output = Pipe()
+                let errorOutput = Pipe()
+                proc.standardOutput = output
+                proc.standardError = errorOutput
+                do {
+                    proc.standardInput = try FileHandle(forReadingFrom: localURL)
+                    try proc.run()
+                } catch {
+                    continuation.resume(throwing: HerdrError.tunnelFailed("file upload spawn: \(error.localizedDescription)"))
+                    return
+                }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 60) {
+                    if proc.isRunning { proc.terminate() }
+                }
+                proc.waitUntilExit()
+                let data = output.fileHandleForReading.readDataToEndOfFile()
+                guard proc.terminationStatus == 0 else {
+                    let errorData = errorOutput.fileHandleForReading.readDataToEndOfFile()
+                    continuation.resume(throwing: HerdrError.tunnelFailed(
+                        "file upload: \(failureReason(status: proc.terminationStatus, stderr: errorData))"
+                    ))
+                    return
+                }
+                let lines = String(data: data, encoding: .utf8)?
+                    .split(whereSeparator: \.isNewline)
+                    .map(String.init) ?? []
+                guard let remotePath = lines.last(where: { $0.hasPrefix("/") }) else {
+                    continuation.resume(throwing: HerdrError.tunnelFailed("file upload returned no remote path"))
+                    return
+                }
+                continuation.resume(returning: remotePath)
+            }
+        }
+    }
+
+    static func uploadFilename(for localURL: URL) -> String {
+        let rawExtension = localURL.pathExtension.lowercased()
+        let isSafeExtension = !rawExtension.isEmpty
+            && rawExtension.utf8.count <= 16
+            && rawExtension.utf8.allSatisfy { byte in
+                switch byte {
+                case 48...57, 97...122: return true
+                default: return false
+                }
+            }
+        let suffix = isSafeExtension ? ".\(rawExtension)" : ""
+        return "\(UUID().uuidString.lowercased())\(suffix)"
     }
 
     // MARK: - One-shot exec

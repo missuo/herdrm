@@ -133,3 +133,58 @@ final class AttachBinarySelectionTests: XCTestCase {
         XCTAssertTrue(remote.args.last?.hasPrefix("exec /bin/sh -c '") == true)
     }
 }
+
+final class SSHFileTransferTests: XCTestCase {
+    func testUploadStreamsFileAndReturnsRemotePath() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("herdrm-upload-test-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let sourceURL = directory.appendingPathComponent("source.png")
+        let capturedURL = directory.appendingPathComponent("captured.bin")
+        let argumentsURL = directory.appendingPathComponent("arguments.txt")
+        let executableURL = directory.appendingPathComponent("fake-ssh")
+        let payload = Data([0x00, 0x01, 0x0A, 0xFF, 0x42])
+        try payload.write(to: sourceURL)
+
+        let script = """
+        #!/bin/sh
+        printf '%s\\n' "$@" > \(shellQuote(argumentsURL.path))
+        cat > \(shellQuote(capturedURL.path))
+        printf '/home/test/.cache/herdrm/attachments/test.png\\n'
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executableURL.path)
+
+        let remotePath = try await SSHTunnel.uploadFile(
+            target: "test@example.invalid:2222",
+            localURL: sourceURL,
+            remoteFilename: "test.png",
+            credentialID: nil,
+            executableURL: executableURL
+        )
+
+        XCTAssertEqual(remotePath, "/home/test/.cache/herdrm/attachments/test.png")
+        XCTAssertEqual(try Data(contentsOf: capturedURL), payload)
+        let arguments = try String(contentsOf: argumentsURL, encoding: .utf8)
+        XCTAssertTrue(arguments.contains("ssh://test@example.invalid:2222"))
+        XCTAssertTrue(arguments.contains("umask 077"))
+        XCTAssertTrue(arguments.contains("chmod 700"))
+        XCTAssertTrue(arguments.contains("chmod 600"))
+        XCTAssertTrue(arguments.contains("test.png.part"))
+    }
+
+    func testUploadFilenamePreservesOnlySafeExtension() {
+        let png = SSHTunnel.uploadFilename(for: URL(fileURLWithPath: "/tmp/private design.PNG"))
+        XCTAssertTrue(png.hasSuffix(".png"))
+        XCTAssertFalse(png.contains("private"))
+
+        let unsafe = SSHTunnel.uploadFilename(for: URL(fileURLWithPath: "/tmp/file.bad$ext"))
+        XCTAssertFalse(unsafe.contains("bad$ext"))
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        "'\(value.replacingOccurrences(of: "'", with: "'\\''"))'"
+    }
+}

@@ -209,10 +209,12 @@ struct DetailView: View {
                 device: entry.device,
                 paneID: entry.agent.paneID,
                 serverVersion: model.serverVersion(deviceID: entry.device.id),
+                agentKind: entry.agent.agent,
                 fontName: terminalFontName,
                 fontSize: terminalFontSize,
                 dark: colorScheme == .dark,
-                mouseReporting: terminalMouseReporting
+                mouseReporting: terminalMouseReporting,
+                onAttachmentError: { model.actionError = $0 }
             )
                 .id("attach-\(entry.id)-\(colorScheme)")
                 .padding(.horizontal, 10)
