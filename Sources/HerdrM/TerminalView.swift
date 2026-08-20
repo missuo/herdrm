@@ -7,7 +7,14 @@ import UniformTypeIdentifiers
 enum TerminalDefaults {
     static let fontNameKey = "terminal.fontName"   // "" = system monospaced
     static let fontSizeKey = "terminal.fontSize"
+    static let thinStrokesKey = "terminal.thinStrokes"
+    static let fontWeightKey = "terminal.fontWeight"
+    static let lineSpacingKey = "terminal.lineSpacing"
     static let defaultFontSize: Double = 12.5
+    /// `NSFont.Weight` rawValue; 0 is `.regular`. Only the system monospaced font
+    /// has selectable weights — named families ship fixed faces and ignore this.
+    static let defaultFontWeight: Double = 0
+    static let defaultLineSpacing: Double = 1.0
     static let darkBackground = NSColor(
         srgbRed: 0x10 / 255,
         green: 0x10 / 255,
@@ -57,11 +64,11 @@ enum TerminalDefaults {
         )
     }
 
-    static func font(name: String, size: Double) -> NSFont {
+    static func font(name: String, size: Double, weight: Double = defaultFontWeight) -> NSFont {
         if !name.isEmpty, let custom = NSFont(name: name, size: size) {
             return custom
         }
-        return NSFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        return NSFont.monospacedSystemFont(ofSize: size, weight: NSFont.Weight(weight))
     }
 
     /// Fixed-pitch font families available on this Mac, for the settings picker.
@@ -425,6 +432,12 @@ struct AttachTerminalView: NSViewRepresentable {
     let agentKind: String?
     var fontName: String = ""
     var fontSize: Double = TerminalDefaults.defaultFontSize
+    /// macOS font smoothing dilates glyph stems, which reads as fake bold at
+    /// terminal sizes. Off is SwiftTerm's `fontSmoothing = false` — iTerm2's
+    /// "Thin strokes".
+    var thinStrokes: Bool = true
+    var fontWeight: Double = TerminalDefaults.defaultFontWeight
+    var lineSpacing: Double = TerminalDefaults.defaultLineSpacing
     /// From SwiftUI's environment so theme switches re-render immediately.
     var dark: Bool = false
     /// When false, mouse drags always select text locally even if the TUI
@@ -491,11 +504,23 @@ struct AttachTerminalView: NSViewRepresentable {
     }
 
     private func configureAppearance(_ view: LocalProcessTerminalView) {
-        let font = TerminalDefaults.font(name: fontName, size: fontSize)
+        let font = TerminalDefaults.font(name: fontName, size: fontSize, weight: fontWeight)
         if view.font != font {
             view.font = font
         }
         view.allowMouseReporting = mouseReporting
+        // Compared against the inverted value on purpose: thinStrokes on means
+        // smoothing off. The setter only stores the flag, so repaint by hand.
+        if view.fontSmoothing == thinStrokes {
+            view.fontSmoothing = !thinStrokes
+            view.needsDisplay = true
+        }
+        // This setter calls resetFont(), which recomputes metrics and resizes the
+        // terminal, so it is only assigned when it actually changes.
+        if view.lineSpacing != CGFloat(lineSpacing) {
+            view.lineSpacing = CGFloat(lineSpacing)
+        }
+        // Everything below is theme-only and returns early; keep font work above it.
         guard let view = view as? LineBreakTerminalView,
               view.appliedDarkAppearance != dark
         else { return }

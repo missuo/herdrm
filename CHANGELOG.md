@@ -7,6 +7,13 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+- Terminal legibility settings: **Thin strokes** (on by default) turns off the
+  macOS font smoothing that thickens glyph stems and makes agent output —
+  Claude Code's bold text especially — look heavy and smudged; **Weight**
+  (Light/Regular/Medium) for the system monospaced font; and **Line spacing**
+  (100%–140%). (#4)
+
 ## [0.3.7] - 2026-08-20
 
 ### Added

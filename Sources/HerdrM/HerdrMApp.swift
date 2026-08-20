@@ -130,6 +130,9 @@ struct SettingsView: View {
 struct TerminalSettingsView: View {
     @AppStorage(TerminalDefaults.fontNameKey) private var fontName = ""
     @AppStorage(TerminalDefaults.fontSizeKey) private var fontSize = TerminalDefaults.defaultFontSize
+    @AppStorage(TerminalDefaults.thinStrokesKey) private var thinStrokes = true
+    @AppStorage(TerminalDefaults.fontWeightKey) private var fontWeight = TerminalDefaults.defaultFontWeight
+    @AppStorage(TerminalDefaults.lineSpacingKey) private var lineSpacing = TerminalDefaults.defaultLineSpacing
     @AppStorage("terminal.mouseReporting") private var mouseReporting = true
 
     private let families = TerminalDefaults.monospacedFamilies()
@@ -157,6 +160,35 @@ struct TerminalSettingsView: View {
                         .labelsHidden()
                 }
 
+                Picker("Weight", selection: $fontWeight) {
+                    Text("Light").tag(Double(NSFont.Weight.light.rawValue))
+                    Text("Regular").tag(TerminalDefaults.defaultFontWeight)
+                    Text("Medium").tag(Double(NSFont.Weight.medium.rawValue))
+                }
+                .pickerStyle(.segmented)
+                .disabled(!fontName.isEmpty)
+                .help("Only the system monospaced font has selectable weights.")
+
+                HStack {
+                    Slider(value: $lineSpacing, in: 1.0...1.4, step: 0.05) {
+                        Text("Line spacing")
+                    }
+                    Text(String(format: "%.0f%%", lineSpacing * 100))
+                        .font(.system(size: 11.5).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 52, alignment: .trailing)
+                }
+
+                Toggle(isOn: $thinStrokes) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Thin strokes")
+                        Text("Turns off macOS font smoothing, which thickens glyph stems and makes agent output — Claude Code's bold text especially — look heavy and smudged.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 Toggle(isOn: $mouseReporting) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Mouse reporting")
@@ -170,6 +202,9 @@ struct TerminalSettingsView: View {
                 Button("Reset to Defaults") {
                     fontName = ""
                     fontSize = TerminalDefaults.defaultFontSize
+                    fontWeight = TerminalDefaults.defaultFontWeight
+                    lineSpacing = TerminalDefaults.defaultLineSpacing
+                    thinStrokes = true
                     mouseReporting = true
                 }
             }
@@ -181,7 +216,7 @@ struct TerminalSettingsView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
                 Text("❯ herdr agent attach w1:p1 — 中文 ABC 0123")
-                    .font(Font(TerminalDefaults.font(name: fontName, size: fontSize)))
+                    .font(Font(TerminalDefaults.font(name: fontName, size: fontSize, weight: fontWeight)))
                     .lineLimit(1)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
