@@ -7,6 +7,38 @@ enum TerminalDefaults {
     static let fontNameKey = "terminal.fontName"   // "" = system monospaced
     static let fontSizeKey = "terminal.fontSize"
     static let defaultFontSize: Double = 12.5
+    static let darkBackground = NSColor(
+        srgbRed: 0x10 / 255,
+        green: 0x10 / 255,
+        blue: 0x12 / 255,
+        alpha: 1
+    )
+    static let darkForeground = NSColor(
+        srgbRed: 0xD6 / 255,
+        green: 0xD6 / 255,
+        blue: 0xD6 / 255,
+        alpha: 1
+    )
+    static let lightBackground = NSColor.white
+    static let lightForeground = NSColor(
+        srgbRed: 0x3A / 255,
+        green: 0x3A / 255,
+        blue: 0x3A / 255,
+        alpha: 1
+    )
+    static let darkPalette = SwiftTerm.Color.terminalAppColors
+    static let lightPalette = darkPalette.map { color in
+        let light = LightTerminalANSIAdapter.lightRGB(
+            red: Int(color.red / 257),
+            green: Int(color.green / 257),
+            blue: Int(color.blue / 257)
+        )
+        return SwiftTerm.Color(
+            red8: UInt16(light.red),
+            green8: UInt16(light.green),
+            blue8: UInt16(light.blue)
+        )
+    }
 
     static func font(name: String, size: Double) -> NSFont {
         if !name.isEmpty, let custom = NSFont(name: name, size: size) {
@@ -32,6 +64,21 @@ enum TerminalDefaults {
 /// hook a subclass can take — and it only sees Return in legacy mode, leaving
 /// this inert when a TUI negotiates the kitty keyboard protocol.
 final class LineBreakTerminalView: LocalProcessTerminalView {
+    var usesLightColors = false
+    var appliedDarkAppearance: Bool?
+    private var lightColorAdapter = LightTerminalANSIAdapter()
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        guard usesLightColors else {
+            super.dataReceived(slice: slice)
+            return
+        }
+        let transformed = lightColorAdapter.transform(slice)
+        if !transformed.isEmpty {
+            feed(byteArray: transformed[...])
+        }
+    }
+
     override func interpretKeyEvents(_ eventArray: [NSEvent]) {
         if eventArray.count == 1,
            let event = eventArray.first,
@@ -90,23 +137,25 @@ struct AttachTerminalView: NSViewRepresentable {
         configureAppearance(nsView)
     }
 
+    static func dismantleNSView(_ nsView: LocalProcessTerminalView, coordinator: Coordinator) {
+        nsView.terminate()
+    }
+
     private func configureAppearance(_ view: LocalProcessTerminalView) {
         let font = TerminalDefaults.font(name: fontName, size: fontSize)
         if view.font != font {
             view.font = font
         }
         view.allowMouseReporting = mouseReporting
-        let background: NSColor = dark
-            ? NSColor(srgbRed: 0x10 / 255, green: 0x10 / 255, blue: 0x12 / 255, alpha: 1)
-            : .white
-        let foreground: NSColor = dark
-            ? NSColor(srgbRed: 0xD6 / 255, green: 0xD6 / 255, blue: 0xD6 / 255, alpha: 1)
-            : NSColor(srgbRed: 0x3A / 255, green: 0x3A / 255, blue: 0x3A / 255, alpha: 1)
-        if view.nativeBackgroundColor != background {
-            view.nativeBackgroundColor = background
-            view.nativeForegroundColor = foreground
-            view.needsDisplay = true
-        }
+        guard let view = view as? LineBreakTerminalView,
+              view.appliedDarkAppearance != dark
+        else { return }
+        view.appliedDarkAppearance = dark
+        view.usesLightColors = !dark
+        view.nativeBackgroundColor = dark ? TerminalDefaults.darkBackground : TerminalDefaults.lightBackground
+        view.nativeForegroundColor = dark ? TerminalDefaults.darkForeground : TerminalDefaults.lightForeground
+        view.installColors(dark ? TerminalDefaults.darkPalette : TerminalDefaults.lightPalette)
+        view.needsDisplay = true
     }
 
     final class Coordinator: NSObject, LocalProcessTerminalViewDelegate {

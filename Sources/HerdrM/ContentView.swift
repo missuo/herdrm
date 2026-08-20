@@ -213,7 +213,7 @@ struct DetailView: View {
                 dark: colorScheme == .dark,
                 mouseReporting: terminalMouseReporting
             )
-                .id("attach-\(entry.id)")
+                .id("attach-\(entry.id)-\(colorScheme)")
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
