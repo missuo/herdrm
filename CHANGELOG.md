@@ -7,6 +7,8 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+- Made the sidebar resizable with a persisted width and adjustable text size.
+
 ## [0.4.0] - 2026-08-22
 
 ### Added

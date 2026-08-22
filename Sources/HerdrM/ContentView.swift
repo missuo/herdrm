@@ -1,22 +1,53 @@
+import AppKit
 import HerdrKit
 import SwiftUI
 
 struct RootView: View {
     // Owned by AppDelegate so it outlives the window — see AppDelegate in HerdrMApp.swift.
     @ObservedObject var model: AppModel
+    @AppStorage(SidebarMetrics.widthKey) private var sidebarWidth = SidebarMetrics.defaultWidth
+    @AppStorage(SidebarMetrics.scaleKey) private var sidebarFontScale = SidebarMetrics.defaultScale
     // Deliberately not persisted: the app always launches with the sidebar visible.
     @State private var sidebarCollapsed = false
+    @State private var sidebarDragStartWidth: Double?
+
+    private var clampedSidebarWidth: Double {
+        min(SidebarMetrics.maxWidth, max(SidebarMetrics.minWidth, sidebarWidth))
+    }
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
             HStack(spacing: 0) {
                 SidebarView(model: model, collapsed: $sidebarCollapsed)
-                    .frame(width: sidebarCollapsed ? 0 : 260, alignment: .trailing)
+                    .environment(\.sidebarScale, CGFloat(sidebarFontScale))
+                    .frame(width: sidebarCollapsed ? 0 : CGFloat(clampedSidebarWidth), alignment: .trailing)
                     .clipped()
-                Rectangle()
-                    .fill(Theme.sidebarBorder)
-                    .frame(width: sidebarCollapsed ? 0 : 1)
+                ZStack {
+                    Rectangle()
+                        .fill(Theme.sidebarBorder)
+                        .frame(width: sidebarCollapsed ? 0 : 1)
+                }
+                    .frame(width: sidebarCollapsed ? 0 : 6)
+                    .contentShape(Rectangle())
                     .ignoresSafeArea()
+                    .simultaneousGesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let startWidth = sidebarDragStartWidth ?? clampedSidebarWidth
+                                sidebarDragStartWidth = startWidth
+                                sidebarWidth = min(
+                                    SidebarMetrics.maxWidth,
+                                    max(SidebarMetrics.minWidth, startWidth + Double(value.translation.width))
+                                )
+                            }
+                            .onEnded { _ in sidebarDragStartWidth = nil }
+                    )
+                    .onTapGesture(count: 2) {
+                        sidebarWidth = SidebarMetrics.defaultWidth
+                    }
+                    .onHover { inside in
+                        if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                    }
                 DetailView(model: model, sidebarCollapsed: $sidebarCollapsed)
             }
             .animation(.easeInOut(duration: 0.2), value: sidebarCollapsed)
@@ -27,6 +58,7 @@ struct RootView: View {
                     .ignoresSafeArea()
                     .onTapGesture { model.showDevicePanel = false }
                 DevicePopover(model: model, isPresented: $model.showDevicePanel)
+                    .environment(\.sidebarScale, CGFloat(sidebarFontScale))
                     .padding(.leading, 10)
                     .padding(.bottom, 46)
                     .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))

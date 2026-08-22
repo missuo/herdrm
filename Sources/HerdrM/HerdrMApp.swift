@@ -353,6 +353,7 @@ struct TerminalSettingsView: View {
 
 struct AppearanceSettingsView: View {
     @AppStorage("app.theme") private var themePreference = "system"
+    @AppStorage(SidebarMetrics.scaleKey) private var sidebarFontScale = SidebarMetrics.defaultScale
 
     var body: some View {
         Form {
@@ -363,6 +364,16 @@ struct AppearanceSettingsView: View {
             }
             .pickerStyle(.segmented)
             Text("The terminal follows the app theme.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+            Picker("Sidebar text size", selection: $sidebarFontScale) {
+                Text("Small").tag(0.85)
+                Text("Default").tag(1.0)
+                Text("Large").tag(1.15)
+                Text("Larger").tag(1.3)
+            }
+            .pickerStyle(.segmented)
+            Text("Drag the sidebar's right edge to resize it; double-click the edge to reset.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }

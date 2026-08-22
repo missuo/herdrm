@@ -22,6 +22,7 @@ struct VisualEffectView: NSViewRepresentable {
 struct SidebarView: View {
     @ObservedObject var model: AppModel
     @Binding var collapsed: Bool
+    @Environment(\.sidebarScale) private var scale
     @State private var deviceButtonHovered = false
     @State private var draggingSpaceID: String?
     @State private var spaceDrop: (id: String, after: Bool)?
@@ -61,26 +62,26 @@ struct SidebarView: View {
                 VStack(spacing: 1) {
                     HStack(spacing: 5) {
                         Text("Spaces")
-                            .font(.system(size: 12.5, weight: .medium))
+                            .font(.system(size: 12.5 * scale, weight: .medium))
                             .foregroundStyle(Theme.textTertiary)
                         Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(.system(size: 9 * scale, weight: .semibold))
                             .foregroundStyle(Theme.textGhost)
                         Spacer()
                         Button {
                             model.showNewSpace = true
                         } label: {
                             Image(systemName: "folder.badge.plus")
-                                .font(.system(size: 11.5))
+                                .font(.system(size: 11.5 * scale))
                                 .foregroundStyle(Theme.textGhost)
-                                .frame(width: 20, height: 20)
+                                .frame(width: 20 * scale, height: 20 * scale)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help("New Space")
                     }
                     .padding(.horizontal, 8)
-                    .frame(height: 28)
+                    .frame(height: 28 * scale)
                     allSpacesRow
                     ForEach(model.visibleSpaces) { entry in
                         spaceRow(entry)
@@ -121,7 +122,7 @@ struct SidebarView: View {
                     groupHeader("Agents")
                     if model.visibleAgents.isEmpty {
                         Text(emptyAgentsHint)
-                            .font(.system(size: 11.5))
+                            .font(.system(size: 11.5 * scale))
                             .foregroundStyle(Theme.textGhost)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(8)
@@ -154,7 +155,7 @@ struct SidebarView: View {
             Spacer(minLength: 0)
             footer
         }
-        .frame(width: 260)
+        .frame(maxWidth: .infinity)
         .background(VisualEffectView(material: .sidebar).ignoresSafeArea())
     }
 
@@ -172,16 +173,16 @@ struct SidebarView: View {
         Button(action: action) {
             HStack(spacing: 10) {
                 Image(systemName: icon)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13 * scale, weight: .medium))
                     .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 20, height: 20)
+                    .frame(width: 20 * scale, height: 20 * scale)
                 Text(label)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13 * scale))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
             }
             .padding(.horizontal, 4)
-            .frame(height: 32)
+            .frame(height: 32 * scale)
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle())
@@ -190,15 +191,15 @@ struct SidebarView: View {
     private func groupHeader(_ title: String) -> some View {
         HStack(spacing: 5) {
             Text(title)
-                .font(.system(size: 12.5, weight: .medium))
+                .font(.system(size: 12.5 * scale, weight: .medium))
                 .foregroundStyle(Theme.textTertiary)
             Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .semibold))
+                .font(.system(size: 9 * scale, weight: .semibold))
                 .foregroundStyle(Theme.textGhost)
             Spacer()
         }
         .padding(.horizontal, 8)
-        .frame(height: 28)
+        .frame(height: 28 * scale)
     }
 
     private var allSpacesRow: some View {
@@ -208,18 +209,18 @@ struct SidebarView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 11.5 * scale))
                     .foregroundStyle(selected ? Theme.textSecondary : Theme.textTertiary)
                 Text("All Spaces")
-                    .font(.system(size: 13))
+                    .font(.system(size: 13 * scale))
                     .foregroundStyle(selected ? Theme.text : Theme.textSecondary)
                 Spacer()
                 Text("\(model.scopeAgentCount)")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11 * scale))
                     .foregroundStyle(Theme.textGhost)
             }
             .padding(.horizontal, 8)
-            .frame(height: 30)
+            .frame(height: 30 * scale)
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
@@ -232,10 +233,10 @@ struct SidebarView: View {
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "folder")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 11.5 * scale))
                     .foregroundStyle(selected ? Theme.textSecondary : Theme.textTertiary)
                 Text(entry.workspace.label)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13 * scale))
                     .foregroundStyle(selected ? Theme.text : Theme.textSecondary)
                     .lineLimit(1)
                 Spacer()
@@ -243,11 +244,11 @@ struct SidebarView: View {
                     deviceBadge(entry.device)
                 }
                 Text("\(model.agentCount(in: entry))")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11 * scale))
                     .foregroundStyle(Theme.textGhost)
             }
             .padding(.horizontal, 8)
-            .frame(height: 30)
+            .frame(height: 30 * scale)
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
@@ -263,7 +264,7 @@ struct SidebarView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(agent.title)
-                        .font(.system(size: 13.5))
+                        .font(.system(size: 13.5 * scale))
                         .foregroundStyle(Theme.text)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -272,13 +273,13 @@ struct SidebarView: View {
                 HStack(spacing: 5) {
                     AgentKindBadge(kind: agent.agent)
                     Text("·")
-                        .font(.system(size: 11.5))
+                        .font(.system(size: 11.5 * scale))
                         .foregroundStyle(Theme.textGhost)
                     Image(systemName: "folder")
-                        .font(.system(size: 9.5))
+                        .font(.system(size: 9.5 * scale))
                         .foregroundStyle(Theme.textTertiary)
                     Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
-                        .font(.system(size: 11.5))
+                        .font(.system(size: 11.5 * scale))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
@@ -290,7 +291,7 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .frame(height: 51)
+            .frame(height: 51 * scale)
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
@@ -303,20 +304,20 @@ struct SidebarView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "terminal")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11 * scale))
                     .foregroundStyle(Theme.textTertiary)
                 Text(session.title)
-                    .font(.system(size: 13.5))
+                    .font(.system(size: 13.5 * scale))
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Spacer(minLength: 0)
                 Text("Local")
-                    .font(.system(size: 11))
+                    .font(.system(size: 11 * scale))
                     .foregroundStyle(Theme.textGhost)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .frame(height: 34)
+            .frame(height: 34 * scale)
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
@@ -331,7 +332,7 @@ struct SidebarView: View {
     private func trailingDetail(_ agent: AgentInfo) -> some View {
         if agent.status == .blocked {
             Text("needs input")
-                .font(.system(size: 11.5))
+                .font(.system(size: 11.5 * scale))
                 .foregroundStyle(Theme.warning)
         }
     }
@@ -349,21 +350,21 @@ struct SidebarView: View {
                             .foregroundStyle(Theme.textSecondary)
                     } else {
                         Image(systemName: "square.stack.3d.up")
-                            .font(.system(size: 10.5))
+                            .font(.system(size: 10.5 * scale))
                             .foregroundStyle(Theme.textSecondary)
                     }
                     Text(model.filteredDevice?.name ?? "All Devices")
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.system(size: 12.5 * scale, weight: .medium))
                         .foregroundStyle(Theme.text)
                     Circle()
                         .fill(connectionDotColor)
-                        .frame(width: 6, height: 6)
+                        .frame(width: 6 * scale, height: 6 * scale)
                     Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8.5, weight: .semibold))
+                        .font(.system(size: 8.5 * scale, weight: .semibold))
                         .foregroundStyle(Theme.textGhost)
                 }
                 .padding(.horizontal, 8)
-                .frame(height: 28)
+                .frame(height: 28 * scale)
                 .contentShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
@@ -385,14 +386,14 @@ struct SidebarView: View {
 
             SettingsLink {
                 Image(systemName: "gearshape")
-                    .font(.system(size: 12.5))
+                    .font(.system(size: 12.5 * scale))
                     .foregroundStyle(Theme.textTertiary)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 26 * scale, height: 26 * scale)
             }
             .buttonStyle(.plain)
         }
         .padding(.horizontal, 10)
-        .frame(height: 40)
+        .frame(height: 40 * scale)
     }
 
     private var connectionDotColor: Color {
@@ -410,14 +411,15 @@ struct TitlebarIconButton: View {
     let systemName: String
     let help: String
     let action: () -> Void
+    @Environment(\.sidebarScale) private var scale
     @State private var hovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 12))
+                .font(.system(size: 12 * scale))
                 .foregroundStyle(Theme.textTertiary)
-                .frame(width: 24, height: 22)
+                .frame(width: 24 * scale, height: 22 * scale)
                 .background(
                     RoundedRectangle(cornerRadius: 5)
                         .fill(hovered ? AnyShapeStyle(Theme.itemWash) : AnyShapeStyle(.clear))
@@ -435,11 +437,12 @@ struct TitlebarIconButton: View {
 struct DevicePopover: View {
     @ObservedObject var model: AppModel
     @Binding var isPresented: Bool
+    @Environment(\.sidebarScale) private var scale
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
             Text("DEVICES")
-                .font(.system(size: 10.5, weight: .medium))
+                .font(.system(size: 10.5 * scale, weight: .medium))
                 .kerning(0.3)
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.horizontal, 9)
@@ -452,21 +455,21 @@ struct DevicePopover: View {
             } label: {
                 HStack(spacing: 9) {
                     Image(systemName: "square.stack.3d.up")
-                        .font(.system(size: 13))
+                        .font(.system(size: 13 * scale))
                         .foregroundStyle(model.deviceFilter == nil ? Theme.text : Theme.textSecondary)
-                        .frame(width: 16)
+                        .frame(width: 16 * scale)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("All Devices")
-                            .font(.system(size: 13))
+                            .font(.system(size: 13 * scale))
                             .foregroundStyle(Theme.text)
                         Text("\(model.devices.count) devices · \(connectedCount) connected")
-                            .font(.system(size: 11))
+                            .font(.system(size: 11 * scale))
                             .foregroundStyle(Theme.textTertiary)
                     }
                     Spacer(minLength: 0)
                     if model.deviceFilter == nil {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.system(size: 11 * scale, weight: .bold))
                             .foregroundStyle(Theme.text)
                     }
                 }
@@ -531,16 +534,16 @@ struct DevicePopover: View {
         Button(action: action) {
             HStack(spacing: 9) {
                 Image(systemName: icon)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: 11.5 * scale))
                     .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 16)
+                    .frame(width: 16 * scale)
                 Text(label)
-                    .font(.system(size: 13))
+                    .font(.system(size: 13 * scale))
                     .foregroundStyle(Theme.textSecondary)
                 Spacer()
             }
             .padding(.horizontal, 9)
-            .frame(height: 30)
+            .frame(height: 30 * scale)
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle())
@@ -552,6 +555,7 @@ struct DevicePopoverRow: View {
     let isActive: Bool
     let connection: ConnectionState
     let action: () -> Void
+    @Environment(\.sidebarScale) private var scale
     @State private var hovered = false
 
     private var dotColor: Color {
@@ -568,25 +572,25 @@ struct DevicePopoverRow: View {
             HStack(spacing: 9) {
                 DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 13)
                     .foregroundStyle(isActive ? Theme.text : Theme.textSecondary)
-                    .frame(width: 16)
+                    .frame(width: 16 * scale)
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(device.name)
-                            .font(.system(size: 13))
+                            .font(.system(size: 13 * scale))
                             .foregroundStyle(Theme.text)
                         Circle()
                             .fill(dotColor)
-                            .frame(width: 6, height: 6)
+                            .frame(width: 6 * scale, height: 6 * scale)
                     }
                     Text(device.subtitle)
-                        .font(.system(size: 11))
+                        .font(.system(size: 11 * scale))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                 }
                 Spacer(minLength: 0)
                 if isActive {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 11 * scale, weight: .bold))
                         .foregroundStyle(Theme.text)
                 }
             }
