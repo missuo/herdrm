@@ -142,6 +142,15 @@ final class LineBreakTerminalView: LocalProcessTerminalView {
     private var lightColorAdapter = LightTerminalANSIAdapter()
 
     override func dataReceived(slice: ArraySlice<UInt8>) {
+        // SwiftTerm drops the selection on every chunk of output and on every
+        // linefeed while mouse reporting is on, so a selection made while an
+        // agent is streaming vanishes as fast as it is made. Parking mouse
+        // reporting for the feed is SwiftTerm's own "preserve the selection"
+        // path; output is delivered on the main thread, like mouse events, so
+        // nothing can observe the parked flag.
+        let saved = allowMouseReporting
+        allowMouseReporting = false
+        defer { allowMouseReporting = saved }
         guard usesLightColors else {
             super.dataReceived(slice: slice)
             return
@@ -153,12 +162,12 @@ final class LineBreakTerminalView: LocalProcessTerminalView {
     }
 
     // Dragging always selects text locally, like a native text view. With mouse
-    // reporting on, SwiftTerm forwards every mouse event to the TUI (herdr's
-    // attach stream requests the mouse, and via XTSHIFTESCAPE even Shift+drag),
-    // leaving no way to select or copy anything. Clicks and the scroll wheel
-    // still reach the TUI — only drags (and Shift/double/triple clicks, which
-    // only mean selection) are kept local by parking mouse reporting for the
-    // duration of the event.
+    // reporting on, SwiftTerm forwards every mouse event to the process, leaving
+    // no way to select or copy anything. Clicks and the wheel still go through:
+    // a local shell app acts on them, while `herdr agent attach` (0.8.0) only
+    // ever forwards the wheel to the pane app and swallows button presses. Drags
+    // (and Shift/double/triple clicks, which only mean selection) are kept local
+    // by parking mouse reporting for the event.
     private func withLocalSelection(_ event: NSEvent, _ forward: (NSEvent) -> Void) {
         let saved = allowMouseReporting
         allowMouseReporting = false
