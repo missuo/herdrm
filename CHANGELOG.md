@@ -5,6 +5,16 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- `make build` works without the maintainer's Developer ID certificate. It pins
+  that identity for Debug so dev builds keep UserNotifications working, but
+  xcodegen rewrites the project on every build, so an Xcode-side signing change
+  never survived and contributors were left with a hard failure. It now falls
+  back to ad-hoc signing when the certificate is absent — ad-hoc rather than
+  unsigned because arm64 refuses to exec a binary with no signature at all.
+
 ## [0.5.2] - 2026-08-28
 
 ### Added
