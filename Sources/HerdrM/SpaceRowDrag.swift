@@ -115,13 +115,16 @@ struct AgentRowDragHost: View {
     }
 }
 
-/// Click / menu / double-click for herdr terminals. Drag stays off until
-/// `tab.move` is wired for this section.
 struct TerminalRowDragHost: View {
     let entryID: String
     let onClick: () -> Void
     let onRename: () -> Void
     let onClose: () -> Void
+    let onDragStart: (String) -> Void
+    let onDragEnd: () -> Void
+    let onDropHover: (Bool) -> Void
+    let onHoverExit: () -> Void
+    let onDrop: (String, Bool) -> Void
 
     var body: some View {
         SidebarRowDragHost(
@@ -134,7 +137,11 @@ struct TerminalRowDragHost: View {
             ],
             onClick: onClick,
             onDoubleClick: onRename,
-            allowsDrag: false
+            onDragStart: onDragStart,
+            onDragEnd: onDragEnd,
+            onDropHover: onDropHover,
+            onHoverExit: onHoverExit,
+            onDrop: onDrop
         )
     }
 }
@@ -187,11 +194,12 @@ final class SidebarRowDragNSView: NSView, NSDraggingSource {
         let now = convert(event.locationInWindow, from: nil)
         guard hypot(now.x - start.x, now.y - start.y) >= 4 else { return }
         didDrag = true
+        let preview = dragPreviewImage()
         onDragStart?(entryID)
         let pbItem = NSPasteboardItem()
         pbItem.setString(entryID, forType: pasteboardType)
         let item = NSDraggingItem(pasteboardWriter: pbItem)
-        item.setDraggingFrame(bounds, contents: nil)
+        item.setDraggingFrame(bounds, contents: preview)
         beginDraggingSession(with: [item], event: down, source: self)
     }
 
@@ -272,6 +280,20 @@ final class SidebarRowDragNSView: NSView, NSDraggingSource {
         let after = placeAfter(sender)
         onDrop?(sourceID, after)
         return true
+    }
+
+    /// Snapshot the SwiftUI row under this transparent overlay. Taken before
+    /// `onDragStart` dims the source so the drag image stays opaque.
+    private func dragPreviewImage() -> NSImage? {
+        guard let content = window?.contentView else { return nil }
+        let rect = convert(bounds, to: content)
+        guard !rect.isEmpty, let rep = content.bitmapImageRepForCachingDisplay(in: rect) else {
+            return nil
+        }
+        content.cacheDisplay(in: rect, to: rep)
+        let image = NSImage(size: rect.size)
+        image.addRepresentation(rep)
+        return image
     }
 
     private func placeAfter(_ sender: NSDraggingInfo) -> Bool {

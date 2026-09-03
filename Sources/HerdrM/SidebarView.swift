@@ -26,6 +26,8 @@ struct SidebarView: View {
     @State private var spaceDrop: (id: String, after: Bool)?
     @State private var draggingAgentID: String?
     @State private var agentDrop: (id: String, after: Bool)?
+    @State private var draggingTerminalID: String?
+    @State private var terminalDrop: (id: String, after: Bool)?
     @State private var spacesExpanded = true
     @State private var agentsExpanded = true
     @State private var terminalsExpanded = true
@@ -122,7 +124,12 @@ struct SidebarView: View {
                         groupHeader("Terminals", expanded: $terminalsExpanded)
                         if terminalsExpanded {
                             ForEach(model.visibleTerminals) { entry in
-                                TerminalRowView(entry: entry, model: model)
+                                TerminalRowView(
+                                    entry: entry,
+                                    model: model,
+                                    draggingTerminalID: $draggingTerminalID,
+                                    terminalDrop: $terminalDrop
+                                )
                             }
                             ForEach(model.shellSessions) { session in
                                 shellRow(session)
@@ -243,6 +250,8 @@ struct SidebarView: View {
     private struct TerminalRowView: View {
         let entry: AppModel.TerminalEntry
         @ObservedObject var model: AppModel
+        @Binding var draggingTerminalID: String?
+        @Binding var terminalDrop: (id: String, after: Bool)?
         @State private var hovered = false
 
         var body: some View {
@@ -283,12 +292,37 @@ struct SidebarView: View {
                     .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
             )
             .onHover { hovered = $0 }
+            .sidebarDragChrome(
+                isDragging: draggingTerminalID == entry.id,
+                dropAfter: terminalDrop?.after,
+                isTarget: terminalDrop?.id == entry.id
+            )
             .overlay {
                 TerminalRowDragHost(
                     entryID: entry.id,
                     onClick: { model.selectAgent(entry.ref) },
                     onRename: { model.terminalToRename = entry },
-                    onClose: { model.requestClosePane(entry.ref, name: entry.title) }
+                    onClose: { model.requestClosePane(entry.ref, name: entry.title) },
+                    onDragStart: { draggingTerminalID = $0 },
+                    onDragEnd: {
+                        draggingTerminalID = nil
+                        terminalDrop = nil
+                    },
+                    onDropHover: { after in
+                        terminalDrop = sidebarDropTarget(
+                            onto: entry.id, after: after, items: model.visibleTerminals
+                        )
+                    },
+                    onHoverExit: {
+                        if terminalDrop?.id == entry.id { terminalDrop = nil }
+                    },
+                    onDrop: { sourceID, after in
+                        draggingTerminalID = nil
+                        terminalDrop = nil
+                        guard let source = model.visibleTerminals.first(where: { $0.id == sourceID })
+                        else { return }
+                        model.moveTerminal(source, onto: entry, placeAfter: after)
+                    }
                 )
             }
             .accessibilityAddTraits(.isButton)
@@ -378,14 +412,11 @@ struct SidebarView: View {
                 .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
         )
         .onHover { hovered = $0 }
-        .opacity(draggingAgentID == entry.id ? 0.4 : 1)
-        .overlay(alignment: (agentDrop?.after ?? false) ? .bottom : .top) {
-            if agentDrop?.id == entry.id {
-                Rectangle()
-                    .fill(Theme.accent)
-                    .frame(height: 2)
-            }
-        }
+        .sidebarDragChrome(
+            isDragging: draggingAgentID == entry.id,
+            dropAfter: agentDrop?.after,
+            isTarget: agentDrop?.id == entry.id
+        )
         .overlay {
             AgentRowDragHost(
                 entryID: entry.id,
@@ -397,7 +428,11 @@ struct SidebarView: View {
                     draggingAgentID = nil
                     agentDrop = nil
                 },
-                onDropHover: { after in agentDrop = (entry.id, after) },
+                    onDropHover: { after in
+                        agentDrop = sidebarDropTarget(
+                            onto: entry.id, after: after, items: model.visibleAgents
+                        )
+                    },
                 onHoverExit: {
                     if agentDrop?.id == entry.id { agentDrop = nil }
                 },
@@ -696,7 +731,32 @@ struct DevicePopoverRow: View {
     }
 }
 
+/// `after A` and `before B` are the same gap. Always draw that gap on B's
+/// top edge so the line does not jump when the pointer crosses the seam.
+private func sidebarDropTarget<T: Identifiable>(
+    onto id: T.ID, after: Bool, items: [T]
+) -> (id: T.ID, after: Bool) {
+    guard after,
+          let index = items.firstIndex(where: { $0.id == id }),
+          items.indices.contains(index + 1)
+    else { return (id, after) }
+    return (items[index + 1].id, false)
+}
+
 private extension View {
+    func sidebarDragChrome(isDragging: Bool, dropAfter: Bool?, isTarget: Bool) -> some View {
+        opacity(isDragging ? 0.4 : 1)
+            .animation(.easeOut(duration: 0.15), value: isDragging)
+            .overlay(alignment: (dropAfter ?? false) ? .bottom : .top) {
+                if isTarget {
+                    Rectangle()
+                        .fill(Theme.accent)
+                        .frame(height: 2)
+                        .transaction { $0.animation = nil }
+                }
+            }
+    }
+
     /// Button trait plus expanded/collapsed so VoiceOver matches the chevron.
     /// macOS SwiftUI has no `accessibilityExpanded`; VoiceOver reads the value.
     func disclosureAccessibility(expanded: Bool) -> some View {
@@ -754,14 +814,11 @@ private struct SpaceRowView: View {
                 .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
         )
         .onHover { hovered = $0 }
-        .opacity(draggingSpaceID == entry.id ? 0.4 : 1)
-        .overlay(alignment: (spaceDrop?.after ?? false) ? .bottom : .top) {
-            if spaceDrop?.id == entry.id {
-                Rectangle()
-                    .fill(Theme.accent)
-                    .frame(height: 2)
-            }
-        }
+        .sidebarDragChrome(
+            isDragging: draggingSpaceID == entry.id,
+            dropAfter: spaceDrop?.after,
+            isTarget: spaceDrop?.id == entry.id
+        )
         .overlay {
             SpaceRowDragHost(
                 entryID: entry.id,
@@ -774,7 +831,11 @@ private struct SpaceRowView: View {
                     draggingSpaceID = nil
                     spaceDrop = nil
                 },
-                onDropHover: { after in spaceDrop = (entry.id, after) },
+                    onDropHover: { after in
+                        spaceDrop = sidebarDropTarget(
+                            onto: entry.id, after: after, items: model.visibleSpaces
+                        )
+                    },
                 onHoverExit: {
                     if spaceDrop?.id == entry.id { spaceDrop = nil }
                 },

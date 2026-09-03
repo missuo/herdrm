@@ -213,10 +213,13 @@ public struct TabInfo: Codable, Sendable, Identifiable, Equatable {
 
     /// herdr labels fresh tabs with their number ("1", "2"); only a label
     /// someone actually set is a display name.
+    ///
+    /// After `tab.move`, `number` and `label` can desync (`number=1`,
+    /// `label="2"`). Any all-digit label is still a default, not a name.
     public var customLabel: String? {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        if let number, trimmed == String(number) { return nil }
+        if trimmed.allSatisfy(\.isNumber) { return nil }
         return trimmed
     }
 

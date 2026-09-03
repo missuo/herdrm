@@ -267,6 +267,7 @@ final class AppModel: ObservableObject {
 
         var id: String { "\(device.id.uuidString)-\(pane.paneID)" }
         var ref: PaneRef { PaneRef(deviceID: device.id, paneID: pane.paneID) }
+        var tabID: String? { pane.tabID ?? tab?.tabID }
 
         var title: String {
             // User tab labels must win or `tab.rename` is invisible behind OSC.
@@ -340,7 +341,7 @@ final class AppModel: ObservableObject {
     }
 
     /// Agents across the scope, filtered by selected space, in herdr tab order
-    /// (device → workspace → tab number) so sidebar drag matches the TUI.
+    /// (device → workspace → snapshot array) so sidebar drag matches the TUI.
     var visibleAgents: [AgentEntry] {
         var entries = devicesInScope.flatMap { device in
             session(device.id).agents.map { agentEntry(device: device, agent: $0) }
@@ -384,7 +385,17 @@ final class AppModel: ObservableObject {
                 $0.device.id == space.deviceID && $0.pane.workspaceID == space.workspaceID
             }
         }
-        return entries
+        let deviceRank = Dictionary(uniqueKeysWithValues: devicesInScope.enumerated().map { ($1.id, $0) })
+        return entries.sorted { lhs, rhs in
+            let d0 = deviceRank[lhs.device.id] ?? Int.max
+            let d1 = deviceRank[rhs.device.id] ?? Int.max
+            if d0 != d1 { return d0 < d1 }
+            let w0 = workspaceRank(deviceID: lhs.device.id, workspaceID: lhs.pane.workspaceID)
+            let w1 = workspaceRank(deviceID: rhs.device.id, workspaceID: rhs.pane.workspaceID)
+            if w0 != w1 { return w0 < w1 }
+            return tabRank(deviceID: lhs.device.id, tabID: lhs.tabID)
+                < tabRank(deviceID: rhs.device.id, tabID: rhs.tabID)
+        }
     }
 
     func isUnread(_ entry: AgentEntry) -> Bool {
@@ -422,8 +433,9 @@ final class AppModel: ObservableObject {
         session(deviceID).workspaces.firstIndex { $0.workspaceID == workspaceID } ?? Int.max
     }
 
-    private func tabRank(deviceID: UUID, tabID: String) -> Int {
-        session(deviceID).tabs.firstIndex { $0.tabID == tabID } ?? Int.max
+    private func tabRank(deviceID: UUID, tabID: String?) -> Int {
+        guard let tabID else { return Int.max }
+        return session(deviceID).tabs.firstIndex { $0.tabID == tabID } ?? Int.max
     }
 
     private func orderedTabIDs(deviceID: UUID, workspaceID: String) -> [String] {
@@ -807,7 +819,7 @@ final class AppModel: ObservableObject {
             sessions[deviceID]?.agents = snapshot.agents
             sessions[deviceID]?.workspaces = snapshot.workspaces
             sessions[deviceID]?.workspaces = snapshot.workspaces
-            sessions[deviceID]?.tabs = Self.orderedTabs(
+            sessions[deviceID]?.tabs = TabReorder.ordered(
                 snapshot.tabs ?? [],
                 workspaces: snapshot.workspaces
             )
@@ -996,7 +1008,7 @@ final class AppModel: ObservableObject {
     }
 
     func renameTerminal(_ entry: TerminalEntry, name: String) {
-        guard let tabID = entry.pane.tabID ?? entry.tab?.tabID else { return }
+        guard let tabID = entry.tabID else { return }
         renameTabLabel(device: entry.device, tabID: tabID, current: entry.title, name: name)
     }
 
@@ -1026,11 +1038,13 @@ final class AppModel: ObservableObject {
         ) else { return }
 
         if let current = sessions[source.device.id]?.workspaces {
-            sessions[source.device.id]?.workspaces = WorkspaceReorder.applying(
-                current,
-                id: \.workspaceID,
-                plan: plan
-            )
+            withAnimation(.easeInOut(duration: 0.2)) {
+                sessions[source.device.id]?.workspaces = WorkspaceReorder.applying(
+                    current,
+                    id: \.workspaceID,
+                    plan: plan
+                )
+            }
         }
 
         Task {
@@ -1053,56 +1067,72 @@ final class AppModel: ObservableObject {
         guard source.device.id == target.device.id,
               source.agent.workspaceID == target.agent.workspaceID
         else { return }
-        let orderedIDs = orderedTabIDs(
-            deviceID: source.device.id,
-            workspaceID: source.agent.workspaceID
-        )
-        guard let insertIndex = TabReorder.insertIndex(
+        moveTab(
+            device: source.device,
+            workspaceID: source.agent.workspaceID,
             moving: source.agent.tabID,
             onto: target.agent.tabID,
+            placeAfter: placeAfter
+        )
+    }
+
+    /// Same `tab.move` path as agents. Cross-space / cross-device drops are ignored.
+    func moveTerminal(_ source: TerminalEntry, onto target: TerminalEntry, placeAfter: Bool) {
+        guard source.device.id == target.device.id,
+              source.pane.workspaceID == target.pane.workspaceID,
+              let moving = source.tabID,
+              let onto = target.tabID
+        else { return }
+        moveTab(
+            device: source.device,
+            workspaceID: source.pane.workspaceID,
+            moving: moving,
+            onto: onto,
+            placeAfter: placeAfter
+        )
+    }
+
+    private func moveTab(
+        device: Device,
+        workspaceID: String,
+        moving: String,
+        onto: String,
+        placeAfter: Bool
+    ) {
+        let orderedIDs = orderedTabIDs(deviceID: device.id, workspaceID: workspaceID)
+        guard let insertIndex = TabReorder.insertIndex(
+            moving: moving,
+            onto: onto,
             placeAfter: placeAfter,
             orderedIDs: orderedIDs
         ) else { return }
         guard let plan = WorkspaceReorder.plan(
-            moving: source.agent.tabID,
-            onto: target.agent.tabID,
+            moving: moving,
+            onto: onto,
             placeAfter: placeAfter,
             orderedIDs: orderedIDs
         ) else { return }
 
-        if let current = sessions[source.device.id]?.tabs {
-            let scoped = current.filter { $0.workspaceID == source.agent.workspaceID }
+        if let current = sessions[device.id]?.tabs {
+            let scoped = current.filter { $0.workspaceID == workspaceID }
             let reordered = WorkspaceReorder.applying(scoped, id: \.tabID, plan: plan)
-            sessions[source.device.id]?.tabs = Self.replacingTabs(
-                current,
-                workspaceID: source.agent.workspaceID,
-                with: reordered
-            )
+            withAnimation(.easeInOut(duration: 0.2)) {
+                sessions[device.id]?.tabs = Self.replacingTabs(
+                    current,
+                    workspaceID: workspaceID,
+                    with: reordered
+                )
+            }
         }
 
         Task {
             do {
-                try await service(for: source.device).moveTab(
-                    tabID: source.agent.tabID,
-                    insertIndex: insertIndex
-                )
-                await refresh(source.device.id)
+                try await service(for: device).moveTab(tabID: moving, insertIndex: insertIndex)
+                await refresh(device.id)
             } catch {
-                await refresh(source.device.id)
-                actionError = actionErrorMessage(error, device: source.device)
+                await refresh(device.id)
+                actionError = actionErrorMessage(error, device: device)
             }
-        }
-    }
-
-    private static func orderedTabs(_ tabs: [TabInfo], workspaces: [WorkspaceInfo]) -> [TabInfo] {
-        let wsIndex = Dictionary(uniqueKeysWithValues: workspaces.enumerated().map {
-            ($1.workspaceID, $0)
-        })
-        return tabs.sorted {
-            let w0 = wsIndex[$0.workspaceID] ?? Int.max
-            let w1 = wsIndex[$1.workspaceID] ?? Int.max
-            if w0 != w1 { return w0 < w1 }
-            return ($0.number ?? Int.max) < ($1.number ?? Int.max)
         }
     }
 
