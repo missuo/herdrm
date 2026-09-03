@@ -122,12 +122,7 @@ struct SidebarView: View {
                         groupHeader("Terminals", expanded: $terminalsExpanded)
                         if terminalsExpanded {
                             ForEach(model.visibleTerminals) { entry in
-                                terminalRow(entry)
-                                    .contextMenu {
-                                        Button("Close Terminal…", role: .destructive) {
-                                            model.requestClosePane(entry.ref, name: entry.title)
-                                        }
-                                    }
+                                TerminalRowView(entry: entry, model: model)
                             }
                             ForEach(model.shellSessions) { session in
                                 shellRow(session)
@@ -245,13 +240,15 @@ struct SidebarView: View {
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
     }
 
-    private func terminalRow(_ entry: AppModel.TerminalEntry) -> some View {
-        let selected = !model.isFileManagerActive
-            && model.selectedPane == entry.ref
-            && model.selectedShellID == nil
-        return Button {
-            model.selectAgent(entry.ref)
-        } label: {
+    private struct TerminalRowView: View {
+        let entry: AppModel.TerminalEntry
+        @ObservedObject var model: AppModel
+        @State private var hovered = false
+
+        var body: some View {
+            let selected = !model.isFileManagerActive
+                && model.selectedPane == entry.ref
+                && model.selectedShellID == nil
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Image(systemName: "terminal")
@@ -273,7 +270,7 @@ struct SidebarView: View {
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if model.showsRowDeviceBadges {
-                        deviceBadge(entry.device)
+                        DeviceChip(device: entry.device)
                     }
                 }
             }
@@ -281,8 +278,22 @@ struct SidebarView: View {
             .padding(.vertical, 7)
             .frame(height: 51)
             .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
+            )
+            .onHover { hovered = $0 }
+            .overlay {
+                TerminalRowDragHost(
+                    entryID: entry.id,
+                    onClick: { model.selectAgent(entry.ref) },
+                    onRename: { model.terminalToRename = entry },
+                    onClose: { model.requestClosePane(entry.ref, name: entry.title) }
+                )
+            }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(entry.title)
         }
-        .buttonStyle(SidebarRowButtonStyle(selected: selected))
     }
 
     /// App-owned standalone shell (local login shell or plain ssh), outside
@@ -311,10 +322,6 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
-    }
-
-    private func deviceBadge(_ device: Device) -> some View {
-        DeviceChip(device: device)
     }
 
     private struct AgentRowView: View {

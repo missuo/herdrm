@@ -165,6 +165,7 @@ final class AppModel: ObservableObject {
     @Published var sshAuthenticationRequest: SSHAuthenticationRequest?
     @Published var spaceToRename: SpaceEntry?
     @Published var agentToRename: AgentEntry?
+    @Published var terminalToRename: TerminalEntry?
     /// Transient action failures: shown as an alert, never by tearing down sessions.
     @Published var actionError: String?
 
@@ -268,12 +269,13 @@ final class AppModel: ObservableObject {
         var ref: PaneRef { PaneRef(deviceID: device.id, paneID: pane.paneID) }
 
         var title: String {
+            // User tab labels must win or `tab.rename` is invisible behind OSC.
+            if let label = tab?.customLabel {
+                return label
+            }
             if let terminalTitle = pane.terminalTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
                !terminalTitle.isEmpty {
                 return terminalTitle
-            }
-            if let label = tab?.customLabel {
-                return label
             }
             if let cwd = pane.cwd, !cwd.isEmpty {
                 let basename = URL(fileURLWithPath: cwd).lastPathComponent
@@ -990,17 +992,23 @@ final class AppModel: ObservableObject {
     }
 
     func renameAgent(_ entry: AgentEntry, name: String) {
+        renameTabLabel(device: entry.device, tabID: entry.agent.tabID, current: entry.title, name: name)
+    }
+
+    func renameTerminal(_ entry: TerminalEntry, name: String) {
+        guard let tabID = entry.pane.tabID ?? entry.tab?.tabID else { return }
+        renameTabLabel(device: entry.device, tabID: tabID, current: entry.title, name: name)
+    }
+
+    private func renameTabLabel(device: Device, tabID: String, current: String, name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, name != entry.title else { return }
+        guard !name.isEmpty, name != current else { return }
         Task {
             do {
-                try await service(for: entry.device).renameTab(
-                    tabID: entry.agent.tabID,
-                    label: name
-                )
-                await refresh(entry.device.id)
+                try await service(for: device).renameTab(tabID: tabID, label: name)
+                await refresh(device.id)
             } catch {
-                actionError = actionErrorMessage(error, device: entry.device)
+                actionError = actionErrorMessage(error, device: device)
             }
         }
     }
