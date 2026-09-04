@@ -21,6 +21,10 @@ the Sparkle update description — a release without a section here fails CI.
 - After `tab.move`, a leftover numeric tab label (`"2"` on tab number 1)
   is no longer treated as a display name, so Agents keep their real title.
 
+### Fixed
+- Sidebar Space, Agent, and Terminal rows expose a VoiceOver default action
+  so Activate selects the row (they are not SwiftUI `Button`s).
+
 ## [0.5.3] - 2026-08-29
 
 ### Added
