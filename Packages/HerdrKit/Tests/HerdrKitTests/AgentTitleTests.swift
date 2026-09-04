@@ -171,6 +171,12 @@ final class AgentTitleTests: XCTestCase {
             focused: true, paneCount: 1, agentStatusRaw: "idle"
         )
         XCTAssertNil(fresh.customLabel)
+        // tab.move updates position without rewriting the numeric label.
+        let desynced = TabInfo(
+            tabID: "w1:t1", workspaceID: "w1", number: 1, label: "2",
+            focused: true, paneCount: 1, agentStatusRaw: "idle"
+        )
+        XCTAssertNil(desynced.customLabel)
         let renamed = TabInfo(
             tabID: "w1:t2", workspaceID: "w1", number: 2, label: "制度图谱讨论",
             focused: false, paneCount: 1, agentStatusRaw: nil

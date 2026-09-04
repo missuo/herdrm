@@ -5,6 +5,26 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- Double-click a Space, Agent, or herdr Terminal in the sidebar to rename it
+  (same sheet as the context menu). Terminals now rename via `tab.rename`, and
+  a user-set tab label wins over the OSC title so the new name is visible.
+- herdr Terminals in the sidebar can be drag-reordered. The drop calls the
+  same `tab.move` path as Agents; cross-space drops are ignored. Standalone
+  shells stay in creation order. Drag uses snapshot array order (the
+  `insert_index` herdr actually applies), not tab `number`. Rows slide into
+  place and the dragged row follows the pointer.
+
+### Fixed
+- After `tab.move`, a leftover numeric tab label (`"2"` on tab number 1)
+  is no longer treated as a display name, so Agents keep their real title.
+
+### Fixed
+- Sidebar Space, Agent, and Terminal rows expose a VoiceOver default action
+  so Activate selects the row (they are not SwiftUI `Button`s).
+
 ## [0.5.3] - 2026-08-29
 
 ### Added

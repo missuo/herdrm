@@ -15,30 +15,35 @@ struct SidebarRowDragHost: NSViewRepresentable {
     let pasteboardType: NSPasteboard.PasteboardType
     let menuItems: [SidebarContextMenuItem]
     let onClick: () -> Void
-    let onDragStart: (String) -> Void
-    let onDragEnd: () -> Void
-    let onDropHover: (Bool) -> Void
-    let onHoverExit: () -> Void
-    let onDrop: (String, Bool) -> Void
+    var onDoubleClick: (() -> Void)?
+    var allowsDrag = true
+    var onDragStart: ((String) -> Void)?
+    var onDragEnd: (() -> Void)?
+    var onDropHover: ((Bool) -> Void)?
+    var onHoverExit: (() -> Void)?
+    var onDrop: ((String, Bool) -> Void)?
 
     func makeNSView(context: Context) -> SidebarRowDragNSView {
         // Non-zero seed frame: a SwiftUI overlay NSView that starts at .zero
         // can stay 0-size, so clicks and drags never arrive (#42).
         let view = SidebarRowDragNSView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
         view.pasteboardType = pasteboardType
-        view.registerForDraggedTypes([pasteboardType])
+        view.allowsDrag = allowsDrag
+        if allowsDrag { view.registerForDraggedTypes([pasteboardType]) }
         return view
     }
 
     func updateNSView(_ view: SidebarRowDragNSView, context: Context) {
-        if view.pasteboardType != pasteboardType {
+        if view.pasteboardType != pasteboardType || view.allowsDrag != allowsDrag {
             view.unregisterDraggedTypes()
             view.pasteboardType = pasteboardType
-            view.registerForDraggedTypes([pasteboardType])
+            if allowsDrag { view.registerForDraggedTypes([pasteboardType]) }
         }
         view.entryID = entryID
         view.menuItems = menuItems
+        view.allowsDrag = allowsDrag
         view.onClick = onClick
+        view.onDoubleClick = onDoubleClick
         view.onDragStart = onDragStart
         view.onDragEnd = onDragEnd
         view.onDropHover = onDropHover
@@ -69,6 +74,7 @@ struct SpaceRowDragHost: View {
                 .destructive(title: String(localized: "Close Space \"\(label)\"…"), action: onClose),
             ],
             onClick: onClick,
+            onDoubleClick: onRename,
             onDragStart: onDragStart,
             onDragEnd: onDragEnd,
             onDropHover: onDropHover,
@@ -99,6 +105,38 @@ struct AgentRowDragHost: View {
                 .destructive(title: String(localized: "Close Agent…"), action: onClose),
             ],
             onClick: onClick,
+            onDoubleClick: onRename,
+            onDragStart: onDragStart,
+            onDragEnd: onDragEnd,
+            onDropHover: onDropHover,
+            onHoverExit: onHoverExit,
+            onDrop: onDrop
+        )
+    }
+}
+
+struct TerminalRowDragHost: View {
+    let entryID: String
+    let onClick: () -> Void
+    let onRename: () -> Void
+    let onClose: () -> Void
+    let onDragStart: (String) -> Void
+    let onDragEnd: () -> Void
+    let onDropHover: (Bool) -> Void
+    let onHoverExit: () -> Void
+    let onDrop: (String, Bool) -> Void
+
+    var body: some View {
+        SidebarRowDragHost(
+            entryID: entryID,
+            pasteboardType: SidebarRowDragNSView.terminalPasteboardType,
+            menuItems: [
+                .item(title: String(localized: "Rename Terminal…"), action: onRename),
+                .separator,
+                .destructive(title: String(localized: "Close Terminal…"), action: onClose),
+            ],
+            onClick: onClick,
+            onDoubleClick: onRename,
             onDragStart: onDragStart,
             onDragEnd: onDragEnd,
             onDropHover: onDropHover,
@@ -111,11 +149,14 @@ struct AgentRowDragHost: View {
 final class SidebarRowDragNSView: NSView, NSDraggingSource {
     static let spacePasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.space-id")
     static let agentPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.agent-id")
+    static let terminalPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.terminal-id")
 
     var pasteboardType = SidebarRowDragNSView.spacePasteboardType
     var entryID = ""
     var menuItems: [SidebarContextMenuItem] = []
+    var allowsDrag = true
     var onClick: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
     var onDragStart: ((String) -> Void)?
     var onDragEnd: (() -> Void)?
     var onDropHover: ((Bool) -> Void)?
@@ -148,21 +189,30 @@ final class SidebarRowDragNSView: NSView, NSDraggingSource {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let down = downEvent, !didDrag else { return }
+        guard allowsDrag, let down = downEvent, !didDrag else { return }
         let start = convert(down.locationInWindow, from: nil)
         let now = convert(event.locationInWindow, from: nil)
         guard hypot(now.x - start.x, now.y - start.y) >= 4 else { return }
         didDrag = true
+        let preview = dragPreviewImage()
         onDragStart?(entryID)
         let pbItem = NSPasteboardItem()
         pbItem.setString(entryID, forType: pasteboardType)
         let item = NSDraggingItem(pasteboardWriter: pbItem)
-        item.setDraggingFrame(bounds, contents: nil)
+        item.setDraggingFrame(bounds, contents: preview)
         beginDraggingSession(with: [item], event: down, source: self)
     }
 
     override func mouseUp(with event: NSEvent) {
-        if !didDrag { onClick?() }
+        if !didDrag {
+            // Native clickCount on mouse-up (Apple NSEvent.clickCount), not a
+            // home-grown streak. First up is 1 (select); second is 2 (rename).
+            if event.clickCount >= 2, let onDoubleClick {
+                onDoubleClick()
+            } else {
+                onClick?()
+            }
+        }
         downEvent = nil
         didDrag = false
     }
@@ -230,6 +280,20 @@ final class SidebarRowDragNSView: NSView, NSDraggingSource {
         let after = placeAfter(sender)
         onDrop?(sourceID, after)
         return true
+    }
+
+    /// Snapshot the SwiftUI row under this transparent overlay. Taken before
+    /// `onDragStart` dims the source so the drag image stays opaque.
+    private func dragPreviewImage() -> NSImage? {
+        guard let content = window?.contentView else { return nil }
+        let rect = convert(bounds, to: content)
+        guard !rect.isEmpty, let rep = content.bitmapImageRepForCachingDisplay(in: rect) else {
+            return nil
+        }
+        content.cacheDisplay(in: rect, to: rep)
+        let image = NSImage(size: rect.size)
+        image.addRepresentation(rep)
+        return image
     }
 
     private func placeAfter(_ sender: NSDraggingInfo) -> Bool {
