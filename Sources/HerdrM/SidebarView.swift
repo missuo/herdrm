@@ -292,6 +292,7 @@ struct SidebarView: View {
                 )
             }
             .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.selectAgent(entry.ref) }
             .accessibilityLabel(entry.title)
         }
     }
@@ -411,6 +412,7 @@ struct SidebarView: View {
             )
         }
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction { model.selectAgent(entry.ref) }
         .accessibilityLabel(accessibilityLabel(unread: unread))
     }
 
@@ -788,6 +790,7 @@ private struct SpaceRowView: View {
             )
         }
         .accessibilityAddTraits(.isButton)
+        .accessibilityAction { model.selectSpace(entry.ref) }
         .accessibilityLabel(accessibilityLabel)
     }
 
