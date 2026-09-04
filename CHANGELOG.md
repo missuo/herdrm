@@ -5,6 +5,14 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- Installed Oh My Pi (`omp`) now appears in the local New Agent picker even
+  though its hook-based lifecycle integration has no screen-detection manifest.
+  Settings → Agents also provides an Oh My Pi binary override. Install the
+  lifecycle extension with `herdr integration install omp` before starting OMP.
+
 ## [0.5.3] - 2026-08-29
 
 ### Added

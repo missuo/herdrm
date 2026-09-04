@@ -158,6 +158,41 @@ final class ShellEnvironmentTests: XCTestCase {
         XCTAssertEqual(redirected.first?.path, cursor.appendingPathComponent("cursor-agent").path)
     }
 
+    func testHookAgentIsDiscoveredWithoutManifestAlongsidePi() async throws {
+        let binaries = try bin("bin", command: "omp")
+        _ = try bin("bin", command: "pi")
+        let snapshot = ShellEnvironment(variables: [
+            "PATH": binaries.path,
+            "HOME": directory.path,
+        ])
+        let service = HerdrService(device: .local, localServer: nil)
+        let found = await service.installedAgents(
+            from: ["pi"],
+            includingIntegrationKinds: ["omp", "omp"],
+            snapshot: snapshot
+        )
+        XCTAssertEqual(found.map(\.kind), ["pi", "omp"])
+        XCTAssertEqual(found.map(\.path), [
+            binaries.appendingPathComponent("pi").path,
+            binaries.appendingPathComponent("omp").path,
+        ])
+
+        let advertised = await service.installedAgents(
+            from: ["omp", "pi"],
+            includingIntegrationKinds: ["omp"],
+            snapshot: snapshot
+        )
+        XCTAssertEqual(advertised.map(\.kind), ["omp", "pi"])
+
+        let missing = await service.installedAgents(
+            from: ["pi"],
+            includingIntegrationKinds: ["omp"],
+            overrides: ["omp": directory.appendingPathComponent("missing-omp").path],
+            snapshot: snapshot
+        )
+        XCTAssertEqual(missing.map(\.kind), ["pi"])
+    }
+
     // MARK: - Real zsh
 
     func testCaptureRunsLoginAndInteractiveStartupFilesAndIgnoresStdoutBanners() throws {

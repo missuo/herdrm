@@ -275,6 +275,7 @@ struct AgentsSettingsView: View {
         ("kimi", "Kimi", "kimi"),
         ("opencode", "OpenCode", "opencode"),
         ("pi", "Pi", "pi"),
+        ("omp", "Oh My Pi", "omp"),
         ("copilot", "Copilot", "copilot"),
     ]
 
