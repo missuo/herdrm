@@ -655,8 +655,11 @@ final class AppModel: ObservableObject {
                 AgentAttachmentCapabilityRegistry(manifests: manifests)
             let advertised = manifests.map(\.agent)
             if device(deviceID)?.isLocal == true {
+                // Herdr supports OMP through its lifecycle extension, so it has
+                // no screen-detection manifest in server.agent_manifests.
                 let found = await service.installedAgents(
                     from: advertised,
+                    includingIntegrationKinds: ["omp"],
                     overrides: AgentBinaryOverrides.load()
                 )
                 sessions[deviceID]?.agentCatalog = .loaded(
