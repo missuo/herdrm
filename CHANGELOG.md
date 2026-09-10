@@ -5,7 +5,7 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
-## [Unreleased]
+## [0.6.0] - 2026-09-10
 
 ### Added
 - **Tailcat devices**: connect to a herdr behind NAT with no system VPN, no
@@ -51,6 +51,11 @@ the Sparkle update description — a release without a section here fails CI.
   too old): the panel now shows the connection error with a Retry button
   instead of an endless spinner whose only hint was the footer indicator.
   (#69)
+
+### Changed
+- herdrm is now licensed under PolyForm Noncommercial 1.0.0 (#67): free to
+  use, modify, and share for any noncommercial purpose; commercial use
+  requires a separate license.
 
 ## [0.5.3] - 2026-08-29
 
