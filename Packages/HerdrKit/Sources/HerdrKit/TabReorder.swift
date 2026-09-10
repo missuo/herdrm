@@ -1,11 +1,37 @@
 import Foundation
 
-/// Maps a sidebar agent drop onto herdr's `tab.move` `insert_index`.
+/// Maps a sidebar drop onto herdr's `tab.move` `insert_index`.
 ///
-/// `orderedIDs` is one workspace's tabs in display order (`number`). The drop
-/// target is another tab in that list. Returns `nil` when the drop would not
-/// change order (same row, already adjacent, unknown ids).
+/// `orderedIDs` is one workspace's tabs in snapshot / `tab.list` display
+/// order — not `number`. Herdr applies `insert_index` before removing the
+/// source tab (`tab.moved` returns that workspace's updated ordered list).
+/// Returns `nil` when the drop would not change order (same row, already
+/// adjacent, unknown ids).
 public enum TabReorder: Sendable {
+    /// Groups by workspace list order and keeps snapshot array order inside
+    /// each workspace. `number` is a TUI slot, not a sort key.
+    public static func ordered(_ tabs: [TabInfo], workspaces: [WorkspaceInfo]) -> [TabInfo] {
+        let known = Set(workspaces.map(\.workspaceID))
+        var buckets: [String: [TabInfo]] = [:]
+        buckets.reserveCapacity(workspaces.count)
+        var unknown: [TabInfo] = []
+        unknown.reserveCapacity(4)
+        for tab in tabs {
+            if known.contains(tab.workspaceID) {
+                buckets[tab.workspaceID, default: []].append(tab)
+            } else {
+                unknown.append(tab)
+            }
+        }
+        var result: [TabInfo] = []
+        result.reserveCapacity(tabs.count)
+        for workspace in workspaces {
+            result.append(contentsOf: buckets[workspace.workspaceID] ?? [])
+        }
+        result.append(contentsOf: unknown)
+        return result
+    }
+
     public static func insertIndex(
         moving: String,
         onto: String,
