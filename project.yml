@@ -13,10 +13,12 @@ packages:
     path: Packages/HerdrKit
   HerdrSSH:
     path: Packages/HerdrSSH
-  SwiftTerm:
-    url: https://github.com/migueldeicaza/SwiftTerm
-    # 1.19 ships the marked-text overlay used for IME preedit; do not reimplement it.
-    from: "1.19.0"
+  GhosttyTerminal:
+    url: https://github.com/Lakr233/libghostty-spm
+    # Prebuilt libghostty xcframework — pin exactly and review the checksum diff
+    # on every bump (supply-chain discipline for a binary dependency). The
+    # version scheme is <major.minor>.<UTC yyyymmdd>, so `from:` would drift.
+    exactVersion: "1.6.20260909"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.9.6"
@@ -33,7 +35,8 @@ targets:
       - path: Resources/Localizable.xcstrings
     dependencies:
       - package: HerdrKit
-      - package: SwiftTerm
+      - package: GhosttyTerminal
+        product: GhosttyTerminal
       - package: Sparkle
     info:
       path: Sources/HerdrM/Info.plist
@@ -88,7 +91,8 @@ targets:
     dependencies:
       - package: HerdrKit
       - package: HerdrSSH
-      - package: SwiftTerm
+      - package: GhosttyTerminal
+        product: GhosttyTerminal
     info:
       path: Sources/HerdrMobile/Info.plist
       properties:

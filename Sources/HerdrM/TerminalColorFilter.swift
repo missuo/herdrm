@@ -162,7 +162,7 @@ struct LightTerminalANSIAdapter {
                 return false
             }
             // Include the thin and rounded Powerline variants as well as the
-            // four shapes SwiftTerm draws itself. All of them use the same
+            // four shapes the renderer draws itself. All of them use the same
             // foreground/background layering contract.
             return (0xE0B0...0xE0D7).contains(scalar.value)
         }

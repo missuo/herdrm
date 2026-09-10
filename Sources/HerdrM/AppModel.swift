@@ -1,6 +1,5 @@
 import Foundation
 import HerdrKit
-import SwiftTerm
 import SwiftUI
 
 enum ConnectionState: Equatable {
@@ -153,8 +152,8 @@ final class AppModel: ObservableObject {
     static let splitRatioKey = "terminal.splitRatio"
     /// Live terminal views of the ⌘D split, used by menu commands to move focus.
     /// Held weakly so the views are not kept alive by the model.
-    weak var splitAgentView: LocalProcessTerminalView?
-    weak var splitShellView: LocalProcessTerminalView?
+    weak var splitAgentView: LineBreakTerminalView?
+    weak var splitShellView: LineBreakTerminalView?
     /// Standalone terminals. Their views stay alive while deselected —
     /// unlike agents, a local shell has no server side to reattach to.
     @Published var shellSessions: [ShellSession] = []

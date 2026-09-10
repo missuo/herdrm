@@ -5,6 +5,18 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Changed
+- The embedded terminal now renders with libghostty (Metal) instead of
+  SwiftTerm, on both the Mac app and the iOS/iPadOS client. Each pane is a
+  host-managed Ghostty surface: on the Mac a local `forkpty` byte pump feeds
+  it and carries keystrokes back to the PTY; on the phone the SSH PTY channel
+  feeds it. herdrm keeps its own light-mode color adaptation, ⌘-editing-key
+  readline chords, and agent-aware paste on top. Nerd Font glyphs, CJK, and
+  the light/dark themes are preserved. (thanks @lbr77 for the reference
+  implementation!)
+
 ## [0.6.0] - 2026-09-10
 
 ### Added

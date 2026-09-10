@@ -351,7 +351,6 @@ struct DetailView: View {
                             endedAttachCode = code
                         },
                         onViewReady: {
-                            splitTracker.agentView = $0
                             model.splitAgentView = $0
                         }
                     )
@@ -394,6 +393,12 @@ struct DetailView: View {
                 // Single source of truth: the tracker writes straight into the model
                 // instead of holding its own copy for a second onChange to mirror.
                 splitTracker.onSideChanged = { model.activeSplitSide = $0 }
+                // Ghostty surfaces have no stable pre-attach identity to hold, so
+                // the tracker asks the live-attach registry whether a responder is
+                // an agent view instead of caching one reference.
+                splitTracker.isAgentView = { view in
+                    AttachViewRegistry.liveViews.contains { $0 === view }
+                }
                 splitTracker.start()
             }
             .onChange(of: entry.id) { _, _ in

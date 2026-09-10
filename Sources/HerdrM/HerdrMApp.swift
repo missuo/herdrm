@@ -2,7 +2,6 @@ import AppKit
 import Darwin
 import HerdrKit
 import Sparkle
-import SwiftTerm
 import SwiftUI
 import UserNotifications
 
