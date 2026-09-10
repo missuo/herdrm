@@ -5,6 +5,20 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- Mouse gestures in attached agent TUIs now have one owner from press through
+  release. Plain drags reach mouse-aware TUIs in full, while Shift-drag stays
+  in Ghostty for local selection. Command-C copies a local Ghostty selection
+  when present and otherwise reaches TUIs using the Kitty keyboard protocol,
+  instead of a replayed press producing an oversized selection or leaving the
+  TUI button logically held down. Herdr terminal panes follow the same rule:
+  the wheel keeps scrolling herdr's own scrollback and Shift-drag selects
+  locally, because `herdr … attach` has no server-side mouse selection — it
+  forwards button events to the pane program and drops them when that program
+  did not ask for the mouse.
+
 ## [0.6.1] - 2026-09-10
 
 ### Changed
