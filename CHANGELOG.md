@@ -5,6 +5,17 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [0.6.3] - 2026-09-10
+
+### Fixed
+- Terminal text — most visibly CJK — no longer renders pale/faint. The
+  keep-alive rework wrapped every attached terminal in `.opacity`, which
+  forces SwiftUI to composite it offscreen; there, glyph anti-aliasing on
+  Ghostty's non-opaque (clear) Metal layer fell back to a transparent
+  backdrop and came out thin and gray, worst on dense Chinese strokes. A
+  solid terminal-background backdrop inside the compositing group restores
+  full-contrast text, matching the pre-keep-alive rendering.
+
 ## [0.6.2] - 2026-09-10
 
 ### Changed

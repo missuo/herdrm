@@ -319,6 +319,10 @@ struct DetailView: View {
                     .id("shell-\(session.id)")
                     .padding(.horizontal, 10)
                     .padding(.vertical, 8)
+                    // Solid backdrop inside the opacity compositing group so
+                    // glyph AA on Ghostty's non-opaque Metal layer stays crisp
+                    // (see attachChild) instead of rendering pale.
+                    .background(Theme.terminalBackground)
                     .opacity(model.selectedShellID == session.id ? 1 : 0)
                     .allowsHitTesting(model.selectedShellID == session.id)
             }
@@ -480,6 +484,13 @@ struct DetailView: View {
                 attachEndedOverlay(session)
             }
         }
+        // Ghostty's Metal layer is non-opaque (clear background), and the
+        // `.opacity` below forces SwiftUI to composite this child offscreen —
+        // where glyph anti-aliasing falls back to a transparent backdrop and
+        // renders pale (worst on dense CJK strokes). A solid backdrop inside
+        // the compositing group gives the text an opaque background to blend
+        // against, matching the pre-keep-alive single-view rendering.
+        .background(Theme.terminalBackground)
         .opacity(isSelected ? 1 : 0)
         .allowsHitTesting(isSelected)
     }
