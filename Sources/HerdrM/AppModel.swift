@@ -821,7 +821,6 @@ final class AppModel: ObservableObject {
             )
             sessions[deviceID]?.agents = snapshot.agents
             sessions[deviceID]?.workspaces = snapshot.workspaces
-            sessions[deviceID]?.workspaces = snapshot.workspaces
             sessions[deviceID]?.tabs = TabReorder.ordered(
                 snapshot.tabs ?? [],
                 workspaces: snapshot.workspaces
