@@ -203,6 +203,12 @@ Early-stage software, PRs genuinely welcome — small and single-purpose lands f
 - [Sparkle](https://sparkle-project.org) — auto-updates.
 - [Lobe Icons](https://github.com/lobehub/lobe-icons) / [Simple Icons](https://simpleicons.org) — brand icons.
 
+## 📄 License
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md) — free to use, modify, and share for
+any **noncommercial** purpose. Commercial use requires a separate license from
+the maintainer. Contributions are accepted under the same terms.
+
 ## <a name="-status"></a>⚠️ Status
 
 **Early stage**, without full test coverage — expect bugs. Issues and PRs are very welcome.
