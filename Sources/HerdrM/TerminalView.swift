@@ -126,6 +126,13 @@ enum GhosttyRuntime {
             // Option-as-Meta: matches what the SwiftTerm embed did, and the
             // readline chords below (⌥⌫ → ESC DEL etc.) assume it.
             builder.withCustom("macos-option-as-alt", "true")
+            // HerdrM owns copy only while Ghostty has a local selection. With
+            // no local selection, Command-C must reach a mouse-aware pane app.
+            builder.withCustom("keybind", "super+c=unbind")
+            // Shift is HerdrM's unconditional local-selection escape hatch.
+            // Plain TUI gestures have Shift removed before reaching Ghostty,
+            // so disabling application shift capture cannot affect them.
+            builder.withCustom("mouse-shift-capture", "never")
             if !fontName.isEmpty {
                 builder.withFontFamily(fontName)
             } else {
@@ -313,10 +320,10 @@ private enum ClipboardFileError: LocalizedError {
 /// raw input path, bypassing key translation, and stay local while an IME
 /// composition is open.
 ///
-/// Mouse: dragging always selects text locally, like a native text view. When
-/// the TUI captured the mouse, a drag (or any click with Shift / multi-click)
-/// is replayed to Ghostty with Shift added — Ghostty's own "bypass mouse
-/// reporting" path — while plain clicks and the wheel still reach the TUI.
+/// Mouse: one side owns each complete gesture. Plain gestures follow Ghostty's
+/// negotiated mouse capture and reach the TUI; Shift gestures stay local for
+/// terminal selection. Turning Mouse Reporting off also keeps the complete
+/// gesture local.
 ///
 /// IME: Ghostty implements `NSTextInputClient` itself and renders the marked
 /// text in the grid; the only hook needed here is keeping ⌘/⌃ chords off the
@@ -331,14 +338,17 @@ final class LineBreakTerminalView: AppTerminalView {
     weak var attachedSurface: TerminalSurface?
     weak var processHost: TerminalProcessHost?
 
-    /// The plain click that was forwarded to the TUI and may still turn into a
-    /// drag; replayed with Shift if it does.
-    private var pendingPlainDown: NSEvent?
-    private var dragIsLocal = false
+    /// Fixed at mouse-down so press, motion and release cannot split between
+    /// the TUI and Ghostty's local selection.
+    private var gestureIsLocal = false
+    /// A locally handled Command-C must consume its matching release too;
+    /// kitty report-events applications otherwise receive a release-only key.
+    private var locallyConsumedCopyKeyCode: UInt16?
 
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
+        locallyConsumedCopyKeyCode = nil
         if hasMarkedText() {
             // Command/Control chords must stay with the IME until composition
             // ends; other keys still reach Ghostty so preedit can update.
@@ -352,6 +362,14 @@ final class LineBreakTerminalView: AppTerminalView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func keyUp(with event: NSEvent) {
+        if locallyConsumedCopyKeyCode == event.keyCode {
+            locallyConsumedCopyKeyCode = nil
+            return
+        }
+        super.keyUp(with: event)
     }
 
     /// Mac Delete is Backspace (keyCode 51). ⌥⌘ arrows move split focus and
@@ -393,71 +411,36 @@ final class LineBreakTerminalView: AppTerminalView {
 
     private func isSelectionGesture(_ event: NSEvent) -> Bool {
         event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift)
-            || event.clickCount > 1
     }
 
-    /// Ghostty treats Shift+click as local selection even while the program
-    /// owns the mouse — replaying the event with Shift added is the supported
-    /// way to keep a drag local.
-    private func forcingLocalSelection(_ event: NSEvent) -> NSEvent {
+    private func routedMouseEvent(_ event: NSEvent) -> NSEvent {
         guard isMouseCaptured else { return event }
-        return event.addingShiftModifier()
+        return gestureIsLocal
+            ? event.addingShiftModifier()
+            : event.removingShiftModifier()
     }
 
     override func mouseDown(with event: NSEvent) {
-        if mouseReportingEnabled, !isSelectionGesture(event), isMouseCaptured {
-            // Forward the click to the TUI, but keep it: if it becomes a drag,
-            // the drag switches to local selection in mouseDragged.
-            pendingPlainDown = event
-            super.mouseDown(with: event)
-            return
-        }
-        pendingPlainDown = nil
-        super.mouseDown(with: forcingLocalSelection(event))
+        gestureIsLocal = !mouseReportingEnabled
+            || isSelectionGesture(event)
+            || !isMouseCaptured
+        super.mouseDown(with: routedMouseEvent(event))
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard isMouseCaptured else {
-            super.mouseDragged(with: event)
-            return
-        }
-        // A drag always selects locally. Ghostty only starts a selection from a
-        // Shift+press, so a press that already went to the TUI is replayed with
-        // Shift before the drag stream switches over.
-        if let down = pendingPlainDown {
-            pendingPlainDown = nil
-            dragIsLocal = true
-            super.mouseDown(with: down.addingShiftModifier())
-        } else if !mouseReportingEnabled {
-            dragIsLocal = true
-        }
-        if dragIsLocal {
-            super.mouseDragged(with: event.addingShiftModifier())
-        } else {
-            super.mouseDragged(with: event)
-        }
+        super.mouseDragged(with: routedMouseEvent(event))
     }
 
     override func mouseUp(with event: NSEvent) {
-        if dragIsLocal {
-            dragIsLocal = false
-            pendingPlainDown = nil
-            super.mouseUp(with: event.addingShiftModifier())
-            return
-        }
-        pendingPlainDown = nil
-        if !isSelectionGesture(event), mouseReportingEnabled, isMouseCaptured {
-            super.mouseUp(with: event)
-        } else {
-            super.mouseUp(with: forcingLocalSelection(event))
-        }
+        defer { gestureIsLocal = false }
+        super.mouseUp(with: routedMouseEvent(event))
     }
 
     // MARK: Context menu
 
     // The right mouse button always opens the context menu and never reaches
-    // the TUI. The link items key off the selected text — a double-click
-    // selects a whole URL, which pairs naturally with right-click.
+    // the TUI. Link items key off the selected text; while mouse reporting is
+    // active, Shift-double-click selects a whole URL locally.
     override func rightMouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
     }
@@ -533,13 +516,28 @@ final class LineBreakTerminalView: AppTerminalView {
         uploadTask?.cancel()
     }
 
-    // ⌘V is intercepted here so the attachment flow below owns every paste,
-    // regardless of whether the app's menu has a Paste item.
+    // ⌘C/⌘V are intercepted here because the app has no Edit menu. Copy stays
+    // local only when Ghostty owns a selection; otherwise the physical key is
+    // sent to the TUI now that its global copy binding is unbound above.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.type == .keyDown,
-           window?.firstResponder === self,
-           event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-           event.charactersIgnoringModifiers == "v" {
+        guard event.type == .keyDown,
+              window?.firstResponder === self,
+              event.modifierFlags
+                  .intersection(.deviceIndependentFlagsMask)
+                  .subtracting([.capsLock, .numericPad]) == .command
+        else {
+            return super.performKeyEquivalent(with: event)
+        }
+        if event.charactersIgnoringModifiers?.lowercased() == "c" {
+            if attachedSurface?.hasSelection() == true {
+                locallyConsumedCopyKeyCode = event.keyCode
+                copy(self)
+            } else {
+                keyDown(with: event)
+            }
+            return true
+        }
+        if event.charactersIgnoringModifiers?.lowercased() == "v" {
             handlePaste()
             return true
         }
@@ -770,6 +768,20 @@ private extension NSEvent {
             with: type,
             location: locationInWindow,
             modifierFlags: modifierFlags.union(.shift),
+            timestamp: timestamp,
+            windowNumber: windowNumber,
+            context: nil,
+            eventNumber: eventNumber,
+            clickCount: clickCount,
+            pressure: pressure
+        ) ?? self
+    }
+
+    func removingShiftModifier() -> NSEvent {
+        NSEvent.mouseEvent(
+            with: type,
+            location: locationInWindow,
+            modifierFlags: modifierFlags.subtracting(.shift),
             timestamp: timestamp,
             windowNumber: windowNumber,
             context: nil,
