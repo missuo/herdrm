@@ -1,11 +1,14 @@
 import Foundation
 
 /// A machine running herdr. `local` talks straight to the Unix socket;
-/// `ssh` reaches the remote socket through an OpenSSH stream-local forward.
+/// `ssh` reaches the remote socket through an OpenSSH stream-local forward;
+/// `tailcat` reaches a socket exposed by the herdr.tailcat server plugin
+/// through a WireGuard/DERP tunnel (token in the Keychain, keyed by id).
 public struct Device: Codable, Sendable, Identifiable, Equatable, Hashable {
     public enum Kind: Codable, Sendable, Equatable, Hashable {
         case local
         case ssh(target: String)   // e.g. "vincent@10.10.10.87" or "vincent@mac-studio.tail"
+        case tailcat
     }
 
     public var id: UUID
@@ -41,10 +44,16 @@ public struct Device: Codable, Sendable, Identifiable, Equatable, Hashable {
         return nil
     }
 
+    public var isTailcat: Bool {
+        if case .tailcat = kind { return true }
+        return false
+    }
+
     public var subtitle: String {
         switch kind {
         case .local: return "This Mac · herdr.sock"
         case .ssh(let target): return "\(target) · SSH"
+        case .tailcat: return "tailcat tunnel"
         }
     }
 }

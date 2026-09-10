@@ -736,6 +736,22 @@ final class AppModel: ObservableObject {
         setDeviceFilter(device.id)
     }
 
+    /// Adds a tailcat-tunnel device. The token is a bearer credential and goes
+    /// straight to the Keychain — devices.json never sees it.
+    func addTailcatDevice(name: String, token: String) {
+        let device = Device(name: name, kind: .tailcat)
+        do {
+            try TailcatCredentialStore.setToken(token, for: device.id)
+        } catch {
+            actionError = error.localizedDescription
+            return
+        }
+        devices.append(device)
+        store.save(devices)
+        startSession(device)
+        setDeviceFilter(device.id)
+    }
+
     func saveSSHPassword(_ password: String, for request: SSHAuthenticationRequest) {
         guard !password.isEmpty,
               let device = device(request.deviceID),
@@ -795,6 +811,7 @@ final class AppModel: ObservableObject {
     func removeDevice(_ device: Device) {
         guard !device.isLocal else { return }
         removeSSHPassword(for: device.id)
+        TailcatCredentialStore.removeToken(for: device.id)
         if sshAuthenticationRequest?.deviceID == device.id { sshAuthenticationRequest = nil }
         stopSession(device.id)
         devices.removeAll { $0.id == device.id }

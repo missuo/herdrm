@@ -5,6 +5,7 @@ import Foundation
 public actor HerdrService {
     public let device: Device
     private var tunnel: SSHTunnel?
+    private var tailcatTunnel: TailcatTunnel?
     private var rpc: SocketRPC?
     /// nil for remote devices and when auto-start is off; remotes are the user's to run.
     private let localServer: LocalHerdrServer?
@@ -27,6 +28,9 @@ public actor HerdrService {
         if let target = device.sshTarget {
             self.tunnel = SSHTunnel(target: target, credentialID: device.id)
         }
+        if device.isTailcat {
+            self.tailcatTunnel = TailcatTunnel(credentialID: device.id)
+        }
         self.localServer = localServer
     }
 
@@ -41,6 +45,9 @@ public actor HerdrService {
         case .ssh:
             guard let tunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
             socketPath = try await tunnel.ensureUp()
+        case .tailcat:
+            guard let tailcatTunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
+            socketPath = try await tailcatTunnel.ensureUp()
         }
         let client = SocketRPC(socketPath: socketPath)
         let pong: PingResult
@@ -127,6 +134,7 @@ public actor HerdrService {
     public func disconnect() async {
         rpc = nil
         if let tunnel { await tunnel.tearDown() }
+        if let tailcatTunnel { await tailcatTunnel.tearDown() }
     }
 
     private func client() throws -> SocketRPC {
@@ -243,6 +251,11 @@ public actor HerdrService {
         case .ssh:
             guard let tunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
             return try await tunnel.probeRemoteHome()
+        case .tailcat:
+            // The tunnel carries only the herdr socket — no shell to probe.
+            throw HerdrError.fileOperationFailed(
+                "browsing the remote file system is not supported over a tailcat tunnel"
+            )
         }
     }
 
@@ -279,6 +292,10 @@ public actor HerdrService {
             names = output.split(separator: "\n").compactMap { line in
                 line.hasSuffix("/") ? String(line.dropLast()) : nil
             }
+        case .tailcat:
+            throw HerdrError.fileOperationFailed(
+                "browsing the remote file system is not supported over a tailcat tunnel"
+            )
         }
         return names.sorted { $0.localizedStandardCompare($1) == .orderedAscending }
     }
@@ -550,6 +567,10 @@ public actor HerdrService {
                 throw HerdrError.fileTransferFailed("no SSH connection for this device")
             }
             return try await tunnel.uploadFile(from: localURL)
+        case .tailcat:
+            throw HerdrError.fileTransferFailed(
+                "file upload is not supported over a tailcat tunnel"
+            )
         }
     }
 
@@ -564,6 +585,15 @@ public actor HerdrService {
     /// The command for a standalone interactive shell on this device.
     public nonisolated func terminalCommand() -> TerminalCommand {
         switch device.kind {
+        case .tailcat:
+            // The tunnel carries only the herdr socket; there is no shell on
+            // the other side to run. Standalone terminals need SSH.
+            return TerminalCommand(
+                executable: "/bin/sh",
+                args: ["-c", "echo 'A tailcat device carries only the herdr socket — standalone shells need SSH.'; exit 1"],
+                environment: [:],
+                authorizationID: nil
+            )
         case .local:
             return TerminalCommand(
                 executable: "/bin/sh",
@@ -632,15 +662,24 @@ public actor HerdrService {
             attachArguments = "terminal attach \(Self.shellQuoted(terminalID)) --takeover"
         }
         switch device.kind {
-        case .local:
+        case .local, .tailcat:
             // Same PATH we used to discover `herdr`: login-shell snapshot, GUI
             // PATH, well-known prefixes. Discovery and attach must not diverge
             // or a `#!/usr/bin/env node` shim is found and then fails at exec.
             // TERM/COLUMNS/LINES stay with SwiftTerm.
+            //
+            // A tailcat device attaches with the LOCAL herdr CLI pointed at the
+            // tunnel's bridge socket (HERDR_SOCKET_PATH is herdr's contractual
+            // socket override), so the attach stream rides the same WireGuard
+            // tunnel as the RPCs — no shell on the far side is needed.
             var environment = (ShellEnvironment.cached ?? .empty).launchEnvironment(binary: nil)
             environment.removeValue(forKey: "TERM")
             environment.removeValue(forKey: "COLUMNS")
             environment.removeValue(forKey: "LINES")
+            if device.isTailcat {
+                environment["HERDR_SOCKET_PATH"] =
+                    TailcatTunnel.bridgeSocketPath(credentialID: device.id)
+            }
             let script = "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
                 + "exec \"$hb\" \(attachArguments)"
             return TerminalCommand(

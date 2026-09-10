@@ -8,6 +8,16 @@ the Sparkle update description — a release without a section here fails CI.
 ## [Unreleased]
 
 ### Added
+- **Tailcat devices**: connect to a herdr behind NAT with no system VPN, no
+  Tailscale account, and no port forwarding. On the remote Mac, the
+  [herdr.tailcat](https://github.com/lbr77/herdr-plugin-tailcat) plugin
+  exposes the herdr socket through a WireGuard/DERP tunnel; in herdrm,
+  Add Device → Tailcat and paste the plugin's token (stored in the Keychain —
+  it is a bearer credential). Terminal attach rides the same tunnel via the
+  local herdr CLI (`HERDR_SOCKET_PATH`), so the CLI and remote server versions
+  must match. Requires `brew install tailcat` locally. Each operation pays a
+  tunnel handshake (~1–2 s); standalone shells and the Files workspace still
+  need SSH. (#68, thanks @hualinli for pushing the userspace-tunnel idea!)
 - Double-click a Space, Agent, or herdr Terminal in the sidebar to rename it
   (same sheet as the context menu). Terminals now rename via `tab.rename`, and
   a user-set tab label wins over the OSC title so the new name is visible.

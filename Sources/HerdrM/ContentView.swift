@@ -516,31 +516,65 @@ struct DetailView: View {
 }
 
 struct AddDeviceSheet: View {
+    enum Transport: String, CaseIterable {
+        case ssh
+        case tailcat
+    }
+
     @ObservedObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var target = ""
+    @State private var transport: Transport = .ssh
+    @State private var token = ""
+
+    private var canAdd: Bool {
+        switch transport {
+        case .ssh: return !target.trimmingCharacters(in: .whitespaces).isEmpty
+        case .tailcat: return !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             SheetHeader(
                 systemImage: "desktopcomputer",
                 title: String(localized: "Add Device"),
-                subtitle: String(localized: "Uses OpenSSH config, agent, Tailscale SSH, or password")
+                subtitle: transport == .ssh
+                    ? String(localized: "Uses OpenSSH config, agent, Tailscale SSH, or password")
+                    : String(localized: "WireGuard tunnel to a herdr behind NAT — no VPN, no account")
             )
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
             VStack(alignment: .leading, spacing: 8) {
+                Picker("", selection: $transport) {
+                    Text(String(localized: "SSH")).tag(Transport.ssh)
+                    Text(String(localized: "Tailcat")).tag(Transport.tailcat)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                Spacer().frame(height: 4)
                 SheetSectionLabel("NAME")
                 TextField("mac-studio", text: $name)
                     .textFieldStyle(.roundedBorder)
                 Spacer().frame(height: 8)
-                SheetSectionLabel("SSH TARGET")
-                TextField("vincent@10.10.10.87", text: $target)
-                    .textFieldStyle(.roundedBorder)
-                Text("user@host, a ~/.ssh/config alias, or user@host:port for a custom port.")
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.textTertiary)
+                if transport == .ssh {
+                    SheetSectionLabel("SSH TARGET")
+                    TextField("vincent@10.10.10.87", text: $target)
+                        .textFieldStyle(.roundedBorder)
+                    Text("user@host, a ~/.ssh/config alias, or user@host:port for a custom port.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                } else {
+                    SheetSectionLabel("TAILCAT TOKEN")
+                    TextField("tcpGFwWCD…", text: $token)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11, design: .monospaced))
+                    Text("On the remote Mac: `herdr plugin install lbr77/herdr-plugin-tailcat`, then `herdr plugin action invoke herdr.tailcat.token` and paste the token here. Needs `tailcat` on this Mac (brew install tailcat). The token is stored in the Keychain. Each operation pays a tunnel handshake, so expect ~1–2 s latency; standalone shells and the Files workspace need SSH.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             .padding(16)
 
@@ -552,17 +586,25 @@ struct AddDeviceSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button("Add Device") {
                     let trimmedName = name.trimmingCharacters(in: .whitespaces)
-                    let trimmedTarget = target.trimmingCharacters(in: .whitespaces)
-                    model.addDevice(
-                        name: trimmedName.isEmpty ? trimmedTarget : trimmedName,
-                        sshTarget: trimmedTarget
-                    )
+                    switch transport {
+                    case .ssh:
+                        let trimmedTarget = target.trimmingCharacters(in: .whitespaces)
+                        model.addDevice(
+                            name: trimmedName.isEmpty ? trimmedTarget : trimmedName,
+                            sshTarget: trimmedTarget
+                        )
+                    case .tailcat:
+                        model.addTailcatDevice(
+                            name: trimmedName.isEmpty ? String(localized: "Tailcat Device") : trimmedName,
+                            token: token.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                    }
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)
                 .keyboardShortcut(.defaultAction)
-                .disabled(target.trimmingCharacters(in: .whitespaces).isEmpty)
+                .disabled(!canAdd)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
