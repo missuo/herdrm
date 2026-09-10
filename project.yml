@@ -13,6 +13,8 @@ packages:
     path: Packages/HerdrKit
   HerdrSSH:
     path: Packages/HerdrSSH
+  HerdrTailcat:
+    path: Packages/HerdrTailcat
   GhosttyTerminal:
     url: https://github.com/Lakr233/libghostty-spm
     # Prebuilt libghostty xcframework — pin exactly and review the checksum diff
@@ -35,6 +37,8 @@ targets:
       - path: Resources/Localizable.xcstrings
     dependencies:
       - package: HerdrKit
+      - package: HerdrTailcat
+        product: HerdrTailcat
       - package: GhosttyTerminal
         product: GhosttyTerminal
       - package: Sparkle
@@ -91,6 +95,8 @@ targets:
     dependencies:
       - package: HerdrKit
       - package: HerdrSSH
+      - package: HerdrTailcat
+        product: HerdrTailcat
       - package: GhosttyTerminal
         product: GhosttyTerminal
     info:

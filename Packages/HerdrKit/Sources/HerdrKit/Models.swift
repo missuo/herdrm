@@ -311,6 +311,8 @@ public enum HerdrError: Error, LocalizedError, Sendable {
     case tunnelFailed(String)
     case fileOperationFailed(String)
     case fileTransferFailed(String)
+    case tailcatTokenMissing
+    case tailcatBridgeFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -325,6 +327,8 @@ public enum HerdrError: Error, LocalizedError, Sendable {
         case .tunnelFailed(let reason): return "SSH tunnel failed: \(reason)"
         case .fileOperationFailed(let reason): return "file operation failed: \(reason)"
         case .fileTransferFailed(let reason): return "file transfer failed: \(reason)"
+        case .tailcatTokenMissing: return "no tailcat token saved for this device"
+        case .tailcatBridgeFailed(let reason): return "tailcat tunnel failed: \(reason)"
         }
     }
 }

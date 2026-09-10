@@ -575,7 +575,7 @@ struct AddDeviceSheet: View {
                     TextField("tcpGFwWCD…", text: $token)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11, design: .monospaced))
-                    Text("On the remote Mac: `herdr plugin install lbr77/herdr-plugin-tailcat`, then `herdr plugin action invoke herdr.tailcat.token` and paste the token here. Needs `tailcat` on this Mac (brew install tailcat). The token is stored in the Keychain. Each operation pays a tunnel handshake, so expect ~1–2 s latency; standalone shells and the Files workspace need SSH.")
+                    Text("On the remote Mac: `herdr plugin install lbr77/herdr-plugin-tailcat`, then `herdr plugin action invoke herdr.tailcat.token` and paste the token here. The WireGuard tunnel is built in — no external tool. The token is stored in the Keychain. Standalone shells and the Files workspace need SSH.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(Theme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)

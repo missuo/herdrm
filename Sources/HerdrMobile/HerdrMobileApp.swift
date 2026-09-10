@@ -12,6 +12,9 @@ struct HerdrMobileApp: App {
             DeviceKey.authorizedKeysLine(DeviceKey.ensure()),
             forKey: "deviceKey.publicLine"
         )
+        // Nerd Font symbols for agent-TUI icon glyphs (Ghostty codepoint-maps
+        // the PUA ranges to this family).
+        MobileGhosttyRuntime.registerBundledFonts()
     }
 
     var body: some Scene {

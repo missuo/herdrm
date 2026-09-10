@@ -31,7 +31,13 @@ final class MobileDeviceSession {
             state = .connecting
             onChange?()
             do {
-                let transport = try await SSHDirectTransport.connect(device: device)
+                let transport: MobileTransport
+                switch device.kind {
+                case .ssh:
+                    transport = try await SSHDirectTransport.connect(device: device)
+                case .tailcat:
+                    transport = try await TailcatMobileTransport.connect(device: device)
+                }
                 let pong = try await transport.request(
                     method: "ping", params: .object([:]), as: PingResult.self
                 )
@@ -188,6 +194,25 @@ final class MobileAppModel {
         selectDevice(device.id)
     }
 
+    /// Adds a tailcat device: the token goes to the Keychain (keyed by the
+    /// new device id), never into the device list. Same posture as the Mac
+    /// app's `addTailcatDevice`; no host probe — tailcat has no shell.
+    func addTailcatDevice(name: String, token: String) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let device = MobileDevice(
+            kind: .tailcat,
+            name: trimmedName.isEmpty ? String(localized: "Tailcat device") : trimmedName
+        )
+        do {
+            try TailcatCredentialStore.setToken(token, for: device.id)
+        } catch {
+            return
+        }
+        devices.append(device)
+        store.save(devices)
+        selectDevice(device.id)
+    }
+
     /// The line to enroll on a Mac: `echo '<line>' >> ~/.ssh/authorized_keys`.
     var deviceKeyAuthorizedLine: String {
         DeviceKey.authorizedKeysLine(DeviceKey.ensure())
@@ -198,6 +223,10 @@ final class MobileAppModel {
             Task { await session.disconnect() }
         }
         MobileSecretStore.removePassword(for: device.id)
+        if device.isTailcat {
+            TailcatCredentialStore.removeToken(for: device.id)
+            Task { await TailcatBridgeManager.shared.tearDown(deviceID: device.id) }
+        }
         KnownHostsStore.unpin(host: device.host, port: device.port)
         devices.removeAll { $0.id == device.id }
         store.save(devices)

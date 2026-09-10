@@ -16,6 +16,13 @@ the Sparkle update description — a release without a section here fails CI.
   readline chords, and agent-aware paste on top. Nerd Font glyphs, CJK, and
   the light/dark themes are preserved. (thanks @lbr77 for the reference
   implementation!)
+- Tailcat devices now use an embedded WireGuard/DERP client (a gomobile
+  build of tailcat, shared by macOS and iOS) instead of shelling out to the
+  `tailcat` CLI. No `brew install tailcat`, and tailcat devices work on the
+  iOS/iPadOS client too — where they carry herdr's control plane (spaces,
+  agents, prompting) but not a live terminal, which stays SSH-only. On the
+  Mac, terminal attach still rides the tunnel via the local herdr CLI. (the
+  embedded bridge is also @lbr77's work!)
 
 ## [0.6.0] - 2026-09-10
 
