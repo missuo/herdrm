@@ -196,10 +196,14 @@ Early-stage software, PRs genuinely welcome — small and single-purpose lands f
 ## 🙏 Credits
 
 - [herdr](https://herdr.dev) — the agent runtime this app is a console for.
+- [@lbr77](https://github.com/lbr77) — the [herdr.tailcat](https://github.com/lbr77/herdr-plugin-tailcat)
+  server plugin, the embedded tailcat bridge, and the reference implementation
+  the libghostty terminal migration is built on ([lbr77/herdrm](https://github.com/lbr77/herdrm)).
 - [Heeler](https://github.com/ZingerLittleBee/Heeler) — iOS herdr client; domain model and
   transport patterns.
 - [waku](https://github.com/egoist/waku) — sidebar design reference.
-- [SwiftTerm](https://github.com/migueldeicaza/SwiftTerm) — terminal emulation.
+- [libghostty-spm](https://github.com/Lakr233/libghostty-spm) — the Ghostty terminal engine
+  (Metal), by [@Lakr233](https://github.com/Lakr233).
 - [Sparkle](https://sparkle-project.org) — auto-updates.
 - [Lobe Icons](https://github.com/lobehub/lobe-icons) / [Simple Icons](https://simpleicons.org) — brand icons.
 
