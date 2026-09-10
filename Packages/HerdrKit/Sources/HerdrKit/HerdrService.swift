@@ -196,17 +196,24 @@ public actor HerdrService {
     /// callers omit it and share the process-wide capture.
     public func installedAgents(
         from kinds: [String],
+        includingIntegrationKinds integrationKinds: [String] = [],
         overrides: [String: String] = [:],
         snapshot: ShellEnvironment? = nil
     ) async -> [InstalledAgent] {
-        guard !kinds.isEmpty else { return [] }
+        // Hook-based agents may be startable without a screen-detection manifest.
+        // Still require a runnable local CLI, and preserve advertised ordering.
+        var candidates = kinds
+        for kind in integrationKinds where !candidates.contains(kind) {
+            candidates.append(kind)
+        }
+        guard !candidates.isEmpty else { return [] }
         let environment: ShellEnvironment
         if let snapshot {
             environment = snapshot
         } else {
             environment = await ShellEnvironment.ensure()
         }
-        return kinds.compactMap { kind in
+        return candidates.compactMap { kind in
             let query: String
             if let override = overrides[kind]?.trimmingCharacters(in: .whitespacesAndNewlines),
                !override.isEmpty {

@@ -11,23 +11,31 @@ the Sparkle update description — a release without a section here fails CI.
 - Double-click a Space, Agent, or herdr Terminal in the sidebar to rename it
   (same sheet as the context menu). Terminals now rename via `tab.rename`, and
   a user-set tab label wins over the OSC title so the new name is visible.
+  (#71, thanks @rosuH!)
 - herdr Terminals in the sidebar can be drag-reordered. The drop calls the
   same `tab.move` path as Agents; cross-space drops are ignored. Standalone
   shells stay in creation order. Drag uses snapshot array order (the
   `insert_index` herdr actually applies), not tab `number`. Rows slide into
-  place and the dragged row follows the pointer.
+  place and the dragged row follows the pointer. (#72, thanks @rosuH!)
 
 ### Fixed
+- The event subscription no longer drops every ~15 seconds on an idle
+  session: the subscribe acknowledgement's read timeout stayed on the socket
+  and killed the next blocking read, blinking the connection indicator
+  through endless reconnects. Events that arrived in the same read as the
+  acknowledgement are no longer discarded either. (#65, #66, thanks
+  @hualinli!)
 - After `tab.move`, a leftover numeric tab label (`"2"` on tab number 1)
   is no longer treated as a display name, so Agents keep their real title.
-
-### Fixed
+  (#72, thanks @rosuH!)
 - Sidebar Space, Agent, and Terminal rows expose a VoiceOver default action
-  so Activate selects the row (they are not SwiftUI `Button`s).
-
-### Fixed
-- Sidebar Space, Agent, and Terminal rows expose a VoiceOver default action
-  so Activate selects the row (they are not SwiftUI `Button`s).
+  so Activate selects the row (they are not SwiftUI `Button`s). (#71,
+  thanks @rosuH!)
+- Installed Oh My Pi (`omp`) now appears in the local New Agent picker even
+  though its hook-based lifecycle integration has no screen-detection manifest.
+  Settings → Agents also provides an Oh My Pi binary override. Install the
+  lifecycle extension with `herdr integration install omp` before starting OMP.
+  (#76, thanks @JackieJam!)
 
 ## [0.5.3] - 2026-08-29
 
