@@ -5,6 +5,17 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- Double-click a Space, Agent, or herdr Terminal in the sidebar to rename it
+  (same sheet as the context menu). Terminals now rename via `tab.rename`, and
+  a user-set tab label wins over the OSC title so the new name is visible.
+
+### Fixed
+- Sidebar Space, Agent, and Terminal rows expose a VoiceOver default action
+  so Activate selects the row (they are not SwiftUI `Button`s).
+
 ## [0.5.3] - 2026-08-29
 
 ### Added

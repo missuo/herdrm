@@ -15,30 +15,35 @@ struct SidebarRowDragHost: NSViewRepresentable {
     let pasteboardType: NSPasteboard.PasteboardType
     let menuItems: [SidebarContextMenuItem]
     let onClick: () -> Void
-    let onDragStart: (String) -> Void
-    let onDragEnd: () -> Void
-    let onDropHover: (Bool) -> Void
-    let onHoverExit: () -> Void
-    let onDrop: (String, Bool) -> Void
+    var onDoubleClick: (() -> Void)?
+    var allowsDrag = true
+    var onDragStart: ((String) -> Void)?
+    var onDragEnd: (() -> Void)?
+    var onDropHover: ((Bool) -> Void)?
+    var onHoverExit: (() -> Void)?
+    var onDrop: ((String, Bool) -> Void)?
 
     func makeNSView(context: Context) -> SidebarRowDragNSView {
         // Non-zero seed frame: a SwiftUI overlay NSView that starts at .zero
         // can stay 0-size, so clicks and drags never arrive (#42).
         let view = SidebarRowDragNSView(frame: NSRect(x: 0, y: 0, width: 1, height: 1))
         view.pasteboardType = pasteboardType
-        view.registerForDraggedTypes([pasteboardType])
+        view.allowsDrag = allowsDrag
+        if allowsDrag { view.registerForDraggedTypes([pasteboardType]) }
         return view
     }
 
     func updateNSView(_ view: SidebarRowDragNSView, context: Context) {
-        if view.pasteboardType != pasteboardType {
+        if view.pasteboardType != pasteboardType || view.allowsDrag != allowsDrag {
             view.unregisterDraggedTypes()
             view.pasteboardType = pasteboardType
-            view.registerForDraggedTypes([pasteboardType])
+            if allowsDrag { view.registerForDraggedTypes([pasteboardType]) }
         }
         view.entryID = entryID
         view.menuItems = menuItems
+        view.allowsDrag = allowsDrag
         view.onClick = onClick
+        view.onDoubleClick = onDoubleClick
         view.onDragStart = onDragStart
         view.onDragEnd = onDragEnd
         view.onDropHover = onDropHover
@@ -69,6 +74,7 @@ struct SpaceRowDragHost: View {
                 .destructive(title: String(localized: "Close Space \"\(label)\"…"), action: onClose),
             ],
             onClick: onClick,
+            onDoubleClick: onRename,
             onDragStart: onDragStart,
             onDragEnd: onDragEnd,
             onDropHover: onDropHover,
@@ -99,6 +105,7 @@ struct AgentRowDragHost: View {
                 .destructive(title: String(localized: "Close Agent…"), action: onClose),
             ],
             onClick: onClick,
+            onDoubleClick: onRename,
             onDragStart: onDragStart,
             onDragEnd: onDragEnd,
             onDropHover: onDropHover,
@@ -108,14 +115,41 @@ struct AgentRowDragHost: View {
     }
 }
 
+/// Click / menu / double-click for herdr terminals. Drag stays off until
+/// `tab.move` is wired for this section.
+struct TerminalRowDragHost: View {
+    let entryID: String
+    let onClick: () -> Void
+    let onRename: () -> Void
+    let onClose: () -> Void
+
+    var body: some View {
+        SidebarRowDragHost(
+            entryID: entryID,
+            pasteboardType: SidebarRowDragNSView.terminalPasteboardType,
+            menuItems: [
+                .item(title: String(localized: "Rename Terminal…"), action: onRename),
+                .separator,
+                .destructive(title: String(localized: "Close Terminal…"), action: onClose),
+            ],
+            onClick: onClick,
+            onDoubleClick: onRename,
+            allowsDrag: false
+        )
+    }
+}
+
 final class SidebarRowDragNSView: NSView, NSDraggingSource {
     static let spacePasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.space-id")
     static let agentPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.agent-id")
+    static let terminalPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.terminal-id")
 
     var pasteboardType = SidebarRowDragNSView.spacePasteboardType
     var entryID = ""
     var menuItems: [SidebarContextMenuItem] = []
+    var allowsDrag = true
     var onClick: (() -> Void)?
+    var onDoubleClick: (() -> Void)?
     var onDragStart: ((String) -> Void)?
     var onDragEnd: (() -> Void)?
     var onDropHover: ((Bool) -> Void)?
@@ -148,7 +182,7 @@ final class SidebarRowDragNSView: NSView, NSDraggingSource {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard let down = downEvent, !didDrag else { return }
+        guard allowsDrag, let down = downEvent, !didDrag else { return }
         let start = convert(down.locationInWindow, from: nil)
         let now = convert(event.locationInWindow, from: nil)
         guard hypot(now.x - start.x, now.y - start.y) >= 4 else { return }
@@ -162,7 +196,15 @@ final class SidebarRowDragNSView: NSView, NSDraggingSource {
     }
 
     override func mouseUp(with event: NSEvent) {
-        if !didDrag { onClick?() }
+        if !didDrag {
+            // Native clickCount on mouse-up (Apple NSEvent.clickCount), not a
+            // home-grown streak. First up is 1 (select); second is 2 (rename).
+            if event.clickCount >= 2, let onDoubleClick {
+                onDoubleClick()
+            } else {
+                onClick?()
+            }
+        }
         downEvent = nil
         didDrag = false
     }
