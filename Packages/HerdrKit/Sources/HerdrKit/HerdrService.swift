@@ -571,8 +571,8 @@ public actor HerdrService {
 
     // MARK: - Events
 
-    public func events() throws -> AsyncThrowingStream<HerdrEvent, Error> {
-        try client().events()
+    public func events(statusPaneIDs: [String] = []) throws -> AsyncThrowingStream<HerdrEvent, Error> {
+        try client().events(statusPaneIDs: statusPaneIDs)
     }
 
     // MARK: - Terminal attach

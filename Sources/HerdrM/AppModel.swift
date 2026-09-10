@@ -201,6 +201,12 @@ final class AppModel: ObservableObject {
     private var services: [UUID: HerdrService] = [:]
     private var sessionTasks: [UUID: Task<Void, Never>] = [:]
     private var refreshDebounces: [UUID: Task<Void, Never>] = [:]
+    private var refreshDebounceTokens: [UUID: UUID] = [:]
+    private var refreshDebouncePending: Set<UUID> = []
+    private var snapshotRefreshTasks: [UUID: Task<Bool, Never>] = [:]
+    private var snapshotRefreshTokens: [UUID: UUID] = [:]
+    private var refreshRequested: Set<UUID> = []
+    private var statusGenerations: [UUID: UInt64] = [:]
     private var previousStatuses: [UUID: [String: AgentStatus]] = [:]
 
     init() {
@@ -656,9 +662,45 @@ final class AppModel: ObservableObject {
                     }
                     await self.refresh(device.id)
                     await self.loadAgentCatalog(deviceID: device.id, using: service)
-                    let stream = try await service.events()
-                    for try await _ in stream {
-                        self.scheduleRefresh(device.id)
+                    eventSubscriptions: while !Task.isCancelled {
+                        let subscribedPaneIDs = self.statusSubscriptionPaneIDs(device.id)
+                        let stream = try await service.events(statusPaneIDs: subscribedPaneIDs)
+                        var needsResubscribe = false
+                        var resubscribeDelay: UInt64 = 100_000_000
+                        for try await event in stream {
+                            guard !Task.isCancelled else { return }
+                            if event.kind == HerdrEvent.agentStatusChangedKind {
+                                if self.applyAgentStatusEvent(event, deviceID: device.id) {
+                                    self.scheduleRefresh(device.id)
+                                } else {
+                                    _ = await self.refreshImmediately(device.id)
+                                }
+                            } else if event.kind == HerdrEvent.subscriptionStartedKind
+                                || Self.paneTopologyEventKinds.contains(event.kind) {
+                                if !(await self.refreshImmediately(device.id)) {
+                                    needsResubscribe = true
+                                    resubscribeDelay = 500_000_000
+                                    break
+                                }
+                            } else {
+                                self.scheduleRefresh(device.id)
+                            }
+
+                            if event.kind == HerdrEvent.subscriptionStartedKind
+                                || Self.paneTopologyEventKinds.contains(event.kind) {
+                                let currentPaneIDs = self.statusSubscriptionPaneIDs(device.id)
+                                if currentPaneIDs != subscribedPaneIDs {
+                                    needsResubscribe = true
+                                    break
+                                }
+                            }
+                        }
+                        if needsResubscribe {
+                            try? await Task.sleep(nanoseconds: resubscribeDelay)
+                            continue eventSubscriptions
+                        }
+                        guard !Task.isCancelled else { return }
+                        throw HerdrError.connectionFailed("event stream ended")
                     }
                 } catch {
                     self.sessions[device.id]?.connection = .failed(error.localizedDescription)
@@ -740,6 +782,13 @@ final class AppModel: ObservableObject {
         sessionTasks[id] = nil
         refreshDebounces[id]?.cancel()
         refreshDebounces[id] = nil
+        refreshDebounceTokens[id] = nil
+        refreshDebouncePending.remove(id)
+        snapshotRefreshTasks[id]?.cancel()
+        snapshotRefreshTasks[id] = nil
+        snapshotRefreshTokens[id] = nil
+        refreshRequested.remove(id)
+        statusGenerations[id] = nil
         previousStatuses[id] = nil
         let service = services[id]
         services[id] = nil
@@ -846,10 +895,47 @@ final class AppModel: ObservableObject {
 
     // MARK: - Refresh
 
-    func refresh(_ deviceID: UUID) async {
-        guard let device = device(deviceID), let service = services[deviceID] else { return }
+    @discardableResult
+    func refresh(_ deviceID: UUID) async -> Bool {
+        refreshRequested.insert(deviceID)
+        if let task = snapshotRefreshTasks[deviceID] {
+            return await task.value
+        }
+        let token = UUID()
+        snapshotRefreshTokens[deviceID] = token
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return false }
+            var latestSucceeded = false
+            while !Task.isCancelled, self.refreshRequested.remove(deviceID) != nil {
+                latestSucceeded = await self.performRefresh(deviceID)
+            }
+            if self.snapshotRefreshTokens[deviceID] == token {
+                self.snapshotRefreshTokens[deviceID] = nil
+                self.snapshotRefreshTasks[deviceID] = nil
+            }
+            return latestSucceeded
+        }
+        snapshotRefreshTasks[deviceID] = task
+        return await task.value
+    }
+
+    private func performRefresh(_ deviceID: UUID) async -> Bool {
+        guard let device = device(deviceID), let service = services[deviceID] else {
+            return false
+        }
+        let statusGeneration = statusGenerations[deviceID, default: 0]
         do {
             let snapshot = try await service.snapshot()
+            guard services[deviceID] === service, sessions[deviceID] != nil else {
+                return false
+            }
+            guard statusGenerations[deviceID, default: 0] == statusGeneration else {
+                // A direct status event overtook this request on the separate
+                // event connection. Discard the older snapshot and let the
+                // refresh drain fetch one after that event.
+                refreshRequested.insert(deviceID)
+                return true
+            }
             unreadAgents = AgentUnread.applying(
                 previous: previousStatuses[deviceID] ?? [:],
                 agents: snapshot.agents,
@@ -903,19 +989,97 @@ final class AppModel: ObservableObject {
                     selectedPane = preferredVisibleAgent()?.ref ?? firstVisiblePaneRef
                 }
             }
+            return true
         } catch {
-            sessions[deviceID]?.connection = .failed(error.localizedDescription)
+            // A snapshot is one request on an otherwise live session. The
+            // event/connect loop owns connection health and will mark the
+            // device failed if the transport itself is gone.
+            return false
         }
     }
 
     private func scheduleRefresh(_ deviceID: UUID) {
-        refreshDebounces[deviceID]?.cancel()
-        refreshDebounces[deviceID] = Task {
+        // Coalesce from the leading edge instead of resetting the timer for
+        // every event. A busy pane can emit continuously; a trailing debounce
+        // would never fire until output stopped, hiding the working state.
+        guard refreshDebounces[deviceID] == nil else {
+            refreshDebouncePending.insert(deviceID)
+            return
+        }
+        let token = UUID()
+        refreshDebounceTokens[deviceID] = token
+        refreshDebounces[deviceID] = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 200_000_000)
-            guard !Task.isCancelled else { return }
+            guard let self, !Task.isCancelled,
+                  self.refreshDebounceTokens[deviceID] == token
+            else { return }
             await self.refresh(deviceID)
+            if self.refreshDebounceTokens[deviceID] == token {
+                let needsTrailing = self.refreshDebouncePending.remove(deviceID) != nil
+                self.refreshDebounceTokens[deviceID] = nil
+                self.refreshDebounces[deviceID] = nil
+                if needsTrailing {
+                    self.scheduleRefresh(deviceID)
+                }
+            }
         }
     }
+
+    private func refreshImmediately(_ deviceID: UUID) async -> Bool {
+        refreshDebounces[deviceID]?.cancel()
+        refreshDebounces[deviceID] = nil
+        refreshDebounceTokens[deviceID] = nil
+        refreshDebouncePending.remove(deviceID)
+        return await refresh(deviceID)
+    }
+
+    @discardableResult
+    private func applyAgentStatusEvent(_ event: HerdrEvent, deviceID: UUID) -> Bool {
+        guard let paneID = event.payload["data"]?["pane_id"]?.stringValue,
+              let statusRaw = event.payload["data"]?["agent_status"]?.stringValue,
+              let device = device(deviceID),
+              var state = sessions[deviceID],
+              let index = state.agents.firstIndex(where: { $0.paneID == paneID })
+        else { return false }
+
+        let status = AgentStatus(wire: statusRaw)
+        guard state.agents[index].status != status else { return true }
+        let previous = previousStatuses[deviceID] ?? [:]
+        state.agents[index] = state.agents[index].updatingStatus(status)
+        unreadAgents = AgentUnread.applying(
+            previous: previous,
+            agents: state.agents,
+            unread: unreadAgents,
+            deviceID: deviceID
+        )
+        notifyTransitions(
+            device: device,
+            from: previous,
+            to: state.agents,
+            workspaces: state.workspaces,
+            tabs: state.tabs
+        )
+        var nextStatuses = previous
+        nextStatuses[paneID] = status
+        previousStatuses[deviceID] = nextStatuses
+        statusGenerations[deviceID, default: 0] &+= 1
+        sessions[deviceID] = state
+        return true
+    }
+
+    private func statusSubscriptionPaneIDs(_ deviceID: UUID) -> [String] {
+        Array(Set(
+            session(deviceID).agents.map(\.paneID)
+                + session(deviceID).panes.map(\.paneID)
+        )).sorted()
+    }
+
+    private static let paneTopologyEventKinds: Set<String> = [
+        "pane.created",
+        "pane.closed",
+        "pane.moved",
+        "pane.agent_detected",
+    ]
 
     /// Notifies when an agent newly becomes blocked (needs input) or done (finished
     /// while unwatched). Initial snapshots don't notify — only real transitions do.

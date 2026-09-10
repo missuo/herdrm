@@ -27,6 +27,11 @@ the Sparkle update description — a release without a section here fails CI.
   reference implementation!)
 
 ### Fixed
+- Agent working / blocked / done indicators now update from herdr 0.9's
+  pane-scoped `pane.agent_status_changed` events instead of waiting for an
+  unrelated `pane.updated` event. Event names from both lifecycle and scoped
+  envelopes are normalized, subscriptions follow newly created/moved panes,
+  and continuous event bursts can no longer postpone snapshot refresh forever.
 - Mouse gestures in attached agent TUIs now have one owner from press through
   release. Plain drags reach mouse-aware TUIs in full, while Shift-drag stays
   in Ghostty for local selection. Command-C copies a local Ghostty selection

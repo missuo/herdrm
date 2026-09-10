@@ -61,15 +61,16 @@ release notes and the Sparkle update description, and fails if it's missing —
 add the section before tagging. The cask in OwO-Network/homebrew-brew is
 auto-bumped after each release.
 
-## herdr protocol notes (0.8.0, protocol 19; verified against the live socket)
+## herdr protocol notes (0.9.0, private protocol 22; verified against the live socket)
 
 - Requests are NDJSON `{"id","method","params"}` on `~/.config/herdr/herdr.sock`;
   `params` must be present even when empty (`{}`), or the server rejects the request.
 - `tab.create` returns the new pane as `result.root_pane.pane_id`.
-- `events.subscribe` takes `{"subscriptions":[{"type":"pane.updated"},…]}`;
-  `pane.agent_status_changed` / `pane.scroll_changed` / `pane.output_matched` are
-  pane-scoped (require `pane_id`) and cannot be subscribed globally — status changes
-  arrive globally as `pane.updated`. Full global kind list: `HerdrEvent.allKinds`.
+- `events.subscribe` takes `{"subscriptions":[{"type":"pane.updated"},…]}`.
+  `pane.agent_status_changed` is pane-scoped and must be subscribed with `pane_id`;
+  status transitions do not emit `pane.updated`. HerdrM appends one scoped status
+  subscription for every known pane and re-subscribes when pane topology changes.
+  `pane.scroll_changed` / `pane.output_matched` are scoped too.
 - Terminal attach: agents use `herdr agent attach <pane_id> --takeover`; bare shells use
   `herdr terminal attach <terminal_id> --takeover` (takes the pane over from other attached
   clients). Remote devices run it through `ssh -tt` with PATH prepended
