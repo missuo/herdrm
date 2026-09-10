@@ -7,6 +7,14 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Changed
+- Switching between agents (and herdr terminals) now preserves each one's live
+  terminal instead of re-attaching it. Every pane you open stays mounted and
+  hidden, so switching back is instant and its scrollback and running state
+  survive the round trip — no takeover churn, no redraw. A pane's kept-alive
+  view is dropped when its pane actually closes. (thanks @lbr77 for the
+  reference implementation!)
+
 ### Fixed
 - Mouse gestures in attached agent TUIs now have one owner from press through
   release. Plain drags reach mouse-aware TUIs in full, while Shift-drag stays

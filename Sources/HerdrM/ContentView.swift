@@ -122,7 +122,15 @@ struct DetailView: View {
                 // becomes reachable, which is a state a deferred focus request can be
                 // armed into with nothing left in the tree to consume it.
                 .onChange(of: model.selectedAttachedEntry?.id) { _, id in
-                    if id == nil { model.shellSplitAxis = nil }
+                    if id == nil {
+                        model.shellSplitAxis = nil
+                        // The placeholder tore every kept-alive attach down along with
+                        // the SplitContainer. Empty the session list and per-entry state
+                        // so a later selection doesn't resurrect them all at once.
+                        model.attachSessions = []
+                        endedAttach = [:]
+                        attachRetry = [:]
+                    }
                 }
                 .onChange(of: model.isFileManagerActive) { _, active in
                     if active { hasOpenedFileManager = true }
@@ -278,11 +286,13 @@ struct DetailView: View {
     @AppStorage(TerminalDefaults.lineSpacingKey) private var terminalLineSpacing = TerminalDefaults.defaultLineSpacing
     @AppStorage("terminal.mouseReporting") private var terminalMouseReporting = true
     @Environment(\.colorScheme) private var colorScheme
-    /// The entry whose attach process exited, and how. Keyed by entry id so a stale
-    /// exit from a previously selected pane never covers a live terminal.
-    @State private var endedAttachKey: String?
-    @State private var endedAttachCode: Int32?
-    @State private var attachRetry = 0
+    /// Per-entry attach state, keyed by `AttachedEntry.id`. `endedAttach` holds the exit
+    /// code of a dead attach (nil code = no status, e.g. killed by a signal); a present
+    /// key drives that entry's reconnect overlay. `attachRetry` is a generation the
+    /// Reconnect button bumps to rebuild just that one terminal. Per-entry so one dead
+    /// terminal's overlay never covers another and Reconnect rebuilds only its own.
+    @State private var endedAttach: [String: Int32?] = [:]
+    @State private var attachRetry: [String: Int] = [:]
     @State private var uploadingAttachment = false
     @State private var splitTracker = SplitFocusTracker()
 
@@ -319,46 +329,19 @@ struct DetailView: View {
     @ViewBuilder
     private var attachedTerminal: some View {
         if let entry = model.selectedAttachedEntry {
-            let attachmentCapabilities: AgentAttachmentCapabilities? = {
-                guard case .agent(let agentEntry) = entry else { return nil }
-                return model.attachmentCapabilities(
-                    deviceID: agentEntry.device.id,
-                    agentKind: agentEntry.agent.agentKindRaw
-                )
-            }()
             SplitContainer(
                 axis: model.shellSplitAxis,
                 activeSide: model.activeSplitSide,
                 ratio: $model.splitRatio
             ) {
+                // One structural position holding every kept-alive attach. Each child
+                // keeps a stable identity and is toggled by opacity, so switching the
+                // selection — or opening/closing the split — never tears a terminal
+                // down: its content survives the round trip. Do not key this on the
+                // selection; that rebuild-on-switch is exactly what this removes.
                 ZStack {
-                    AttachTerminalView(
-                        device: entry.device,
-                        target: entry.attachTarget,
-                        serverVersion: model.serverVersion(deviceID: entry.device.id),
-                        attachmentCapabilities: attachmentCapabilities,
-                        fontName: terminalFontName,
-                        fontSize: terminalFontSize,
-                        thinStrokes: terminalThinStrokes,
-                        fontWeight: terminalFontWeight,
-                        lineSpacing: terminalLineSpacing,
-                        dark: colorScheme == .dark,
-                        mouseReporting: terminalMouseReporting,
-                        onAttachmentError: { model.actionError = $0 },
-                        onAttachmentUploadingChanged: { uploadingAttachment = $0 },
-                        onExit: { code in
-                            endedAttachKey = entry.id
-                            endedAttachCode = code
-                        },
-                        onViewReady: {
-                            model.splitAgentView = $0
-                        }
-                    )
-                        .id("attach-\(entry.id)-\(colorScheme)-\(attachRetry)")
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                    if endedAttachKey == entry.id {
-                        attachEndedOverlay(entry)
+                    ForEach(model.attachSessions) { session in
+                        attachChild(session, isSelected: session.id == entry.id)
                     }
                 }
             } second: {
@@ -393,18 +376,17 @@ struct DetailView: View {
                 // Single source of truth: the tracker writes straight into the model
                 // instead of holding its own copy for a second onChange to mirror.
                 splitTracker.onSideChanged = { model.activeSplitSide = $0 }
-                // Ghostty surfaces have no stable pre-attach identity to hold, so
-                // the tracker asks the live-attach registry whether a responder is
-                // an agent view instead of caching one reference.
                 splitTracker.isAgentView = { view in
                     AttachViewRegistry.liveViews.contains { $0 === view }
                 }
                 splitTracker.start()
             }
-            .onChange(of: entry.id) { _, _ in
-                endedAttachKey = nil
+            .onChange(of: entry.id) { _, newID in
                 uploadingAttachment = false
-                if model.shellSplitAxis != nil { focusTerminal(model.splitAgentView) }
+                // A re-selected kept-alive view does not self-focus (makeNSView ran once
+                // at creation), so hand it the keyboard explicitly — matching how every
+                // selection used to focus the freshly built terminal.
+                AttachViewRegistry.focus(newID)
             }
             // Keyed on the window becoming key rather than on a delay: that is the event
             // that follows the sheet's responder restore. Filtered to the terminal's own
@@ -426,7 +408,7 @@ struct DetailView: View {
                 if axis == nil {
                     model.activeSplitSide = .agent
                     model.pendingSplitAgentFocus = false
-                    focusRemainingTerminal()
+                    focusRemainingTerminal(preferring: model.splitAgentView)
                 }
             }
         } else {
@@ -458,10 +440,54 @@ struct DetailView: View {
         }
     }
 
+    /// One kept-alive attach. Stays in the hierarchy while deselected (opacity 0, no hit
+    /// testing) so its content survives; the selected one is visible and interactive.
+    @ViewBuilder
+    private func attachChild(_ session: AppModel.AttachedEntry, isSelected: Bool) -> some View {
+        let attachmentCapabilities: AgentAttachmentCapabilities? = {
+            guard case .agent(let agentEntry) = session else { return nil }
+            return model.attachmentCapabilities(
+                deviceID: agentEntry.device.id,
+                agentKind: agentEntry.agent.agentKindRaw
+            )
+        }()
+        ZStack {
+            AttachTerminalView(
+                device: session.device,
+                target: session.attachTarget,
+                sessionID: session.id,
+                serverVersion: model.serverVersion(deviceID: session.device.id),
+                attachmentCapabilities: attachmentCapabilities,
+                fontName: terminalFontName,
+                fontSize: terminalFontSize,
+                thinStrokes: terminalThinStrokes,
+                fontWeight: terminalFontWeight,
+                lineSpacing: terminalLineSpacing,
+                dark: colorScheme == .dark,
+                mouseReporting: terminalMouseReporting,
+                onAttachmentError: { model.actionError = $0 },
+                onAttachmentUploadingChanged: { uploadingAttachment = $0 },
+                onExit: { code in endedAttach[session.id] = code }
+            )
+                // Keyed on the retry generation only — NOT colorScheme. A theme toggle
+                // must re-theme live via updateNSView (as the split shell already does);
+                // rebuilding here would tear down every kept-alive terminal at once and
+                // throw away the very content this keeps alive.
+                .id("attach-\(session.id)-\(attachRetry[session.id] ?? 0)")
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+            if isSelected, endedAttach[session.id] != nil {
+                attachEndedOverlay(session)
+            }
+        }
+        .opacity(isSelected ? 1 : 0)
+        .allowsHitTesting(isSelected)
+    }
+
     /// ssh exits 255 for transport failures; everything else is the far end closing
     /// (takeover by another client, the pane going away, herdr stopping).
     private func attachEndedOverlay(_ entry: AppModel.AttachedEntry) -> some View {
-        let dropped = endedAttachCode == 255
+        let dropped = (endedAttach[entry.id] ?? nil) == 255
         return VStack(spacing: 10) {
             Image(systemName: dropped ? "bolt.horizontal.circle" : "rectangle.slash")
                 .font(.system(size: 28, weight: .light))
@@ -475,8 +501,8 @@ struct DetailView: View {
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.textTertiary)
             Button("Reconnect") {
-                endedAttachKey = nil
-                attachRetry += 1
+                endedAttach[entry.id] = nil
+                attachRetry[entry.id, default: 0] += 1
             }
             .controlSize(.small)
             .keyboardShortcut(.defaultAction)

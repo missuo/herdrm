@@ -122,7 +122,24 @@ final class AppModel: ObservableObject {
             if let old = oldValue, old != selectedPane {
                 unreadAgents.remove(AgentUnreadKey(deviceID: old.deviceID, paneID: old.paneID))
             }
+            noteSelectedAttachSession()
         }
+    }
+
+    /// Kept-alive attaches: every agent/terminal the user has opened stays
+    /// mounted (hidden) so switching back preserves its scrollback and running
+    /// state instead of re-attaching. Evicted when its pane closes.
+    @Published var attachSessions: [AttachedEntry] = []
+
+    /// Keeps the selected pane's attach alive so switching back preserves its content.
+    /// Runs synchronously inside the `selectedPane` assignment, so the kept-alive entry
+    /// is in `attachSessions` in the same update the selection lands in — a separate
+    /// onAppear/onChange would leave a one-frame window with no view for the new pane.
+    private func noteSelectedAttachSession() {
+        guard let entry = selectedAttachedEntry,
+              !attachSessions.contains(where: { $0.id == entry.id })
+        else { return }
+        attachSessions.append(entry)
     }
     /// Finished agents the user has not opened since they flipped to `done`.
     @Published private(set) var unreadAgents: Set<AgentUnreadKey> = []
@@ -151,8 +168,12 @@ final class AppModel: ObservableObject {
     }
     static let splitRatioKey = "terminal.splitRatio"
     /// Live terminal views of the ⌘D split, used by menu commands to move focus.
-    /// Held weakly so the views are not kept alive by the model.
-    weak var splitAgentView: LineBreakTerminalView?
+    /// The agent side is resolved from the attach registry by the current selection
+    /// (kept-alive attach views persist across switches, so a stored ref would go
+    /// stale); the shell side stays a weak ref since the split shell is a single view.
+    var splitAgentView: LineBreakTerminalView? {
+        selectedAttachedEntry.flatMap { AttachViewRegistry.view(for: $0.id) }
+    }
     weak var splitShellView: LineBreakTerminalView?
     /// Standalone terminals. Their views stay alive while deselected —
     /// unlike agents, a local shell has no server side to reattach to.
@@ -813,6 +834,7 @@ final class AppModel: ObservableObject {
         TailcatCredentialStore.removeToken(for: device.id)
         if sshAuthenticationRequest?.deviceID == device.id { sshAuthenticationRequest = nil }
         stopSession(device.id)
+        attachSessions.removeAll { $0.device.id == device.id }
         devices.removeAll { $0.id == device.id }
         store.save(devices)
         if deviceFilter == device.id { deviceFilter = nil }
@@ -853,6 +875,10 @@ final class AppModel: ObservableObject {
             sessions[deviceID]?.panes = snapshot.ordinaryTerminalPanes
             let paneIDs = Set((snapshot.panes ?? []).map(\.paneID))
                 .union(snapshot.agents.map(\.paneID))
+            // Drop kept-alive attaches whose pane is gone (closed). A pane only taken
+            // over by another client still exists, so it stays — its Reconnect overlay
+            // needs the kept-alive child to rebuild the attach.
+            attachSessions.removeAll { $0.device.id == deviceID && !paneIDs.contains($0.ref.paneID) }
             if let selected = selectedPane, selected.deviceID == deviceID,
                !paneIDs.contains(selected.paneID) {
                 selectedPane = nil
