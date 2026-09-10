@@ -351,7 +351,6 @@ struct DetailView: View {
                             endedAttachCode = code
                         },
                         onViewReady: {
-                            splitTracker.agentView = $0
                             model.splitAgentView = $0
                         }
                     )
@@ -394,6 +393,12 @@ struct DetailView: View {
                 // Single source of truth: the tracker writes straight into the model
                 // instead of holding its own copy for a second onChange to mirror.
                 splitTracker.onSideChanged = { model.activeSplitSide = $0 }
+                // Ghostty surfaces have no stable pre-attach identity to hold, so
+                // the tracker asks the live-attach registry whether a responder is
+                // an agent view instead of caching one reference.
+                splitTracker.isAgentView = { view in
+                    AttachViewRegistry.liveViews.contains { $0 === view }
+                }
                 splitTracker.start()
             }
             .onChange(of: entry.id) { _, _ in
@@ -570,7 +575,7 @@ struct AddDeviceSheet: View {
                     TextField("tcpGFwWCD…", text: $token)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 11, design: .monospaced))
-                    Text("On the remote Mac: `herdr plugin install lbr77/herdr-plugin-tailcat`, then `herdr plugin action invoke herdr.tailcat.token` and paste the token here. Needs `tailcat` on this Mac (brew install tailcat). The token is stored in the Keychain. Each operation pays a tunnel handshake, so expect ~1–2 s latency; standalone shells and the Files workspace need SSH.")
+                    Text("On the remote Mac: `herdr plugin install lbr77/herdr-plugin-tailcat`, then `herdr plugin action invoke herdr.tailcat.token` and paste the token here. The WireGuard tunnel is built in — no external tool. The token is stored in the Keychain. Standalone shells and the Files workspace need SSH.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(Theme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)

@@ -10,7 +10,17 @@ struct MobileRootView: View {
         NavigationSplitView {
             SidebarListView(model: model)
         } detail: {
-            if let agent = model.selectedAgent,
+            if let device = model.selectedDevice, device.isTailcat,
+               model.selectedAgentPaneID != nil {
+                // tailcat carries herdr's control plane only — no shell, no
+                // PTY channel — so there is no terminal byte stream to attach
+                // to on iOS. Prompting stays available from the agent's row.
+                ContentUnavailableView(
+                    String(localized: "No Terminal over Tailcat"),
+                    systemImage: "terminal",
+                    description: Text(String(localized: "This device's tunnel reaches herdr's control plane only. Use an SSH device to attach to a live terminal."))
+                )
+            } else if let agent = model.selectedAgent,
                let transport = model.selectedSession?.transport {
                 MobileTerminalScreen(
                     transport: transport,
@@ -328,71 +338,63 @@ private struct ConnectionDot: View {
 struct AddDeviceSheet: View {
     @Bindable var model: MobileAppModel
     @Environment(\.dismiss) private var dismiss
+    @State private var kind: MobileDevice.Kind = .ssh
     @State private var name = ""
     @State private var host = ""
     @State private var port = "22"
     @State private var username = ""
     @State private var authMethod: MobileDevice.AuthMethod = .deviceKey
     @State private var password = ""
+    @State private var tailcatToken = ""
     @State private var copiedKey = false
 
     private var canAdd: Bool {
-        !host.trimmingCharacters(in: .whitespaces).isEmpty
-            && !username.trimmingCharacters(in: .whitespaces).isEmpty
-            && (authMethod == .deviceKey || !password.isEmpty)
-            && UInt16(port) != nil
+        switch kind {
+        case .ssh:
+            return !host.trimmingCharacters(in: .whitespaces).isEmpty
+                && !username.trimmingCharacters(in: .whitespaces).isEmpty
+                && (authMethod == .deviceKey || !password.isEmpty)
+                && UInt16(port) != nil
+        case .tailcat:
+            return !tailcatToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
     }
 
     var body: some View {
         NavigationStack {
             Form {
+                Section {
+                    Picker(String(localized: "Connection"), selection: $kind) {
+                        Text(String(localized: "SSH")).tag(MobileDevice.Kind.ssh)
+                        Text(String(localized: "Tailcat")).tag(MobileDevice.Kind.tailcat)
+                    }
+                }
+
                 Section(String(localized: "Device")) {
                     TextField(String(localized: "Name (optional)"), text: $name)
-                    TextField(String(localized: "Host or IP"), text: $host)
-                        .textContentType(.URL)
-                        .keyboardType(.URL)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    TextField(String(localized: "Port"), text: $port)
-                        .keyboardType(.numberPad)
-                }
-                Section(String(localized: "SSH Login")) {
-                    TextField(String(localized: "Username"), text: $username)
-                        .textContentType(.username)
-                        .autocorrectionDisabled()
-                        .textInputAutocapitalization(.never)
-                    Picker(String(localized: "Authentication"), selection: $authMethod) {
-                        Text(String(localized: "Device Key")).tag(MobileDevice.AuthMethod.deviceKey)
-                        Text(String(localized: "Password")).tag(MobileDevice.AuthMethod.password)
-                    }
-                    if authMethod == .password {
-                        SecureField(String(localized: "Password"), text: $password)
-                            .textContentType(.password)
+                    if kind == .ssh {
+                        TextField(String(localized: "Host or IP"), text: $host)
+                            .textContentType(.URL)
+                            .keyboardType(.URL)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        TextField(String(localized: "Port"), text: $port)
+                            .keyboardType(.numberPad)
                     }
                 }
-                if authMethod == .deviceKey {
-                    Section(String(localized: "This Phone's Key")) {
-                        Text(model.deviceKeyAuthorizedLine)
-                            .font(.system(size: 11, design: .monospaced))
-                            .lineLimit(3)
-                            .textSelection(.enabled)
-                        Button(copiedKey
-                            ? String(localized: "Copied")
-                            : String(localized: "Copy authorized_keys Line")
-                        ) {
-                            UIPasteboard.general.string = model.deviceKeyAuthorizedLine
-                            copiedKey = true
-                        }
-                        Text(String(localized: "On the Mac, run: echo '<key>' >> ~/.ssh/authorized_keys — or paste the line into herdrm's upcoming pairing screen."))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
+
+                if kind == .tailcat {
+                    Section {
+                        SecureField(String(localized: "Token"), text: $tailcatToken)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                    } header: {
+                        Text(String(localized: "Tailcat Token"))
+                    } footer: {
+                        Text(String(localized: "From the host: herdr plugin action invoke herdr.tailcat.token — the token is stored in this device's Keychain, and the tunnel needs no SSH."))
                     }
                 } else {
-                    Section {
-                        Text(String(localized: "The password is stored in this device's Keychain and never leaves it except to log in over SSH."))
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
+                    sshSections
                 }
             }
             .navigationTitle(String(localized: "Add Device"))
@@ -403,18 +405,65 @@ struct AddDeviceSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(String(localized: "Add")) {
-                        model.addDevice(
-                            name: name,
-                            host: host,
-                            port: UInt16(port) ?? 22,
-                            username: username,
-                            authMethod: authMethod,
-                            password: password
-                        )
+                        switch kind {
+                        case .ssh:
+                            model.addDevice(
+                                name: name,
+                                host: host,
+                                port: UInt16(port) ?? 22,
+                                username: username,
+                                authMethod: authMethod,
+                                password: password
+                            )
+                        case .tailcat:
+                            model.addTailcatDevice(name: name, token: tailcatToken)
+                        }
                         dismiss()
                     }
                     .disabled(!canAdd)
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sshSections: some View {
+        Section(String(localized: "SSH Login")) {
+            TextField(String(localized: "Username"), text: $username)
+                .textContentType(.username)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            Picker(String(localized: "Authentication"), selection: $authMethod) {
+                Text(String(localized: "Device Key")).tag(MobileDevice.AuthMethod.deviceKey)
+                Text(String(localized: "Password")).tag(MobileDevice.AuthMethod.password)
+            }
+            if authMethod == .password {
+                SecureField(String(localized: "Password"), text: $password)
+                    .textContentType(.password)
+            }
+        }
+        if authMethod == .deviceKey {
+            Section(String(localized: "This Phone's Key")) {
+                Text(model.deviceKeyAuthorizedLine)
+                    .font(.system(size: 11, design: .monospaced))
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+                Button(copiedKey
+                    ? String(localized: "Copied")
+                    : String(localized: "Copy authorized_keys Line")
+                ) {
+                    UIPasteboard.general.string = model.deviceKeyAuthorizedLine
+                    copiedKey = true
+                }
+                Text(String(localized: "On the Mac, run: echo '<key>' >> ~/.ssh/authorized_keys — or paste the line into herdrm's upcoming pairing screen."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            Section {
+                Text(String(localized: "The password is stored in this device's Keychain and never leaves it except to log in over SSH."))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
         }
     }

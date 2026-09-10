@@ -1,17 +1,88 @@
+import GameController
+import GhosttyTerminal
 import HerdrKit
 import HerdrSSH
-import SwiftTerm
 import SwiftUI
 import UIKit
 
+/// The process-wide Ghostty app object for the phone's terminals: every
+/// surface shares one controller, mirroring the Mac app's GhosttyRuntime.
+/// The mobile chrome is dark-only, so the theme pins the dark palette to
+/// both schemes rather than following the OS appearance.
+@MainActor
+enum MobileGhosttyRuntime {
+    /// The font/cursor settings land as a configuration override (the
+    /// controller's hot-apply path), the theme at construction.
+    static let controller: TerminalController = {
+        let controller = TerminalController(configSource: .none, theme: makeTheme())
+        controller.setTerminalConfiguration(makeConfiguration())
+        return controller
+    }()
+
+    /// Same dark colors as the Mac app (`TerminalDefaults`): #101012 on
+    /// #D6D6D6 with the Terminal.app 16-color palette.
+    private static let backgroundHex = "#101012"
+    private static let foregroundHex = "#D6D6D6"
+    private static let palette: [(red: Int, green: Int, blue: Int)] = [
+        (0, 0, 0), (194, 54, 33), (37, 188, 36), (173, 173, 39),
+        (73, 46, 225), (211, 56, 211), (51, 187, 200), (203, 204, 205),
+        (129, 131, 131), (252, 57, 31), (49, 231, 34), (234, 236, 35),
+        (88, 51, 255), (249, 53, 248), (20, 240, 240), (233, 235, 235),
+    ]
+
+    /// Bundled Nerd Font symbols (MIT, github.com/ryanoasis/nerd-fonts),
+    /// registered process-wide at app launch, for the icon glyphs agent
+    /// TUIs draw. iOS has no user font cascade for the PUA, so the ranges
+    /// are codepoint-mapped like on the Mac.
+    private static let symbolFallbackFamily = "Symbols Nerd Font Mono"
+
+    static func registerBundledFonts() {
+        guard let url = Bundle.main.url(forResource: "SymbolsNerdFontMono-Regular", withExtension: "ttf") else { return }
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    }
+
+    private static func makeConfiguration() -> TerminalConfiguration {
+        TerminalConfiguration { builder in
+            builder.withFontSize(12)
+            builder.withCursorStyle(.block)
+            builder.withCursorStyleBlink(true)
+            // Counter the default config's font-thicken: fake bold at
+            // terminal sizes reads as smear on a phone screen.
+            builder.withFontThicken(false)
+            // Menlo is always present on iOS; SF Mono is not resolvable by
+            // family name there.
+            builder.withFontFamily("Menlo")
+            builder.withCustom("font-codepoint-map", "U+E000-U+F8FF=\(symbolFallbackFamily)")
+            builder.withCustom("font-codepoint-map", "U+F0000-U+FFFFD=\(symbolFallbackFamily)")
+            builder.withCustom("font-codepoint-map", "U+100000-U+10FFFD=\(symbolFallbackFamily)")
+        }
+    }
+
+    private static func makeTheme() -> TerminalTheme {
+        let dark = TerminalConfiguration { builder in
+            builder.withBackground(backgroundHex)
+            builder.withForeground(foregroundHex)
+            for (index, color) in palette.enumerated() {
+                builder.withPalette(index, color: hex(color))
+            }
+        }
+        return TerminalTheme(light: dark, dark: dark)
+    }
+
+    private static func hex(_ color: (red: Int, green: Int, blue: Int)) -> String {
+        String(format: "#%02X%02X%02X", color.red, color.green, color.blue)
+    }
+}
+
 /// One live attach: a PTY channel running `herdr … attach` on the device,
-/// pumped into a SwiftTerm view. The session outlives view updates; it ends
-/// when the channel EOFs (takeover by another client, pane closed, network).
+/// rendered by a host-managed (in-memory) Ghostty surface. The surface's
+/// output (keyboard input, DA/OSC replies) and grid resizes flow back
+/// through the channel; the channel's bytes feed the surface.
 ///
 /// Mobile terminals are display-first (Heeler's ADR 0013 insight): the live
-/// pane renders, but typing goes through the composer (`agent.prompt`) and a
-/// key bar (`pane.send_input` keys), which herdr encodes properly server-side.
-/// A keyboard toggle still allows raw typing for TUI menus that need it.
+/// pane renders, typing is opt-in via the keyboard toggle, and the composer
+/// (`agent.prompt`) plus key bar (`pane.send_input` keys) go through RPCs so
+/// herdr encodes them properly server-side.
 @MainActor
 final class MobileAttachSession: ObservableObject {
     enum Status: Equatable {
@@ -23,12 +94,23 @@ final class MobileAttachSession: ObservableObject {
     @Published var status: Status = .connecting
     let transport: MobileTransport
     let target: TerminalAttachTarget
+
+    /// The host-managed Ghostty backend the surface in `MobileTerminalHost`
+    /// renders. Created up front so the view can attach before the channel
+    /// exists — output is buffered by the session until then.
+    let terminal: InMemoryTerminalSession
+    /// The channel, shared with the session's @Sendable write closure.
+    private let channelBox: ChannelBox
     private var channel: SSHPTYChannel?
+    private var openTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
+    /// Last grid the surface reported; reconnects open at this size instead
+    /// of waiting for a fresh viewport report (an unchanged grid dispatches
+    /// no new resize).
+    private var lastGrid: (columns: Int, rows: Int)?
     /// Bytes before the bootstrap marker are shell rc chatter, not pane output.
     private var sawBootstrapMarker = false
     private var bootstrapBuffer = Data()
-    weak var terminalView: TerminalView?
 
     /// The herdr pane behind this attach, for key/prompt RPCs.
     let paneID: String
@@ -37,6 +119,18 @@ final class MobileAttachSession: ObservableObject {
         self.transport = transport
         self.target = target
         self.paneID = paneID
+        let box = ChannelBox()
+        channelBox = box
+        terminal = InMemoryTerminalSession(
+            write: { data in box.write(data) },
+            resize: { viewport in
+                box.resize(columns: Int(viewport.columns), rows: Int(viewport.rows))
+            },
+            // Only grid changes reach the remote PTY; pixel-only updates
+            // would just re-report the same winsize.
+            suppressesPixelOnlyResizes: true
+        )
+        box.owner = self
     }
 
     var agentPaneID: String? {
@@ -44,12 +138,34 @@ final class MobileAttachSession: ObservableObject {
         return nil
     }
 
-    func start(columns: Int, rows: Int) {
-        guard channel == nil else { return }
+    /// Marks the session ready to attach. The channel opens on the surface's
+    /// first viewport report (the exact grid, no SIGWINCH redraw); a
+    /// reconnect reuses the last grid and opens immediately.
+    func start() {
+        guard channel == nil, openTask == nil else { return }
         status = .connecting
         sawBootstrapMarker = false
         bootstrapBuffer.removeAll()
-        Task {
+        if let lastGrid {
+            open(columns: lastGrid.columns, rows: lastGrid.rows)
+        }
+    }
+
+    /// The Ghostty IO thread reports the grid here (hopped to main). The
+    /// first report opens the channel; later ones resize it.
+    private func handleViewportResize(columns: Int, rows: Int) {
+        lastGrid = (columns, rows)
+        if let channel {
+            Task { try? await channel.resize(columns: columns, rows: rows, timeout: .seconds(5)) }
+            return
+        }
+        guard openTask == nil, case .connecting = status else { return }
+        open(columns: columns, rows: rows)
+    }
+
+    private func open(columns: Int, rows: Int) {
+        openTask = Task {
+            defer { openTask = nil }
             do {
                 let channel = try await transport.openTerminal(
                     command: MobileAttach.command(target: target),
@@ -57,10 +173,17 @@ final class MobileAttachSession: ObservableObject {
                     rows: max(rows, 5)
                 )
                 self.channel = channel
-                self.status = .running
-                self.pump(channel)
+                channelBox.setChannel(channel)
+                status = .running
+                pump(channel)
+                // The grid may have moved while the channel opened.
+                if let grid = lastGrid, grid != (columns, rows) {
+                    try? await channel.resize(
+                        columns: grid.columns, rows: grid.rows, timeout: .seconds(5)
+                    )
+                }
             } catch {
-                self.status = .ended(
+                status = .ended(
                     (error as? LocalizedError)?.errorDescription ?? "\(error)"
                 )
             }
@@ -85,7 +208,7 @@ final class MobileAttachSession: ObservableObject {
 
     private func ingest(_ data: Data) {
         guard !sawBootstrapMarker else {
-            feed(data)
+            terminal.receive(data)
             return
         }
         bootstrapBuffer.append(data)
@@ -94,7 +217,7 @@ final class MobileAttachSession: ObservableObject {
             // binary, exec failure output) still shows its error text.
             if bootstrapBuffer.count > 8192 {
                 sawBootstrapMarker = true
-                feed(bootstrapBuffer)
+                terminal.receive(bootstrapBuffer)
                 bootstrapBuffer.removeAll()
             }
             return
@@ -102,17 +225,7 @@ final class MobileAttachSession: ObservableObject {
         sawBootstrapMarker = true
         let payload = bootstrapBuffer.suffix(from: range.upperBound)
         bootstrapBuffer.removeAll()
-        if !payload.isEmpty { feed(Data(payload)) }
-    }
-
-    private func feed(_ data: Data) {
-        terminalView?.feed(byteArray: ArraySlice([UInt8](data)))
-    }
-
-    func send(_ bytes: ArraySlice<UInt8>) {
-        guard let channel else { return }
-        let data = Data(bytes)
-        Task { try? await channel.write(data, timeout: .seconds(10)) }
+        if !payload.isEmpty { terminal.receive(Data(payload)) }
     }
 
     /// Sends named keys through herdr's RPC — proper terminal encoding without
@@ -143,18 +256,48 @@ final class MobileAttachSession: ObservableObject {
         }
     }
 
-    func resize(columns: Int, rows: Int) {
-        guard let channel, columns > 0, rows > 0 else { return }
-        Task { try? await channel.resize(columns: columns, rows: rows, timeout: .seconds(5)) }
-    }
-
     func stop() {
         readTask?.cancel()
         readTask = nil
+        openTask?.cancel()
+        openTask = nil
         if let channel {
             Task { try? await channel.close(timeout: .seconds(2)) }
         }
         channel = nil
+        channelBox.setChannel(nil)
+    }
+
+    /// The channel as seen from the session's @Sendable closures. Input that
+    /// arrives before the channel opens is dropped: keystrokes aimed at a
+    /// pane that isn't attached yet are meaningless, and Ghostty's DA/OSC
+    /// replies only exist once remote output has been fed.
+    private final class ChannelBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var channel: SSHPTYChannel?
+        /// Main-actor hop for grid reports from the Ghostty IO thread.
+        weak var owner: MobileAttachSession?
+
+        func setChannel(_ channel: SSHPTYChannel?) {
+            lock.lock()
+            self.channel = channel
+            lock.unlock()
+        }
+
+        func write(_ data: Data) {
+            lock.lock()
+            let channel = self.channel
+            lock.unlock()
+            guard let channel else { return }
+            Task { try? await channel.write(data, timeout: .seconds(10)) }
+        }
+
+        func resize(columns: Int, rows: Int) {
+            guard columns > 0, rows > 0 else { return }
+            Task { @MainActor [weak owner] in
+                owner?.handleViewportResize(columns: columns, rows: rows)
+            }
+        }
     }
 }
 
@@ -268,7 +411,7 @@ struct MobileTerminalScreen: View {
                 .foregroundStyle(.white.opacity(0.8))
             Button(String(localized: "Reconnect")) {
                 session.stop()
-                session.start(columns: 80, rows: 24)
+                session.start()
             }
             .buttonStyle(.borderedProminent)
         }
@@ -277,60 +420,78 @@ struct MobileTerminalScreen: View {
     }
 }
 
-/// UIKit host for SwiftTerm's iOS TerminalView, wired to the attach session.
+/// Display-first: a tap on the terminal is a click for the TUI, never a
+/// keyboard pop — the toolbar button owns the software keyboard. With a
+/// hardware keyboard attached (iPad), the tap still claims first responder
+/// so keystrokes land; iOS then shows only the accessory bar.
+private final class MobileGhosttyTerminalView: UITerminalView {
+    override func toggleSoftwareKeyboard() {
+        if GCKeyboard.coalesced != nil {
+            _ = becomeFirstResponder()
+        }
+    }
+}
+
+/// UIKit host for Ghostty's UITerminalView on the session's in-memory
+/// backend, wired to the attach session.
 private struct MobileTerminalHost: UIViewRepresentable {
     let session: MobileAttachSession
     @Binding var keyboardShown: Bool
 
-    func makeUIView(context: Context) -> TerminalView {
-        let view = TerminalView(frame: .zero)
-        view.terminalDelegate = context.coordinator
-        view.backgroundColor = UIColor(red: 0x10 / 255, green: 0x10 / 255, blue: 0x12 / 255, alpha: 1)
-        view.nativeBackgroundColor = view.backgroundColor ?? .black
-        view.nativeForegroundColor = UIColor(red: 0xD6 / 255, green: 0xD6 / 255, blue: 0xD6 / 255, alpha: 1)
-        session.terminalView = view
-        let terminal = view.getTerminal()
-        session.start(columns: terminal.cols, rows: terminal.rows)
+    func makeUIView(context: Context) -> MobileGhosttyTerminalView {
+        let view = MobileGhosttyTerminalView(frame: .zero)
+        view.controller = MobileGhosttyRuntime.controller
+        view.configuration = TerminalSurfaceOptions(backend: .inMemory(session.terminal))
+        context.coordinator.observeKeyboard(for: view)
+        session.start()
         return view
     }
 
-    func updateUIView(_ uiView: TerminalView, context: Context) {
-        if keyboardShown, !uiView.isFirstResponder {
-            uiView.becomeFirstResponder()
-        } else if !keyboardShown, uiView.isFirstResponder {
+    func updateUIView(_ uiView: MobileGhosttyTerminalView, context _: Context) {
+        if keyboardShown {
+            uiView.acquireProgrammaticFocus()
+        } else if uiView.isFirstResponder {
             uiView.resignFirstResponder()
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(session: session) }
+    func makeCoordinator() -> Coordinator { Coordinator(keyboardShown: $keyboardShown) }
 
-    @MainActor
-    final class Coordinator: NSObject, TerminalViewDelegate {
-        let session: MobileAttachSession
-        init(session: MobileAttachSession) { self.session = session }
+    /// Keeps the keyboard binding truthful when the keyboard comes or goes
+    /// outside the toolbar button (interactive dismiss, hardware attach).
+    final class Coordinator: NSObject {
+        var keyboardShown: Binding<Bool>
+        weak var view: MobileGhosttyTerminalView?
 
-        nonisolated func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-            Task { @MainActor in self.session.resize(columns: newCols, rows: newRows) }
+        init(keyboardShown: Binding<Bool>) {
+            self.keyboardShown = keyboardShown
         }
-        nonisolated func setTerminalTitle(source: TerminalView, title: String) {}
-        nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
-        nonisolated func send(source: TerminalView, data: ArraySlice<UInt8>) {
-            let bytes = Array(data)
-            Task { @MainActor in self.session.send(bytes[...]) }
+
+        func observeKeyboard(for view: MobileGhosttyTerminalView) {
+            self.view = view
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(keyboardDidShow),
+                name: UIResponder.keyboardDidShowNotification, object: nil
+            )
+            NotificationCenter.default.addObserver(
+                self, selector: #selector(keyboardDidHide),
+                name: UIResponder.keyboardDidHideNotification, object: nil
+            )
         }
-        nonisolated func scrolled(source: TerminalView, position: Double) {}
-        nonisolated func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
-            guard let url = URL(string: link), url.scheme == "http" || url.scheme == "https" else { return }
-            Task { @MainActor in UIApplication.shared.open(url) }
+
+        deinit {
+            NotificationCenter.default.removeObserver(self)
         }
-        nonisolated func bell(source: TerminalView) {}
-        nonisolated func clipboardCopy(source: TerminalView, content: Data) {
-            if let text = String(data: content, encoding: .utf8) {
-                Task { @MainActor in UIPasteboard.general.string = text }
-            }
+
+        @objc private func keyboardDidShow(_: Notification) {
+            guard view?.isFirstResponder == true, !keyboardShown.wrappedValue else { return }
+            keyboardShown.wrappedValue = true
         }
-        nonisolated func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
-        nonisolated func rangeChanged(source: TerminalView, startY: Int, endY: Int) {}
+
+        @objc private func keyboardDidHide(_: Notification) {
+            guard keyboardShown.wrappedValue else { return }
+            keyboardShown.wrappedValue = false
+        }
     }
 }
 

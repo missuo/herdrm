@@ -5,7 +5,6 @@ import Foundation
 public actor HerdrService {
     public let device: Device
     private var tunnel: SSHTunnel?
-    private var tailcatTunnel: TailcatTunnel?
     private var rpc: SocketRPC?
     /// nil for remote devices and when auto-start is off; remotes are the user's to run.
     private let localServer: LocalHerdrServer?
@@ -28,9 +27,6 @@ public actor HerdrService {
         if let target = device.sshTarget {
             self.tunnel = SSHTunnel(target: target, credentialID: device.id)
         }
-        if device.isTailcat {
-            self.tailcatTunnel = TailcatTunnel(credentialID: device.id)
-        }
         self.localServer = localServer
     }
 
@@ -46,8 +42,7 @@ public actor HerdrService {
             guard let tunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
             socketPath = try await tunnel.ensureUp()
         case .tailcat:
-            guard let tailcatTunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
-            socketPath = try await tailcatTunnel.ensureUp()
+            socketPath = try await TailcatBridgeManager.shared.ensureUp(deviceID: device.id)
         }
         let client = SocketRPC(socketPath: socketPath)
         let pong: PingResult
@@ -134,7 +129,7 @@ public actor HerdrService {
     public func disconnect() async {
         rpc = nil
         if let tunnel { await tunnel.tearDown() }
-        if let tailcatTunnel { await tailcatTunnel.tearDown() }
+        if device.isTailcat { await TailcatBridgeManager.shared.tearDown(deviceID: device.id) }
     }
 
     private func client() throws -> SocketRPC {
@@ -678,7 +673,7 @@ public actor HerdrService {
             environment.removeValue(forKey: "LINES")
             if device.isTailcat {
                 environment["HERDR_SOCKET_PATH"] =
-                    TailcatTunnel.bridgeSocketPath(credentialID: device.id)
+                    TailcatBridgeManager.localSocketPath(deviceID: device.id)
             }
             let script = "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
                 + "exec \"$hb\" \(attachArguments)"
