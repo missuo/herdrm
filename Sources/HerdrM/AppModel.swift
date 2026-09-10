@@ -642,6 +642,15 @@ final class AppModel: ObservableObject {
                     }
                 } catch {
                     self.sessions[device.id]?.connection = .failed(error.localizedDescription)
+                    // The catalog's initial state is .loading; when connect()
+                    // itself fails the load never runs, and without this the
+                    // New Agent panel spins on "Checking agents…" forever
+                    // while the only hint is the footer indicator (#69).
+                    if case .loading = self.sessions[device.id]?.agentCatalog ?? .loading {
+                        self.sessions[device.id]?.agentCatalog = .failed(
+                            self.actionErrorMessage(error, device: device)
+                        )
+                    }
                     if let target = device.sshTarget, Self.isSSHAuthenticationFailure(error) {
                         self.sshAuthenticationRequest = SSHAuthenticationRequest(
                             deviceID: device.id,

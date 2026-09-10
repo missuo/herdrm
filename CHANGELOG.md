@@ -36,6 +36,11 @@ the Sparkle update description — a release without a section here fails CI.
   Settings → Agents also provides an Oh My Pi binary override. Install the
   lifecycle extension with `herdr integration install omp` before starting OMP.
   (#76, thanks @JackieJam!)
+- New Agent no longer spins on "Checking agents…" forever when the device
+  connection itself fails (herdr not installed, server not starting, protocol
+  too old): the panel now shows the connection error with a Retry button
+  instead of an endless spinner whose only hint was the footer indicator.
+  (#69)
 
 ## [0.5.3] - 2026-08-29
 
