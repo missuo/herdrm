@@ -117,6 +117,7 @@ final class LocalSocketTests: XCTestCase {
         let collector = Task { () -> [String] in
             var kinds: [String] = []
             for try await event in stream {
+                if event.kind == HerdrEvent.subscriptionStartedKind { continue }
                 kinds.append(event.kind)
                 if kinds.count >= 2 { break }
             }
@@ -129,6 +130,37 @@ final class LocalSocketTests: XCTestCase {
 
         let result = try await withTimeout(seconds: 10) { try await collector.value }
         XCTAssertFalse(result.isEmpty, "no events received for tab lifecycle")
+    }
+
+    func testEventStreamFallsBackWhenAStatusPaneClosedBeforeSubscribe() async throws {
+        try requireLocalHerdr()
+        let service = HerdrService(device: .local, autoStartLocalServer: false)
+        _ = try await service.connect()
+        let stream = try await service.events(statusPaneIDs: ["pane-that-does-not-exist"])
+
+        let collector = Task { () -> [String] in
+            var kinds: [String] = []
+            for try await event in stream {
+                kinds.append(event.kind)
+                if event.kind == "pane.created" { break }
+            }
+            return kinds
+        }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        let paneID = try await service.createTab(
+            workspaceID: nil,
+            cwd: nil,
+            label: "herdrm-stale-subscription-test"
+        )
+        do {
+            let result = try await withTimeout(seconds: 10) { try await collector.value }
+            try await service.closePane(paneID: paneID)
+            XCTAssertEqual(result.first, HerdrEvent.subscriptionStartedKind)
+            XCTAssertTrue(result.contains("pane.created"))
+        } catch {
+            try? await service.closePane(paneID: paneID)
+            throw error
+        }
     }
 
     func testMoveWorkspaceBlockReordersTemporarySpaces() async throws {

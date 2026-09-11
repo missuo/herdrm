@@ -4,6 +4,61 @@ import XCTest
 @testable import HerdrKit
 
 final class SocketRPCTests: XCTestCase {
+    func testEventSubscriptionsIncludeScopedStatusPanesOnce() throws {
+        let params = SocketRPC.eventSubscriptionParams(
+            kinds: ["pane.updated"],
+            statusPaneIDs: ["w1:p2", "w1:p1", "w1:p2"]
+        )
+        XCTAssertEqual(
+            params,
+            .object([
+                "subscriptions": .array([
+                    .object(["type": .string("pane.updated")]),
+                    .object([
+                        "type": .string("pane.agent_status_changed"),
+                        "pane_id": .string("w1:p1"),
+                    ]),
+                    .object([
+                        "type": .string("pane.agent_status_changed"),
+                        "pane_id": .string("w1:p2"),
+                    ]),
+                ])
+            ])
+        )
+    }
+
+    func testDecodeEventNormalizesLifecycleAndScopedEventNames() throws {
+        let lifecycle = try XCTUnwrap(SocketRPC.decodeEvent(
+            Data(#"{"event":"pane_updated","data":{"pane":{"pane_id":"w1:p1"}}}"#.utf8)
+        ))
+        XCTAssertEqual(lifecycle.kind, "pane.updated")
+
+        let status = try XCTUnwrap(SocketRPC.decodeEvent(
+            Data(#"{"event":"pane.agent_status_changed","data":{"pane_id":"w1:p1","agent_status":"working"}}"#.utf8)
+        ))
+        XCTAssertEqual(status.kind, HerdrEvent.agentStatusChangedKind)
+
+        let snakeStatus = try XCTUnwrap(SocketRPC.decodeEvent(
+            Data(#"{"event":"pane_agent_status_changed","data":{"pane_id":"w1:p1","agent_status":"working"}}"#.utf8)
+        ))
+        XCTAssertEqual(snakeStatus.kind, HerdrEvent.agentStatusChangedKind)
+    }
+
+    func testStaleStatusPaneRetriesWithoutScopedSubscriptions() {
+        XCTAssertTrue(SocketRPC.shouldRetryStatusSubscription(
+            after: HerdrError.rpc(code: "pane_not_found", message: "gone"),
+            statusPaneIDs: ["w1:p1"]
+        ))
+        XCTAssertFalse(SocketRPC.shouldRetryStatusSubscription(
+            after: HerdrError.rpc(code: "pane_not_found", message: "gone"),
+            statusPaneIDs: []
+        ))
+        XCTAssertFalse(SocketRPC.shouldRetryStatusSubscription(
+            after: HerdrError.rpc(code: "invalid_params", message: "bad"),
+            statusPaneIDs: ["w1:p1"]
+        ))
+    }
+
     func testReadLineKeepsNDJSONRecordsFollowingTheFirstLine() throws {
         var fds: [Int32] = [0, 0]
         let result = fds.withUnsafeMutableBufferPointer { buffer in

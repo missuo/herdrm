@@ -25,6 +25,19 @@ struct TerminalColorFilterTests {
             "split escape sequences should be transformed without corruption"
         )
 
+        // Agent TUI copy actions arrive through the PTY as OSC 52. The light
+        // color adapter must preserve them, including when ESC ends one read.
+        var clipboardAdapter = LightTerminalANSIAdapter()
+        let clipboardSequence = "\u{1B}]52;c;Y29waWVkIHRleHQ=\u{07}"
+        let clipboardFirst = Array(clipboardSequence.utf8.prefix(1))
+        let clipboardSecond = Array(clipboardSequence.utf8.dropFirst())
+        let clipboardResult = clipboardAdapter.transform(clipboardFirst[...])
+            + clipboardAdapter.transform(clipboardSecond[...])
+        expect(
+            String(decoding: clipboardResult, as: UTF8.self) == clipboardSequence,
+            "split OSC 52 clipboard writes should pass through unchanged"
+        )
+
         // herdr passes 256-indexed SGR through verbatim (48;5;22 etc.), which is
         // what Claude Code's diff backgrounds arrive as — they must be resolved
         // through the xterm palette and adapted like truecolor.

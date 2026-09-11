@@ -5,6 +5,18 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- The custom titlebar now behaves like a native macOS titlebar: drag it to
+  move the window, and double-click it to follow the system Zoom, Minimize,
+  or Do Nothing preference.
+
+### Fixed
+- Copy now works through both terminal paths: Command-C writes a local Ghostty
+  selection directly to the macOS pasteboard, while agent TUI copy actions can
+  write through OSC 52.
+
 ## [0.6.3] - 2026-09-10
 
 ### Fixed
@@ -27,6 +39,11 @@ the Sparkle update description — a release without a section here fails CI.
   reference implementation!)
 
 ### Fixed
+- Agent working / blocked / done indicators now update from herdr 0.9's
+  pane-scoped `pane.agent_status_changed` events instead of waiting for an
+  unrelated `pane.updated` event. Event names from both lifecycle and scoped
+  envelopes are normalized, subscriptions follow newly created/moved panes,
+  and continuous event bursts can no longer postpone snapshot refresh forever.
 - Mouse gestures in attached agent TUIs now have one owner from press through
   release. Plain drags reach mouse-aware TUIs in full, while Shift-drag stays
   in Ghostty for local selection. Command-C copies a local Ghostty selection
