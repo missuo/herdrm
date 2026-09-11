@@ -129,6 +129,9 @@ enum GhosttyRuntime {
             // HerdrM owns copy only while Ghostty has a local selection. With
             // no local selection, Command-C must reach a mouse-aware pane app.
             builder.withCustom("keybind", "super+c=unbind")
+            // Agent TUI copy actions use OSC 52. Keep writes enabled explicitly
+            // rather than depending on Ghostty's default clipboard policy.
+            builder.withCustom("clipboard-write", "allow")
             // Shift is HerdrM's unconditional local-selection escape hatch.
             // Plain TUI gestures have Shift removed before reaching Ghostty,
             // so disabling application shift capture cannot affect them.
@@ -458,7 +461,7 @@ final class LineBreakTerminalView: AppTerminalView {
         if attachedSurface?.hasSelection() == true,
            let selection = attachedSurface?.readSelection(),
            !selection.isEmpty {
-            menu.addItem(makeItem(String(localized: "Copy"), #selector(copy(_:))))
+            menu.addItem(makeItem(String(localized: "Copy"), #selector(copySelectionFromMenu(_:))))
             if let url = Self.firstURL(in: selection) {
                 menu.addItem(.separator())
                 let open = makeItem(String(localized: "Open Link"), #selector(openLinkFromMenu(_:)))
@@ -490,6 +493,20 @@ final class LineBreakTerminalView: AppTerminalView {
         guard let url = sender.representedObject as? URL else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
+    }
+
+    @objc private func copySelectionFromMenu(_: Any?) {
+        copyLocalSelection()
+    }
+
+    @discardableResult
+    private func copyLocalSelection() -> Bool {
+        guard let selection = attachedSurface?.readSelection(), !selection.isEmpty else {
+            return false
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.setString(selection, forType: .string)
     }
 
     static func firstURL(in text: String) -> URL? {
@@ -531,7 +548,7 @@ final class LineBreakTerminalView: AppTerminalView {
         if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "c" {
             if attachedSurface?.hasSelection() == true {
                 locallyConsumedCopyKeyCode = event.keyCode
-                copy(self)
+                copyLocalSelection()
             } else {
                 keyDown(with: event)
             }

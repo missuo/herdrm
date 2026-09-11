@@ -1,3 +1,4 @@
+import AppKit
 import HerdrKit
 import SwiftUI
 
@@ -100,6 +101,160 @@ enum TitlebarMetrics {
     static let trafficLightClearance: CGFloat = 78
 }
 
+private struct WindowTitlebarInteraction: NSViewRepresentable {
+    func makeNSView(context _: Context) -> NSView {
+        WindowTitlebarInteractionView()
+    }
+
+    func updateNSView(_: NSView, context _: Context) {}
+}
+
+private final class WindowTitlebarInteractionView: NSView {
+    private static let fillRestoreFrames =
+        NSMapTable<NSWindow, NSValue>(keyOptions: .weakMemory, valueOptions: .strongMemory)
+    private var rememberFrameWorkItem: DispatchWorkItem?
+
+    override func acceptsFirstMouse(for _: NSEvent?) -> Bool {
+        true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        rememberFrameWorkItem?.cancel()
+        NotificationCenter.default.removeObserver(self)
+        guard let window else { return }
+        Self.rememberNonFilledFrame(of: window)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowFrameDidChange(_:)),
+            name: NSWindow.didMoveNotification,
+            object: window
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowFrameDidChange(_:)),
+            name: NSWindow.didResizeNotification,
+            object: window
+        )
+    }
+
+    deinit {
+        rememberFrameWorkItem?.cancel()
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    @objc private func windowFrameDidChange(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        rememberFrameWorkItem?.cancel()
+        let item = DispatchWorkItem { [weak window] in
+            guard let window else { return }
+            Self.rememberNonFilledFrame(of: window)
+        }
+        rememberFrameWorkItem = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: item)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let window else { return }
+        guard event.clickCount == 2 else {
+            window.performDrag(with: event)
+            return
+        }
+        guard !window.styleMask.contains(.fullScreen) else { return }
+
+        let action = UserDefaults.standard
+            .string(forKey: "AppleActionOnDoubleClick")?
+            .lowercased()
+        switch action {
+        case "fill":
+            Self.toggleFill(window)
+        case nil:
+            if #available(macOS 15.0, *) {
+                Self.toggleFill(window)
+            } else {
+                Self.fillRestoreFrames.removeObject(forKey: window)
+                window.performZoom(nil)
+            }
+        case "minimize":
+            Self.fillRestoreFrames.removeObject(forKey: window)
+            window.performMiniaturize(nil)
+        case "none":
+            break
+        default:
+            Self.fillRestoreFrames.removeObject(forKey: window)
+            window.performZoom(nil)
+        }
+    }
+
+    private static func toggleFill(_ window: NSWindow) {
+        guard let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame else {
+            return
+        }
+        if framesApproximatelyEqual(window.frame, visibleFrame) {
+            let previous = fillRestoreFrames.object(forKey: window)?.rectValue
+                ?? fallbackRestoreFrame(in: visibleFrame)
+            fillRestoreFrames.removeObject(forKey: window)
+            let restored = constrainedRestoreFrame(previous, for: window)
+            window.setFrame(restored, display: true, animate: true)
+        } else {
+            fillRestoreFrames.setObject(NSValue(rect: window.frame), forKey: window)
+            window.setFrame(visibleFrame, display: true, animate: true)
+        }
+    }
+
+    private static func rememberNonFilledFrame(of window: NSWindow) {
+        guard !window.styleMask.contains(.fullScreen),
+              let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame,
+              !framesApproximatelyEqual(window.frame, visibleFrame)
+        else { return }
+        fillRestoreFrames.setObject(NSValue(rect: window.frame), forKey: window)
+    }
+
+    private static func fallbackRestoreFrame(in visibleFrame: NSRect) -> NSRect {
+        visibleFrame.insetBy(
+            dx: visibleFrame.width * 0.1,
+            dy: visibleFrame.height * 0.1
+        )
+    }
+
+    private static func framesApproximatelyEqual(_ lhs: NSRect, _ rhs: NSRect) -> Bool {
+        abs(lhs.minX - rhs.minX) < 1
+            && abs(lhs.minY - rhs.minY) < 1
+            && abs(lhs.width - rhs.width) < 1
+            && abs(lhs.height - rhs.height) < 1
+    }
+
+    private static func constrainedRestoreFrame(_ frame: NSRect, for window: NSWindow) -> NSRect {
+        let intersectingScreen = NSScreen.screens
+            .map { screen in
+                let intersection = frame.intersection(screen.visibleFrame)
+                let area = intersection.isNull ? 0 : intersection.width * intersection.height
+                return (screen, area)
+            }
+            .max { $0.1 < $1.1 }
+        let screen = if let intersectingScreen, intersectingScreen.1 > 0 {
+            intersectingScreen.0
+        } else {
+            window.screen ?? NSScreen.main
+        }
+        guard let screen else { return frame }
+        return window.constrainFrameRect(frame, to: screen)
+    }
+}
+
+private struct WindowTitlebarInteractionModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(WindowTitlebarInteraction())
+    }
+}
+
+extension View {
+    func windowTitlebarInteraction() -> some View {
+        modifier(WindowTitlebarInteractionModifier())
+    }
+}
+
 struct DetailView: View {
     @ObservedObject var model: AppModel
     @Binding var sidebarCollapsed: Bool
@@ -167,78 +322,82 @@ struct DetailView: View {
                     sidebarCollapsed = false
                 }
             }
-            if model.isFileManagerActive {
-                Image(systemName: "folder")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textTertiary)
-                Text("Files")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.text)
-                Spacer()
-            } else if let shell = model.selectedShell {
-                Image(systemName: "terminal")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textTertiary)
-                Text(shell.title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.text)
-                Text(shell.device.name)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer()
-            } else if let attached = model.selectedAttachedEntry {
-                switch attached {
-                case .agent(let entry):
-                    let agent = entry.agent
-                    statusGlyph(agent.status)
-                    Text(entry.title)
+            Group {
+                if model.isFileManagerActive {
+                    Image(systemName: "folder")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.textTertiary)
+                    Text("Files")
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                        .help((agent.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
-                    Spacer(minLength: 12)
-                    AgentKindBadge(kind: agent.agent)
-                    Text("\u{b7}")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textGhost)
-                    Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                    if model.showsRowDeviceBadges {
-                        DeviceChip(device: entry.device)
-                    }
-                    statusPill(agent.status)
-                case .terminal(let entry):
+                    Spacer()
+                } else if let shell = model.selectedShell {
                     Image(systemName: "terminal")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.textTertiary)
-                    Text(entry.title)
+                    Text(shell.title)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                        .layoutPriority(1)
-                        .help((entry.pane.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
-                    Spacer(minLength: 12)
-                    Text(model.spaceName(deviceID: entry.device.id, workspaceID: entry.pane.workspaceID))
+                    Text(shell.device.name)
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                    if model.showsRowDeviceBadges {
-                        DeviceChip(device: entry.device)
+                    Spacer()
+                } else if let attached = model.selectedAttachedEntry {
+                    switch attached {
+                    case .agent(let entry):
+                        let agent = entry.agent
+                        statusGlyph(agent.status)
+                        Text(entry.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                            .help((agent.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
+                        Spacer(minLength: 12)
+                        AgentKindBadge(kind: agent.agent)
+                        Text("\u{b7}")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textGhost)
+                        Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                        if model.showsRowDeviceBadges {
+                            DeviceChip(device: entry.device)
+                        }
+                        statusPill(agent.status)
+                    case .terminal(let entry):
+                        Image(systemName: "terminal")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(Theme.textTertiary)
+                        Text(entry.title)
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                            .layoutPriority(1)
+                            .help((entry.pane.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
+                        Spacer(minLength: 12)
+                        Text(model.spaceName(deviceID: entry.device.id, workspaceID: entry.pane.workspaceID))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                        if model.showsRowDeviceBadges {
+                            DeviceChip(device: entry.device)
+                        }
                     }
+                } else {
+                    Text("No terminal selected")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textTertiary)
+                    Spacer()
                 }
-            } else {
-                Text("No terminal selected")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer()
             }
+            .allowsHitTesting(false)
         }
         .padding(.leading, sidebarCollapsed ? 10 : 14)
         .padding(.trailing, 12)
         .frame(height: TitlebarMetrics.height)
+        .windowTitlebarInteraction()
     }
 
     @ViewBuilder

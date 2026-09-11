@@ -5,6 +5,18 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- The custom titlebar now behaves like a native macOS titlebar: drag it to
+  move the window, and double-click it to follow the system Zoom, Minimize,
+  or Do Nothing preference.
+
+### Fixed
+- Copy now works through both terminal paths: Command-C writes a local Ghostty
+  selection directly to the macOS pasteboard, while agent TUI copy actions can
+  write through OSC 52.
+
 ## [0.6.3] - 2026-09-10
 
 ### Fixed

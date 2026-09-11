@@ -43,6 +43,7 @@ struct SidebarView: View {
             }
             .padding(.horizontal, 10)
             .frame(height: TitlebarMetrics.height)
+            .windowTitlebarInteraction()
 
             Spacer().frame(height: 8)
 
