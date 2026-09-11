@@ -521,14 +521,14 @@ final class LineBreakTerminalView: AppTerminalView {
     // sent to the TUI now that its global copy binding is unbound above.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         guard event.type == .keyDown,
-              window?.firstResponder === self,
-              event.modifierFlags
-                  .intersection(.deviceIndependentFlagsMask)
-                  .subtracting([.capsLock, .numericPad]) == .command
+              window?.firstResponder === self
         else {
             return super.performKeyEquivalent(with: event)
         }
-        if event.charactersIgnoringModifiers?.lowercased() == "c" {
+        let modifiers = event.modifierFlags
+            .intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad])
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "c" {
             if attachedSurface?.hasSelection() == true {
                 locallyConsumedCopyKeyCode = event.keyCode
                 copy(self)
@@ -537,8 +537,13 @@ final class LineBreakTerminalView: AppTerminalView {
             }
             return true
         }
-        if event.charactersIgnoringModifiers?.lowercased() == "v" {
+        if modifiers == .command, event.charactersIgnoringModifiers?.lowercased() == "v" {
             handlePaste()
+            return true
+        }
+        // Ghostty consumes its default bindings before AppKit reaches the menu.
+        // Give HerdrM's commands priority over those standalone-terminal actions.
+        if modifiers.contains(.command), NSApp.mainMenu?.performKeyEquivalent(with: event) == true {
             return true
         }
         return super.performKeyEquivalent(with: event)
