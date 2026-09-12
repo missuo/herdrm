@@ -1518,12 +1518,14 @@ actor SessionDriver {
         try configureAlgorithms(createdSession)
 
         let handshakeResult = try await repeatUntilComplete(deadline: deadline) {
-            libssh2_session_handshake(createdSession, descriptor)
+            guard let session else { return LIBSSH2_ERROR_SOCKET_DISCONNECT }
+            return libssh2_session_handshake(session, descriptor)
         }
         guard handshakeResult == 0 else {
             throw mapSessionError(handshakeResult)
         }
-        return try extractHostKey(createdSession)
+        guard let session else { throw SSHError.connectionInvalidated }
+        return try extractHostKey(session)
     }
 
     func openDirectTCPIP(

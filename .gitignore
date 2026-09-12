@@ -3,6 +3,7 @@ build/
 design/
 HerdrM.xcodeproj/
 Packages/HerdrKit/.build/
+Packages/HerdrSSH/.build/
 Sources/HerdrM/Info.plist
 *.xcuserstate
 .swiftpm/

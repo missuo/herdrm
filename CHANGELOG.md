@@ -5,6 +5,20 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- HerdrSSH handshake compiles under Swift 6 region isolation: `performHandshake`
+  no longer captures a local `OpaquePointer` across `repeatUntilComplete`
+  awaits, so `HerdrMobile` / `make mobile-build` succeed again.
+
+### Changed
+- Documented `make mobile-build` and `make ssh-test` (HerdrSSH Swift Testing on
+  Simulator). Removed the HerdrSSH README “Direct-streamlocal / Jump Host
+  acceptance” block that documented Heeler’s `scripts/run-ci-ios-tests.sh`
+  workflow: that script and those suites were never checked into herdrm, so the
+  old text told people to run something that does not exist here.
+
 ## [0.6.3] - 2026-09-10
 
 ### Fixed
