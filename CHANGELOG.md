@@ -14,8 +14,10 @@ the Sparkle update description — a release without a section here fails CI.
 
 ### Changed
 - Documented `make mobile-build` and `make ssh-test` (HerdrSSH Swift Testing on
-  Simulator). Dropped stale HerdrSSH README pointers to a Heeler-only CI script
-  that is not in this repo.
+  Simulator). Removed the HerdrSSH README “Direct-streamlocal / Jump Host
+  acceptance” block that documented Heeler’s `scripts/run-ci-ios-tests.sh`
+  workflow: that script and those suites were never checked into herdrm, so the
+  old text told people to run something that does not exist here.
 
 ## [0.6.3] - 2026-09-10
 
