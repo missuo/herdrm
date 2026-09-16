@@ -137,3 +137,40 @@ targets:
         ARCHS: arm64
         ONLY_ACTIVE_ARCH: NO
         EXCLUDED_ARCHS__sdk_iphonesimulator__: x86_64
+
+  HerdrMTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/HerdrMTests
+    dependencies:
+      - target: HerdrM
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm.tests
+        GENERATE_INFOPLIST_FILE: YES
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_VERSION: "5.10"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/herdrm.app/Contents/MacOS/herdrm"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+
+schemes:
+  HerdrM:
+    build:
+      targets:
+        HerdrM: all
+        HerdrMTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - HerdrMTests
+  HerdrMobile:
+    build:
+      targets:
+        HerdrMobile: all
+    run:
+      config: Debug

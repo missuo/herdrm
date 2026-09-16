@@ -10,3 +10,4 @@ Sources/HerdrM/Info.plist
 xcuserdata/
 build-rel/
 build-ios/
+.pr-assets/

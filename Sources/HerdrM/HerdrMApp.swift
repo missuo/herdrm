@@ -61,6 +61,16 @@ struct HerdrMApp: App {
     private let updaterController: SPUStandardUpdaterController
 
     init() {
+        // XCTest injects the app as TEST_HOST; skip Sparkle / ask-pass / font
+        // registration so UI probes don't fight a live updater or SSH agent.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+            updaterController = SPUStandardUpdaterController(
+                startingUpdater: false,
+                updaterDelegate: nil,
+                userDriverDelegate: nil
+            )
+            return
+        }
         if ProcessInfo.processInfo.environment[SSHCredentialStore.askPassModeEnvironmentKey] == "1" {
             Self.runSSHAskPass()
         }
@@ -76,11 +86,17 @@ struct HerdrMApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(model: appDelegate.model)
-                .onAppear { Self.applyTheme(themePreference) }
-                .onChange(of: themePreference) { _, newValue in
-                    Self.applyTheme(newValue)
-                }
+            if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
+                // TEST_HOST only — real RootView would call model.start() and
+                // race UI probes against live herdr sessions / Sparkle.
+                Color.clear.accessibilityIdentifier("herdrm.xctest.host")
+            } else {
+                RootView(model: appDelegate.model)
+                    .onAppear { Self.applyTheme(themePreference) }
+                    .onChange(of: themePreference) { _, newValue in
+                        Self.applyTheme(newValue)
+                    }
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))

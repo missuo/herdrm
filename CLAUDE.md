@@ -40,6 +40,7 @@ make build      # xcodegen + xcodebuild → build/Build/Products/Debug/HerdrM.ap
 make run
 make kit-test   # HerdrKit integration tests (need a running local herdr)
 HERDRM_E2E_SSH_TARGET=vincent@10.10.10.87 make kit-test   # + remote SSH E2E
+make uiux-test  # HerdrM UI/UX (HerdrMTests): sidebar sticky headers, etc.
 make mobile-build  # HerdrMobile + HerdrSSH compile (arm64 Simulator)
 make ssh-test      # HerdrSSH Swift Testing on iOS Simulator
 ```

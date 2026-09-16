@@ -1,4 +1,4 @@
-.PHONY: gen build run test kit-test ssh-test mobile-build clean
+.PHONY: gen build run test kit-test uiux-test ssh-test mobile-build clean
 
 # HerdrMobile / HerdrSSH are arm64-only (libssh2 + OpenSSL xcframeworks).
 # Keep code signing on so Simulator Keychain (device SSH key) works; unsigned
@@ -17,6 +17,17 @@ SSH_TEST = cd Packages/HerdrSSH && xcodebuild test \
 	-collect-test-diagnostics never \
 	-parallel-testing-enabled NO
 
+# HerdrM UI/UX (HerdrMTests): sidebar sticky headers — unit / contract /
+# integration / visual / e2e probes hosted in the macOS app test target.
+UIUX_TEST = xcodebuild test \
+	-project HerdrM.xcodeproj \
+	-scheme HerdrM \
+	-configuration Debug \
+	-derivedDataPath build \
+	-destination 'platform=macOS,arch=arm64' \
+	CODE_SIGN_IDENTITY="-" CODE_SIGN_STYLE=Manual \
+	-skipPackagePluginValidation
+
 CODE_SIGN_IDENTITY ?= -
 
 gen:
@@ -30,6 +41,10 @@ run: build
 
 kit-test:
 	cd Packages/HerdrKit && swift test
+
+# HerdrM UI/UX tests (separate from HerdrKit kit-test).
+uiux-test: gen
+	$(UIUX_TEST)
 
 # HerdrSSH Swift Testing on iOS Simulator (Session-driver e2e skips without a live sshd fixture).
 ssh-test:
