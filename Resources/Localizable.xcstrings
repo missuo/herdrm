@@ -1121,18 +1121,34 @@
         }
       }
     },
-    "Changing language takes effect after you quit and reopen herdrm." : {
+    "Relaunch" : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Changing language takes effect after you quit and reopen herdrm."
+            "value" : "Relaunch"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "更改语言后，退出并重新打开 herdrm 才会生效。"
+            "value" : "重新打开"
+          }
+        }
+      }
+    },
+    "Quit and reopen herdrm so the new language takes effect." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Quit and reopen herdrm so the new language takes effect."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "退出并重新打开 herdrm，新语言才会生效。"
           }
         }
       }

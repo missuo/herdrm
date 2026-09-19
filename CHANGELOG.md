@@ -7,19 +7,28 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
-### Fixed
-- SSH devices on Windows no longer fail the home probe (`echo "$HOME"` under CMD)
-  or OpenSSH `-L` socket forwards (drive-letter paths). HerdrM detects Windows,
-  proxies RPC through `herdr remote-api-bridge` over SSH stdio (same channel as
-  the official CLI), and attaches panes via the local herdr CLI pointed at that
-  bridge socket. (#92)
-
 ### Added
 - **Settings → Terminal → Import from Ghostty…** copies your `font-family` and
   `font-size` from `~/.config/ghostty/config` (honoring `XDG_CONFIG_HOME`) into
   herdrm's terminal settings, so switching over doesn't mean a jarring font
   change. It's a one-time import — herdrm's own settings stay in charge
   afterward — and it reports what it applied or skipped. (#73)
+
+### Changed
+- Changing language in Settings → Appearance now shows a **Relaunch** button
+  that quits and reopens herdrm for you, instead of a hint to do it by hand.
+  The button only appears when the UI language would actually change — English
+  → Follow System is a no-op when the Mac is already English. (#94, thanks
+  @thedavidweng!)
+
+### Fixed
+- SSH devices on Windows no longer fail the home probe (`echo "$HOME"` under CMD)
+  or OpenSSH `-L` socket forwards (drive-letter paths). HerdrM detects Windows,
+  proxies RPC through `herdr remote-api-bridge` over SSH stdio (same channel as
+  the official CLI), and attaches panes via the local herdr CLI pointed at that
+  bridge socket. (#92, thanks @thedavidweng!)
+- The Notifications settings caption now wraps inside the fixed-width window
+  instead of ending in an ellipsis. (#94, thanks @thedavidweng!)
 
 ## [0.6.6] - 2026-09-16
 
