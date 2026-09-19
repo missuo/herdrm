@@ -14,6 +14,16 @@ the Sparkle update description — a release without a section here fails CI.
   change. It's a one-time import — herdrm's own settings stay in charge
   afterward — and it reports what it applied or skipped. (#73)
 
+### Changed
+- Changing language in Settings → Appearance now shows a **Relaunch** button
+  that quits and reopens herdrm for you, instead of a hint to do it by hand.
+  The button only appears when the UI language would actually change — English
+  → Follow System is a no-op when the Mac is already English.
+
+### Fixed
+- The Notifications settings caption now wraps inside the fixed-width window
+  instead of ending in an ellipsis.
+
 ## [0.6.6] - 2026-09-16
 
 ### Added

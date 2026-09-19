@@ -497,19 +497,27 @@ struct AppearanceSettingsView: View {
             Text("The terminal follows the app theme.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
-            Picker("Language", selection: $language) {
-                ForEach(AppLanguage.allCases) { option in
-                    Text(verbatim: option.displayName).tag(option.rawValue)
+            LabeledContent("Language") {
+                HStack(spacing: 8) {
+                    Picker("Language", selection: $language) {
+                        ForEach(AppLanguage.allCases) { option in
+                            Text(verbatim: option.displayName).tag(option.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .onChange(of: language) { _, newValue in
+                        AppLanguage.apply(AppLanguage(rawValue: newValue) ?? .system)
+                    }
+                    if AppLanguage.needsRelaunch(AppLanguage(rawValue: language) ?? .system) {
+                        Button("Relaunch") {
+                            AppLanguage.relaunch()
+                        }
+                        .help("Quit and reopen herdrm so the new language takes effect.")
+                    }
                 }
             }
-            .onChange(of: language) { _, newValue in
-                AppLanguage.apply(AppLanguage(rawValue: newValue) ?? .system)
-            }
-            // Changing AppleLanguages only takes effect on the next process start.
-            Text("Changing language takes effect after you quit and reopen herdrm.")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
         }
         .padding(20)
     }
@@ -527,6 +535,7 @@ struct NotificationSettingsView: View {
             Text("Finished agents only notify while you're not watching them — herdr reports panes you have open as idle, not done.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
