@@ -75,6 +75,11 @@ public actor HerdrService {
         return pong
     }
 
+    /// Platform sniffed while bringing the SSH tunnel up (nil for local / tailcat).
+    public func sshRemotePlatform() async -> SSHTunnel.RemotePlatform? {
+        await tunnel?.remotePlatform
+    }
+
     /// Test seam: whether this service would start a local server at all.
     var autoStartsLocalServer: Bool { localServer != nil }
 
@@ -689,6 +694,25 @@ public actor HerdrService {
                 authorizationID: nil
             )
         case .ssh(let target):
+            // Windows has no usable stream-local forward and no POSIX attach
+            // shell. Point the local herdr CLI at the remote-api-bridge socket
+            // (same HERDR_SOCKET_PATH contract as Tailcat) so attach rides the
+            // same SSH channel as RPC.
+            if device.osID?.lowercased() == "windows" {
+                var environment = (ShellEnvironment.cached ?? .empty).launchEnvironment(binary: nil)
+                environment.removeValue(forKey: "TERM")
+                environment.removeValue(forKey: "COLUMNS")
+                environment.removeValue(forKey: "LINES")
+                environment["HERDR_SOCKET_PATH"] = SSHTunnel.localSocketPath(for: target)
+                let script = "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
+                    + "exec \"$hb\" \(attachArguments)"
+                return TerminalCommand(
+                    executable: "/bin/sh",
+                    args: ["-c", script],
+                    environment: environment,
+                    authorizationID: nil
+                )
+            }
             // sshd exec is not a login shell — prepend the well-known prefixes
             // on the far side. Wrapped in sh explicitly: the ssh remote command
             // runs in the user's login shell, and the script's sh syntax must

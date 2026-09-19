@@ -1,7 +1,8 @@
 import Foundation
 
 /// A machine running herdr. `local` talks straight to the Unix socket;
-/// `ssh` reaches the remote socket through an OpenSSH stream-local forward;
+/// `ssh` reaches the remote socket through an OpenSSH stream-local forward
+/// (Unix hosts) or `herdr remote-api-bridge` over SSH stdio (Windows hosts);
 /// `tailcat` reaches a socket exposed by the herdr.tailcat server plugin
 /// through a WireGuard/DERP tunnel (token in the Keychain, keyed by id).
 public struct Device: Codable, Sendable, Identifiable, Equatable, Hashable {

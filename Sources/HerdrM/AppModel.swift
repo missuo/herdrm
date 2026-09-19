@@ -692,6 +692,20 @@ final class AppModel: ObservableObject {
                     let pong = try await service.connect()
                     self.sessions[device.id]?.connection = .connected(version: pong.version)
                     backoff = 1
+                    // Prefer the tunnel's platform sniff (Windows vs Unix) so attach
+                    // can switch to HERDR_SOCKET_PATH before the async OS icon probe.
+                    if let platform = await service.sshRemotePlatform(),
+                       let index = self.devices.firstIndex(where: { $0.id == device.id }) {
+                        let osID: String?
+                        switch platform {
+                        case .windows: osID = "windows"
+                        case .unix: osID = self.devices[index].osID
+                        }
+                        if let osID, self.devices[index].osID != osID {
+                            self.devices[index].osID = osID
+                            self.store.save(self.devices)
+                        }
+                    }
                     // retried on every successful connect until it sticks (a fresh
                     // device's first probes can fail before its host key is known)
                     if let current = self.device(device.id) {
