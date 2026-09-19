@@ -34,19 +34,35 @@ private final class SSHErrorBuffer: @unchecked Sendable {
     }
 }
 
-/// Forwards a remote herdr Unix socket to a local one using the system OpenSSH client
-/// (`ssh -N -L local.sock:remote.sock target`), so remote devices reuse SocketRPC as-is.
+/// Reaches a remote herdr socket so remote devices reuse SocketRPC as-is.
+///
+/// Unix hosts use the system OpenSSH client
+/// (`ssh -N -L local.sock:remote.sock target`). Windows hosts cannot: the
+/// `%APPDATA%\herdr\herdr.sock` path has a drive-letter colon that breaks
+/// OpenSSH's `-L` parser, and Win32-OpenSSH does not reliably open AF_UNIX
+/// forwards. Those sessions instead proxy each local connection over SSH to
+/// `herdr remote-api-bridge` (the same channel the official CLI uses).
+///
 /// Auth uses OpenSSH config/agent/Tailscale SSH, with Keychain-backed askpass as a fallback.
 public actor SSHTunnel {
     static let maximumUploadBytes = 50 * 1024 * 1024
 
+    /// Remote endpoint shape used to pick stream-local forward vs API bridge.
+    public enum RemotePlatform: Sendable, Equatable {
+        case unix(home: String)
+        case windows(home: String, herdrExecutable: String)
+    }
+
     public let target: String
     public private(set) var localSocketPath: String?
+    /// Cached after the first successful probe; drives attach and diagnose paths.
+    public private(set) var remotePlatform: RemotePlatform?
     private let credentialID: UUID?
     private var process: Process?
     private var errorOutput: Pipe?
     private var errorBuffer: SSHErrorBuffer?
     private var remoteHome: String?
+    private var apiBridge: SSHRemoteAPIBridge?
 
     /// PATH prepended on the remote side; sshd exec is not a login shell (mirrors Heeler).
     public static let remotePathExport =
@@ -60,51 +76,120 @@ public actor SSHTunnel {
 
     deinit {
         process?.terminate()
+        apiBridge?.stop()
     }
 
     // MARK: - Probing
 
-    /// Resolves the remote $HOME once; also proves SSH reachability.
+    /// Resolves the remote home once; also proves SSH reachability and detects Windows.
     public func probeRemoteHome() async throws -> String {
         if let remoteHome { return remoteHome }
-        let output = try await Self.runSSH(
+        let platform = try await probeRemotePlatform()
+        switch platform {
+        case .unix(let home), .windows(let home, _):
+            remoteHome = home
+            return home
+        }
+    }
+
+    /// Detects Unix vs Windows and caches the result for tunnel + attach.
+    public func probeRemotePlatform() async throws -> RemotePlatform {
+        if let remotePlatform { return remotePlatform }
+        let platform = try await Self.detectRemotePlatform(
             target: target,
-            command: "echo \"$HOME\"",
-            timeout: 12,
             credentialID: credentialID
         )
-        let home = output.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard home.hasPrefix("/") else {
-            throw HerdrError.tunnelFailed("could not resolve remote home (got: \(output))")
+        remotePlatform = platform
+        switch platform {
+        case .unix(let home), .windows(let home, _):
+            remoteHome = home
         }
-        remoteHome = home
-        return home
+        return platform
     }
 
     public func remoteSocketPath() async throws -> String {
-        let home = try await probeRemoteHome()
-        return "\(home)/.config/herdr/herdr.sock"
+        switch try await probeRemotePlatform() {
+        case .unix(let home):
+            return "\(home)/.config/herdr/herdr.sock"
+        case .windows(let home, _):
+            // Display / diagnose only — OpenSSH cannot forward this path.
+            return "\(home)\\AppData\\Roaming\\herdr\\herdr.sock"
+        }
     }
 
-    // MARK: - Tunnel lifecycle
-
-    /// Ensures the forward is up and returns the local socket path.
-    public func ensureUp() async throws -> String {
-        if let localSocketPath, let process, process.isRunning {
-            return localSocketPath
-        }
-        process?.terminate()
-        process = nil
-        resetErrorCapture()
-
-        let remoteSock = try await remoteSocketPath()
+    /// Deterministic local bridge/forward socket for a target (also used by attach).
+    public static func localSocketPath(for target: String) -> String {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("herdrm-tunnels", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         // Keep the path short: sockaddr_un caps at 104 bytes.
-        let localSock = dir.appendingPathComponent("\(abs(target.hashValue) % 100_000).sock").path
+        return dir.appendingPathComponent("\(abs(target.hashValue) % 100_000).sock").path
+    }
+
+    /// True when this tunnel serves Windows via `remote-api-bridge` rather than `-L`.
+    public var usesRemoteAPIBridge: Bool {
+        if case .windows = remotePlatform { return true }
+        return false
+    }
+
+    // MARK: - Tunnel lifecycle
+
+    /// Ensures the forward (or Windows API bridge) is up and returns the local socket path.
+    public func ensureUp() async throws -> String {
+        if let localSocketPath {
+            if let process, process.isRunning { return localSocketPath }
+            if let apiBridge, apiBridge.isRunning { return localSocketPath }
+        }
+        process?.terminate()
+        process = nil
+        apiBridge?.stop()
+        apiBridge = nil
+        resetErrorCapture()
+
+        let platform = try await probeRemotePlatform()
+        let localSock = Self.localSocketPath(for: target)
         try? FileManager.default.removeItem(atPath: localSock)
 
+        switch platform {
+        case .windows(_, let herdrExecutable):
+            return try startWindowsAPIBridge(
+                localSock: localSock,
+                herdrExecutable: herdrExecutable
+            )
+        case .unix:
+            return try await startUnixSocketForward(
+                localSock: localSock,
+                remoteSock: try await remoteSocketPath()
+            )
+        }
+    }
+
+    private func startWindowsAPIBridge(
+        localSock: String,
+        herdrExecutable: String
+    ) throws -> String {
+        try Task.checkCancellation()
+        let bridge = SSHRemoteAPIBridge(
+            localSocketPath: localSock,
+            target: target,
+            herdrExecutable: herdrExecutable,
+            credentialID: credentialID
+        )
+        do {
+            try bridge.start()
+        } catch {
+            bridge.stop()
+            throw error
+        }
+        apiBridge = bridge
+        localSocketPath = localSock
+        return localSock
+    }
+
+    private func startUnixSocketForward(
+        localSock: String,
+        remoteSock: String
+    ) async throws -> String {
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         let authentication = Self.authenticationConfiguration(for: credentialID)
@@ -160,6 +245,8 @@ public actor SSHTunnel {
     public func tearDown() {
         process?.terminate()
         process = nil
+        apiBridge?.stop()
+        apiBridge = nil
         resetErrorCapture()
         if let localSocketPath {
             try? FileManager.default.removeItem(atPath: localSocketPath)
@@ -230,6 +317,14 @@ public actor SSHTunnel {
     /// "connect failed: open failed", and when the user's ssh config muxes the
     /// connection (ControlMaster), the message lands on the master's stderr, not ours.
     public func diagnoseSilentForward() async -> HerdrError? {
+        // Windows sessions never use stream-local forwards; a mute local socket
+        // means the remote-api-bridge exec failed, not a missing Unix socket file.
+        if case .windows = try? await probeRemotePlatform() {
+            return .tunnelFailed(
+                "Windows remote-api-bridge on \(target) accepted no reply"
+                    + " — is herdr running, and is OpenSSH able to exec it?"
+            )
+        }
         guard let remoteSock = try? await remoteSocketPath(),
               let output = try? await Self.runSSH(
                   target: target,
@@ -264,8 +359,22 @@ public actor SSHTunnel {
         }
     }
 
-    /// Sniffs the remote OS: "macos", an os-release ID like "ubuntu"/"debian", or a uname fallback.
+    /// Sniffs the remote OS: "macos", "windows", an os-release ID like "ubuntu"/"debian",
+    /// or a uname fallback.
     public static func probeOS(target: String, credentialID: UUID? = nil) async throws -> String {
+        // Prefer an explicit Windows probe: DefaultShell is often CMD, where the
+        // POSIX `uname` script below never runs.
+        if let windows = try? await runSSH(
+            target: target,
+            command: powershellEncodedCommand(windowsOSProbeScript),
+            timeout: 10,
+            credentialID: credentialID
+        ) {
+            let token = windows.trimmingCharacters(in: .whitespacesAndNewlines)
+            if token.hasPrefix("herdr-windows:") || token == "windows" {
+                return "windows"
+            }
+        }
         let command = """
         case "$(uname -s)" in Darwin) echo macos;; Linux) . /etc/os-release 2>/dev/null; echo "${ID:-linux}";; *) uname -s | tr '[:upper:]' '[:lower:]';; esac
         """
@@ -278,6 +387,127 @@ public actor SSHTunnel {
         let os = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !os.isEmpty else { throw HerdrError.tunnelFailed("empty OS probe result") }
         return os
+    }
+
+    /// PowerShell that prints `herdr-windows:<arch>` on Windows hosts.
+    static let windowsOSProbeScript = """
+    $ProgressPreference = 'SilentlyContinue'
+    if ($env:OS -ne 'Windows_NT') { exit 1 }
+    $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+    Write-Output ('herdr-windows:' + $arch)
+    """
+
+    /// Resolves home + herdr.exe on Windows, or `$HOME` on Unix.
+    static func detectRemotePlatform(
+        target: String,
+        credentialID: UUID?
+    ) async throws -> RemotePlatform {
+        if let windows = try? await detectWindowsPlatform(
+            target: target,
+            credentialID: credentialID
+        ) {
+            return windows
+        }
+        let output = try await runSSH(
+            target: target,
+            command: "echo \"$HOME\"",
+            timeout: 12,
+            credentialID: credentialID
+        )
+        let home = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isUnixHome(home) else {
+            throw HerdrError.tunnelFailed("could not resolve remote home (got: \(output))")
+        }
+        return .unix(home: home)
+    }
+
+    static func detectWindowsPlatform(
+        target: String,
+        credentialID: UUID?
+    ) async throws -> RemotePlatform {
+        let output = try await runSSH(
+            target: target,
+            command: powershellEncodedCommand(windowsEnvironmentProbeScript),
+            timeout: 15,
+            credentialID: credentialID
+        )
+        guard let parsed = parseWindowsEnvironmentProbe(output) else {
+            throw HerdrError.tunnelFailed("could not resolve Windows herdr environment")
+        }
+        return .windows(home: parsed.home, herdrExecutable: parsed.herdrExecutable)
+    }
+
+    /// Emits base64 home + herdr.exe paths (exits 1 off Windows, 2 if herdr is missing).
+    static let windowsEnvironmentProbeScript = """
+    $ProgressPreference = 'SilentlyContinue'
+    if ($env:OS -ne 'Windows_NT') { exit 1 }
+    function Emit([string]$Label, [string]$Value) {
+        if ([string]::IsNullOrWhiteSpace($Value)) { return }
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Value))
+        Write-Output ($Label + $encoded)
+    }
+    Emit 'herdr-windows-home:1:' $env:USERPROFILE
+    $pathCommand = Get-Command herdr.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($null -ne $pathCommand) { Emit 'herdr-windows-herdr:1:' $pathCommand.Source; exit 0 }
+    $herdrHome = if ([string]::IsNullOrWhiteSpace($env:HERDR_HOME)) {
+        Join-Path $env:USERPROFILE '.herdr'
+    } else {
+        $env:HERDR_HOME
+    }
+    $active = Get-Item -LiteralPath (Join-Path $herdrHome 'packages\\standalone\\current') -Force -ErrorAction SilentlyContinue
+    if ($null -ne $active -and -not [string]::IsNullOrWhiteSpace([string]$active.Target)) {
+        Emit 'herdr-windows-herdr:1:' (Join-Path ([string]$active.Target) 'herdr.exe')
+        exit 0
+    }
+    exit 2
+    """
+
+    /// UTF-16LE base64 for `powershell.exe -EncodedCommand` (avoids shell quoting).
+    static func powershellEncodedCommand(_ script: String) -> String {
+        let data = Data(script.utf16.flatMap { value -> [UInt8] in
+            [UInt8(value & 0xff), UInt8((value >> 8) & 0xff)]
+        })
+        return "powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand \(data.base64EncodedString())"
+    }
+
+    static func parseWindowsEnvironmentProbe(_ output: String) -> (home: String, herdrExecutable: String)? {
+        var home: String?
+        var herdr: String?
+        for rawLine in output.split(whereSeparator: \.isNewline) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let value = decodeWindowsProbeLine(line, prefix: "herdr-windows-home:1:") {
+                home = value
+            } else if let value = decodeWindowsProbeLine(line, prefix: "herdr-windows-herdr:1:") {
+                herdr = value
+            }
+        }
+        guard let home, let herdr, isWindowsHome(home), !herdr.isEmpty else { return nil }
+        return (home, herdr)
+    }
+
+    static func decodeWindowsProbeLine(_ line: String, prefix: String) -> String? {
+        guard line.hasPrefix(prefix) else { return nil }
+        let encoded = String(line.dropFirst(prefix.count))
+        guard let data = Data(base64Encoded: encoded),
+              let value = String(data: data, encoding: .utf8),
+              !value.isEmpty
+        else { return nil }
+        return value
+    }
+
+    static func isUnixHome(_ home: String) -> Bool {
+        home.hasPrefix("/")
+    }
+
+    /// `C:\Users\…` or `C:/Users/…` (CMD / PowerShell USERPROFILE forms).
+    static func isWindowsHome(_ home: String) -> Bool {
+        let utf8 = Array(home.utf8)
+        guard utf8.count >= 3 else { return false }
+        let drive = utf8[0]
+        let isLetter = (drive >= 65 && drive <= 90) || (drive >= 97 && drive <= 122)
+        guard isLetter, utf8[1] == UInt8(ascii: ":") else { return false }
+        let sep = utf8[2]
+        return sep == UInt8(ascii: "\\") || sep == UInt8(ascii: "/")
     }
 
     // MARK: - File transfer

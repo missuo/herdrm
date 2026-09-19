@@ -12,7 +12,10 @@ final class RemoteSSHTests: XCTestCase {
         guard let target else { throw XCTSkip("HERDRM_E2E_SSH_TARGET not set") }
         let tunnel = SSHTunnel(target: target)
         let home = try await tunnel.probeRemoteHome()
-        XCTAssertTrue(home.hasPrefix("/"), "unexpected remote home: \(home)")
+        XCTAssertTrue(
+            home.hasPrefix("/") || SSHTunnel.isWindowsHome(home),
+            "unexpected remote home: \(home)"
+        )
     }
 
     func testTunnelPingSnapshotAndAgents() async throws {
@@ -56,13 +59,18 @@ final class RemoteSSHTests: XCTestCase {
 
     func testUploadFileRoundTrip() async throws {
         guard let target else { throw XCTSkip("HERDRM_E2E_SSH_TARGET not set") }
+        let tunnel = SSHTunnel(target: target)
+        let platform = try await tunnel.probeRemotePlatform()
+        if case .windows = platform {
+            throw XCTSkip("remote file upload still uses a POSIX shell script")
+        }
+
         let localURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("herdrm-e2e-\(UUID().uuidString).txt")
         let payload = "herdrm remote upload \(UUID().uuidString)"
         try Data(payload.utf8).write(to: localURL)
         defer { try? FileManager.default.removeItem(at: localURL) }
 
-        let tunnel = SSHTunnel(target: target)
         let remotePath = try await tunnel.uploadFile(from: localURL)
         XCTAssertTrue(remotePath.hasPrefix("/"))
         XCTAssertTrue(remotePath.hasSuffix(".txt"))

@@ -7,6 +7,13 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Fixed
+- SSH devices on Windows no longer fail the home probe (`echo "$HOME"` under CMD)
+  or OpenSSH `-L` socket forwards (drive-letter paths). HerdrM detects Windows,
+  proxies RPC through `herdr remote-api-bridge` over SSH stdio (same channel as
+  the official CLI), and attaches panes via the local herdr CLI pointed at that
+  bridge socket. (#92)
+
 ### Added
 - **Settings → Terminal → Import from Ghostty…** copies your `font-family` and
   `font-size` from `~/.config/ghostty/config` (honoring `XDG_CONFIG_HOME`) into
