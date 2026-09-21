@@ -387,6 +387,17 @@ struct SidebarView: View {
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
     }
 
+    /// Colours for the plugin stats lines under an agent row.
+    private enum AgentStatsStyle {
+        static func color(for kind: AgentStatsLine.Kind) -> Color {
+            switch kind {
+            case .account: return Theme.statsAccount
+            case .model: return Theme.textSecondary
+            case .context, .usage: return Theme.textTertiary
+            }
+        }
+    }
+
     private struct AgentRowView: View {
     let entry: AppModel.AgentEntry
     @ObservedObject var model: AppModel
@@ -431,10 +442,19 @@ struct SidebarView: View {
                     DeviceChip(device: entry.device)
                 }
             }
+            // Plugin stats (grazr account, Claude model / context / usage),
+            // one line each, only for the tokens the pane actually carries.
+            ForEach(agent.statsLines, id: \.kind) { line in
+                Text(line.text)
+                    .font(.system(size: 11, weight: line.kind == .model ? .semibold : .regular))
+                    .foregroundStyle(AgentStatsStyle.color(for: line.kind))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 7)
-        .frame(height: 51)
+        .frame(minHeight: 51)
         .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 7)
@@ -487,6 +507,9 @@ struct SidebarView: View {
         case .done where unread: parts.append(String(localized: "Unread"))
         case .done: break
         case .idle, .unknown: break
+        }
+        if let account = entry.agent.statsLines.first(where: { $0.kind == .account }) {
+            parts.append(account.text)
         }
         return parts.joined(separator: ", ")
     }

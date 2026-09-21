@@ -31,6 +31,8 @@ enum Theme {
     static let working = dynamic(hex(0x2563EB), hex(0x3B82F6))
     static let success = dynamic(hex(0x2FA35F), hex(0x62C987))
     static let warning = dynamic(hex(0xB8862E), hex(0xE0B36A))
+    /// grazr's account line, matching the mint the Herdr TUI row uses (#b5ead7).
+    static let statsAccount = dynamic(hex(0x3F9A7A), hex(0xB5EAD7))
     static let danger = dynamic(hex(0xC94F44), hex(0xE2726A))
 
     // surfaces

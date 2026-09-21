@@ -41,10 +41,16 @@ public struct AgentInfo: Codable, Sendable, Identifiable, Equatable {
     public let focused: Bool?
     public let cwd: String?
     public let revision: Int?
+    /// Plugin-published pane tokens (`pane.report_metadata`): grazr's account
+    /// tag and Claude stats, herdr-agent-quota's `quota_*`, radar's glyphs, …
+    /// Missing on older servers and on panes no plugin has tagged yet.
+    public let tokens: [String: String]?
 
     public var id: String { paneID }
     public var status: AgentStatus { AgentStatus(wire: agentStatusRaw) }
     public var agent: String { agentKindRaw ?? "agent" }
+    /// Sidebar stats lines (account, model, context, usage) read off `tokens`.
+    public var statsLines: [AgentStatsLine] { AgentStatsLine.lines(from: tokens ?? [:]) }
     /// Sidebar / titlebar label without a tab label. Prefer `title(tabLabel:)`.
     public var title: String { title(tabLabel: nil) }
 
@@ -62,7 +68,8 @@ public struct AgentInfo: Codable, Sendable, Identifiable, Equatable {
             paneID: paneID,
             focused: focused,
             cwd: cwd,
-            revision: revision
+            revision: revision,
+            tokens: tokens
         )
     }
 
@@ -160,6 +167,7 @@ public struct AgentInfo: Codable, Sendable, Identifiable, Equatable {
         case focused
         case cwd
         case revision
+        case tokens
     }
 }
 
