@@ -20,8 +20,10 @@ final class SidebarHarness {
     private var signatures: [Header: [Double]] = [:]
 
     /// - Parameters: number of fake workspaces / agents shown in the sidebar.
-    init(spaces: Int, agents: Int, terminals: Int = 0, width: CGFloat = 260, height: CGFloat = 600) throws {
-        model = try Self.fakeModel(spaces: spaces, agents: agents, terminals: terminals)
+    /// - Parameter agentTokens: pane `tokens` map given to every fake agent
+    ///   (what grazr / herdr-agent-quota publish); nil leaves the agents untagged.
+    init(spaces: Int, agents: Int, terminals: Int = 0, agentTokens: [String: String]? = nil, width: CGFloat = 260, height: CGFloat = 600) throws {
+        model = try Self.fakeModel(spaces: spaces, agents: agents, terminals: terminals, agentTokens: agentTokens)
         root = NSHostingView(rootView: AnyView(
             SidebarView(model: model, collapsed: .constant(false)).frame(width: width, height: height)
         ))
@@ -69,13 +71,21 @@ final class SidebarHarness {
         return best.0
     }
 
+    /// Render the whole sidebar to a PNG (for eyeballing a layout change).
+    func writeSnapshot(to url: URL) throws {
+        let rep = try XCTUnwrap(root.bitmapImageRepForCachingDisplay(in: root.bounds))
+        root.cacheDisplay(in: root.bounds, to: rep)
+        let png = try XCTUnwrap(rep.representation(using: .png, properties: [:]))
+        try png.write(to: url)
+    }
+
     var scrollOffset: CGFloat { scroll.contentView.bounds.origin.y }
     var listHeight: CGFloat { scroll.documentView?.bounds.height ?? 0 }
     var maxOffset: CGFloat { max(listHeight - scroll.contentView.bounds.height, 0) }
 
     // MARK: - Fake data
 
-    private static func fakeModel(spaces: Int, agents: Int, terminals: Int) throws -> AppModel {
+    private static func fakeModel(spaces: Int, agents: Int, terminals: Int, agentTokens: [String: String]?) throws -> AppModel {
         let model = AppModel()
         let device = Device.local
         model.devices = [device]
@@ -84,7 +94,9 @@ final class SidebarHarness {
             try decode(WorkspaceInfo.self, ["workspace_id": "ws-\(i)", "number": i + 1, "label": "Space \(i + 1)"])
         }
         state.agents = try (0..<agents).map { i in
-            try decode(AgentInfo.self, ["agent": "claude", "name": "Agent \(i + 1)", "workspace_id": "ws-0", "tab_id": "tab-\(i)", "pane_id": "pane-\(i)"])
+            var json: [String: Any] = ["agent": "claude", "name": "Agent \(i + 1)", "workspace_id": "ws-0", "tab_id": "tab-\(i)", "pane_id": "pane-\(i)"]
+            if let agentTokens { json["tokens"] = agentTokens }
+            return try decode(AgentInfo.self, json)
         }
         model.sessions[device.id] = state
         return model
