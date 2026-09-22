@@ -187,6 +187,26 @@ final class LocalSocketTests: XCTestCase {
             throw error
         }
     }
+
+    /// herdr-side statusline plugins refuse to update a pane whose server-side
+    /// viewport is scrolled up; HerdrM renders its own scrollback, so it snaps
+    /// that viewport to the bottom whenever it shows a pane.
+    func testScrollToBottomResetsPaneViewportOffset() async throws {
+        try requireLocalHerdr()
+        let service = HerdrService(device: .local, autoStartLocalServer: false)
+        _ = try await service.connect()
+        let workspace = try await service.createWorkspace(label: "herdrm-scroll", cwd: NSTemporaryDirectory())
+        let paneID = try XCTUnwrap(workspace.rootPaneID)
+        do {
+            try await service.scrollToBottom(paneID: paneID)
+            let offset = try await service.paneScrollOffset(paneID: paneID)
+            XCTAssertEqual(offset, 0)
+            try await service.closeWorkspace(workspaceID: workspace.workspaceID)
+        } catch {
+            try? await service.closeWorkspace(workspaceID: workspace.workspaceID)
+            throw error
+        }
+    }
 }
 
 func withTimeout<T: Sendable>(seconds: TimeInterval, _ body: @escaping @Sendable () async throws -> T) async throws -> T {
