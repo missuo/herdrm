@@ -180,4 +180,19 @@ public enum AgentAttachmentDeliveryPolicy {
                 ?? .unsupported
         }
     }
+
+    /// Path syntax for files dropped onto the terminal. A drop never goes
+    /// through the clipboard, so `nativeClipboard` is meaningless here and a
+    /// drop always resolves to paths — quoted like cmux even when the pane has
+    /// no agent capabilities (a bare shell just receives the path as text).
+    /// Remote devices still upload first, then paste the device-side paths.
+    public static func dropAction(
+        capabilities: AgentAttachmentCapabilities?,
+        allImages: Bool
+    ) -> AgentAttachmentPathSyntax {
+        let preferred = allImages
+            ? capabilities?.imagePath ?? capabilities?.filePath
+            : capabilities?.filePath
+        return preferred ?? .shellQuoted
+    }
 }

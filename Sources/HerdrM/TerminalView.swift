@@ -366,6 +366,16 @@ final class LineBreakTerminalView: AppTerminalView {
     /// kitty report-events applications otherwise receive a release-only key.
     private var locallyConsumedCopyKeyCode: UInt16?
 
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        registerForDraggedTypes([.fileURL, .string])
+    }
+
+    @available(*, unavailable)
+    required init?(coder _: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
@@ -671,6 +681,56 @@ final class LineBreakTerminalView: AppTerminalView {
             } catch {
                 reportAttachmentError(error)
             }
+        }
+    }
+
+    // MARK: Drag and drop
+
+    /// Finder drops land as paths (cmux-style): local panes get the quoted
+    /// paths straight away, remote panes upload first and paste device paths.
+    /// Plain text drops paste as text.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.dropOperation(for: sender.draggingPasteboard)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.dropOperation(for: sender.draggingPasteboard)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        if let fileURLs = Self.fileURLs(in: pasteboard), !fileURLs.isEmpty {
+            handleFileDrop(fileURLs: fileURLs)
+            return true
+        }
+        guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
+            return false
+        }
+        window?.makeFirstResponder(self)
+        paste(text: text)
+        return true
+    }
+
+    private static func dropOperation(for pasteboard: NSPasteboard) -> NSDragOperation {
+        if let fileURLs = fileURLs(in: pasteboard), !fileURLs.isEmpty { return .copy }
+        return hasText(in: pasteboard) ? .copy : []
+    }
+
+    private func handleFileDrop(fileURLs: [URL]) {
+        window?.makeFirstResponder(self)
+        let pathSyntax = AgentAttachmentDeliveryPolicy.dropAction(
+            capabilities: attachmentCapabilities,
+            allImages: fileURLs.allSatisfy(Self.isImageFile)
+        )
+        if case .local = attachmentDeviceKind {
+            sendPastedText(fileURLs.map { pathSyntax.format($0.path) }.joined(separator: " "))
+            return
+        }
+        do {
+            let files = try Self.clipboardFiles(from: fileURLs)
+            enqueuePathPaste(files, pathSyntax: pathSyntax)
+        } catch {
+            reportAttachmentError(error)
         }
     }
 

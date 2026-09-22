@@ -81,3 +81,54 @@ final class AttachmentDeliveryTests: XCTestCase {
         )
     }
 }
+
+/// Files dropped onto the terminal are never on the agent's clipboard, so a
+/// drop always resolves to paths (cmux-style), even for a local Claude that
+/// would take a pasted image through Ctrl+V.
+final class AttachmentDropDeliveryTests: XCTestCase {
+    private let claude = AgentAttachmentCapabilities(
+        nativeClipboardImageData: true,
+        imagePath: .shellQuoted,
+        filePath: .shellQuoted
+    )
+    func testLocalImageDropPastesPathsNotClipboard() {
+        XCTAssertEqual(
+            AgentAttachmentDeliveryPolicy.dropAction(
+                capabilities: claude, allImages: true
+            ),
+            .shellQuoted
+        )
+    }
+
+    func testRemoteDropUsesAgentPathSyntax() {
+        XCTAssertEqual(
+            AgentAttachmentDeliveryPolicy.dropAction(
+                capabilities: claude, allImages: false
+            ),
+            .shellQuoted
+        )
+    }
+
+    func testDropWithoutAgentCapabilitiesStillInsertsShellQuotedPaths() {
+        XCTAssertEqual(
+            AgentAttachmentDeliveryPolicy.dropAction(
+                capabilities: nil, allImages: false
+            ),
+            .shellQuoted
+        )
+    }
+
+    func testImageDropPrefersImagePathSyntax() {
+        let capabilities = AgentAttachmentCapabilities(
+            nativeClipboardImageData: false,
+            imagePath: .shellQuoted,
+            filePath: nil
+        )
+        XCTAssertEqual(
+            AgentAttachmentDeliveryPolicy.dropAction(
+                capabilities: capabilities, allImages: true
+            ),
+            .shellQuoted
+        )
+    }
+}
