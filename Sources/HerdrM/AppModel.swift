@@ -123,6 +123,23 @@ final class AppModel: ObservableObject {
                 unreadAgents.remove(AgentUnreadKey(deviceID: old.deviceID, paneID: old.paneID))
             }
             noteSelectedAttachSession()
+            if let pane = selectedPane, pane != oldValue {
+                snapPaneViewportToBottom(pane)
+            }
+        }
+    }
+
+    /// herdr keeps a server-side viewport per pane that HerdrM never scrolls
+    /// (ghostty owns the scrollback here), yet statusline plugins such as
+    /// herdr-agent-quota refuse to update a pane while that viewport is
+    /// scrolled up — a stale offset silently freezes the sidebar stats lines.
+    /// Showing a pane in HerdrM means the user is at the live bottom, so snap
+    /// herdr's viewport there too. Best effort: a failure changes nothing.
+    private func snapPaneViewportToBottom(_ pane: PaneRef) {
+        guard let device = device(pane.deviceID) else { return }
+        let service = service(for: device)
+        Task {
+            try? await service.scrollToBottom(paneID: pane.paneID)
         }
     }
 
