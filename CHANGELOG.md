@@ -5,6 +5,16 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- Agent rows in the sidebar now show the stats that Herdr plugins publish as
+  pane tokens, one line each under the agent/space line: the active account
+  (grazr's `$grazr`), the model, context/cache, and 5h/7d usage. grazr's own
+  `claude_*` tokens are preferred; herdr-agent-quota's `quota_*` tokens are the
+  fallback, so a host running either plugin gets the same block the Herdr TUI
+  shows. Rows without tokens are unchanged.
+
 ## [0.6.7] - 2026-09-20
 
 ### Added
