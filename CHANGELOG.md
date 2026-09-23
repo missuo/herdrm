@@ -13,6 +13,9 @@ the Sparkle update description — a release without a section here fails CI.
   Clipboard path pastes stay verbatim.
 - **Text drops.** Text dragged from an editor or a browser onto a pane pastes
   as text. Previously the pane only accepted files.
+- **Copy on select.** Text selected with the mouse is copied to the clipboard on
+  release, matching herdr's `copy_on_select`. A new toggle in Settings ›
+  Terminal turns it off.
 
 ### Fixed
 - **Sidebar stats lines no longer freeze on a pane herdr thinks is scrolled

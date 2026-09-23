@@ -319,6 +319,7 @@ struct TerminalSettingsView: View {
     @AppStorage(TerminalDefaults.fontWeightKey) private var fontWeight = TerminalDefaults.defaultFontWeight
     @AppStorage(TerminalDefaults.lineSpacingKey) private var lineSpacing = TerminalDefaults.defaultLineSpacing
     @AppStorage("terminal.mouseReporting") private var mouseReporting = true
+    @AppStorage("terminal.copyOnSelect") private var copyOnSelect = true
 
     @State private var importMessage: String?
     @State private var importSucceeded = false
@@ -390,6 +391,16 @@ struct TerminalSettingsView: View {
                     }
                 }
 
+                Toggle(isOn: $copyOnSelect) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Copy on select")
+                        Text("Copies text to the clipboard as soon as you finish selecting it with the mouse, like herdr's copy_on_select.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 HStack(spacing: 10) {
                     Button("Reset to Defaults") {
                         fontName = ""
@@ -398,6 +409,7 @@ struct TerminalSettingsView: View {
                         lineSpacing = TerminalDefaults.defaultLineSpacing
                         thinStrokes = true
                         mouseReporting = true
+                        copyOnSelect = true
                         importMessage = nil
                     }
                     Button("Import from Ghostty…") { importFromGhostty() }
