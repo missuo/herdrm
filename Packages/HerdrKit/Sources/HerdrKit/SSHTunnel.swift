@@ -46,6 +46,10 @@ private final class SSHErrorBuffer: @unchecked Sendable {
 /// Auth uses OpenSSH config/agent/Tailscale SSH, with Keychain-backed askpass as a fallback.
 public actor SSHTunnel {
     static let maximumUploadBytes = 50 * 1024 * 1024
+    /// Folders ride one tar stream; the caps keep a stray drop of a whole
+    /// project (node_modules and all) from tying up the link for minutes.
+    static let maximumDirectoryUploadBytes = 200 * 1024 * 1024
+    static let maximumDirectoryUploadEntries = 20_000
 
     /// Remote endpoint shape used to pick stream-local forward vs API bridge.
     public enum RemotePlatform: Sendable, Equatable {
@@ -525,6 +529,66 @@ public actor SSHTunnel {
         )
     }
 
+    /// Streams a folder to a private cache directory on the remote host and
+    /// returns the absolute remote path of the folder, which keeps its name.
+    public func uploadDirectory(from localURL: URL) async throws -> String {
+        let totalSize = try Self.validateDirectoryUploadCandidate(localURL)
+        return try await Self.uploadDirectory(
+            target: target,
+            localURL: localURL,
+            remoteDirectoryName: UUID().uuidString.lowercased(),
+            credentialID: credentialID,
+            timeout: Self.uploadTimeout(fileSizeBytes: totalSize)
+        )
+    }
+
+    /// Rejects folders the tar stream should not carry, and returns the total
+    /// size of the regular files inside in bytes. Symlinks travel as links.
+    @discardableResult
+    static func validateDirectoryUploadCandidate(_ localURL: URL) throws -> Int {
+        guard localURL.isFileURL else {
+            throw HerdrError.fileTransferFailed("a local folder is required")
+        }
+        let values = try localURL.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+        guard values.isDirectory == true, values.isSymbolicLink != true else {
+            throw HerdrError.fileTransferFailed("only folders can be transferred as folders")
+        }
+        // The name reaches the remote side only inside the tar stream, but a
+        // newline would split the path the remote script prints back.
+        guard !localURL.lastPathComponent.contains(where: \.isNewline) else {
+            throw HerdrError.fileTransferFailed("the folder name contains a line break")
+        }
+        let keys: [URLResourceKey] = [.isRegularFileKey, .fileSizeKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: localURL,
+            includingPropertiesForKeys: keys,
+            options: [],
+            errorHandler: { _, _ in false }
+        ) else {
+            throw HerdrError.fileTransferFailed("the folder could not be read")
+        }
+        var totalSize = 0
+        var entries = 0
+        for case let url as URL in enumerator {
+            entries += 1
+            guard entries <= maximumDirectoryUploadEntries else {
+                throw HerdrError.fileTransferFailed(
+                    "the folder has more than \(maximumDirectoryUploadEntries) items"
+                )
+            }
+            let item = try url.resourceValues(forKeys: Set(keys))
+            if item.isRegularFile == true {
+                totalSize += item.fileSize ?? 0
+            }
+            guard totalSize <= maximumDirectoryUploadBytes else {
+                throw HerdrError.fileTransferFailed(
+                    "the folder is larger than the \(maximumDirectoryUploadBytes / (1024 * 1024)) MB limit"
+                )
+            }
+        }
+        return totalSize
+    }
+
     /// Rejects what the upload path cannot stream, and returns the size in bytes.
     @discardableResult
     static func validateUploadCandidate(_ localURL: URL) throws -> Int {
@@ -578,6 +642,82 @@ public actor SSHTunnel {
         fi
         """
 
+        return try await runUpload(
+            target: target,
+            command: command,
+            credentialID: credentialID,
+            timeout: timeout,
+            executableURL: executableURL,
+            makeInput: { .file(try FileHandle(forReadingFrom: localURL)) }
+        )
+    }
+
+    static func uploadDirectory(
+        target: String,
+        localURL: URL,
+        remoteDirectoryName: String,
+        credentialID: UUID?,
+        timeout: TimeInterval = 60,
+        executableURL: URL = URL(fileURLWithPath: "/usr/bin/ssh"),
+        tarURL: URL = URL(fileURLWithPath: "/usr/bin/tar")
+    ) async throws -> String {
+        guard isSafeRemoteFilename(remoteDirectoryName) else {
+            throw HerdrError.fileTransferFailed("unsafe remote filename")
+        }
+        // `tar -m` stamps extracted files with the upload time, so the
+        // seven-day sweep measures from the upload, not the file's own age.
+        let command = """
+        umask 077
+        dir="${XDG_CACHE_HOME:-$HOME/.cache}/herdrm/attachments"
+        mkdir -p "$dir" && chmod 700 "$dir"
+        find "$dir" -type f -mtime +7 -delete 2>/dev/null || true
+        find "$dir" -mindepth 1 -type d -empty -mmin +60 -delete 2>/dev/null || true
+        tmp="$dir/.\(remoteDirectoryName).part"
+        dest="$dir/\(remoteDirectoryName)"
+        if mkdir "$tmp" && tar -xmf - -C "$tmp" && mv -f "$tmp" "$dest"; then
+            find "$dest" -mindepth 1 -maxdepth 1
+        else
+            rm -rf "$tmp"
+            exit 1
+        fi
+        """
+        let parent = localURL.deletingLastPathComponent().path
+        // "./name" keeps a leading dash from reading as a tar option.
+        let member = "./" + localURL.lastPathComponent
+        return try await runUpload(
+            target: target,
+            command: command,
+            credentialID: credentialID,
+            timeout: timeout,
+            executableURL: executableURL,
+            makeInput: {
+                let tar = Process()
+                tar.executableURL = tarURL
+                tar.arguments = ["-c", "-f", "-", "--no-mac-metadata", "-C", parent, member]
+                // No AppleDouble `._*` files or xattrs in the stream.
+                tar.environment = ["COPYFILE_DISABLE": "1"]
+                tar.standardError = FileHandle.nullDevice
+                return .process(tar)
+            }
+        )
+    }
+
+    enum UploadInput {
+        case file(FileHandle)
+        /// A producer whose stdout becomes ssh's stdin.
+        case process(Process)
+    }
+
+    /// Runs the upload script over one ssh session with `makeInput` on stdin
+    /// and returns the last absolute path the script prints.
+    private static func runUpload(
+        target: String,
+        command: String,
+        credentialID: UUID?,
+        timeout: TimeInterval,
+        executableURL: URL,
+        makeInput: @escaping @Sendable () throws -> UploadInput
+    ) async throws -> String {
         return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let proc = Process()
@@ -600,17 +740,39 @@ public actor SSHTunnel {
                 let errorOutput = Pipe()
                 proc.standardOutput = output
                 proc.standardError = errorOutput
+                var producer: Process?
                 do {
-                    proc.standardInput = try FileHandle(forReadingFrom: localURL)
+                    switch try makeInput() {
+                    case .file(let handle):
+                        proc.standardInput = handle
+                    case .process(let source):
+                        let pipe = Pipe()
+                        source.standardOutput = pipe
+                        proc.standardInput = pipe
+                        try source.run()
+                        producer = source
+                    }
                     try proc.run()
                 } catch {
+                    if let producer, producer.isRunning { producer.terminate() }
                     continuation.resume(throwing: HerdrError.fileTransferFailed("ssh spawn: \(error.localizedDescription)"))
                     return
                 }
                 DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
                     if proc.isRunning { proc.terminate() }
+                    if let producer, producer.isRunning { producer.terminate() }
                 }
                 proc.waitUntilExit()
+                if let producer {
+                    // ssh exiting early (auth failure) leaves tar blocked on a
+                    // full pipe; it must not outlive the upload.
+                    if producer.isRunning { producer.terminate() }
+                    producer.waitUntilExit()
+                    if producer.terminationStatus != 0, proc.terminationStatus == 0 {
+                        continuation.resume(throwing: HerdrError.fileTransferFailed("the folder could not be archived"))
+                        return
+                    }
+                }
                 let data = output.fileHandleForReading.readDataToEndOfFile()
                 guard proc.terminationStatus == 0 else {
                     let errorData = errorOutput.fileHandleForReading.readDataToEndOfFile()

@@ -84,6 +84,38 @@ final class RemoteSSHTests: XCTestCase {
         XCTAssertEqual(output, payload)
     }
 
+    func testUploadDirectoryRoundTrip() async throws {
+        guard let target else { throw XCTSkip("HERDRM_E2E_SSH_TARGET not set") }
+        let tunnel = SSHTunnel(target: target)
+        let platform = try await tunnel.probeRemotePlatform()
+        if case .windows = platform {
+            throw XCTSkip("remote folder upload still uses a POSIX shell script")
+        }
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("herdrm-e2e-\(UUID().uuidString)", isDirectory: true)
+        let folder = root.appendingPathComponent("my notes", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder.appendingPathComponent("sub"),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        let payload = "herdrm folder upload \(UUID().uuidString)"
+        try Data(payload.utf8).write(to: folder.appendingPathComponent("sub/note.txt"))
+
+        let remotePath = try await tunnel.uploadDirectory(from: folder)
+        XCTAssertTrue(remotePath.hasPrefix("/"))
+        XCTAssertTrue(remotePath.hasSuffix("/my notes"))
+
+        let quotedPath = HerdrService.shellQuoted(remotePath)
+        let output = try await SSHTunnel.runSSH(
+            target: target,
+            command: "cat \(quotedPath)/sub/note.txt; rm -rf \"$(dirname \(quotedPath))\"",
+            timeout: 15
+        )
+        XCTAssertEqual(output, payload)
+    }
+
     func testForwardedSocketStartsAgentInNewPane() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let socketPath = environment["HERDRM_E2E_SOCKET_PATH"] else {

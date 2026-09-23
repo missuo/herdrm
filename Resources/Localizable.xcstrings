@@ -2769,18 +2769,18 @@
         }
       }
     },
-    "Remote paste supports regular files, not folders or special files." : {
+    "Remote paste supports files and folders, not special files." : {
       "localizations" : {
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Remote paste supports regular files, not folders or special files."
+            "value" : "Remote paste supports files and folders, not special files."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "远程粘贴仅支持普通文件，不支持文件夹或特殊文件。"
+            "value" : "远程粘贴支持文件和文件夹，不支持特殊文件。"
           }
         }
       }
@@ -3373,6 +3373,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "远程文件传输服务不可用。"
+          }
+        }
+      }
+    },
+    "Terminal content area" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Terminal content area"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "终端内容区域"
           }
         }
       }

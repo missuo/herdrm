@@ -15,6 +15,25 @@ the Sparkle update description — a release without a section here fails CI.
   fallback, so a host running either plugin gets the same block the Herdr TUI
   shows. Rows without tokens are unchanged.
 
+## [0.6.8] - 2026-09-22
+
+### Added
+- Drag files or folders from Finder onto a terminal to hand them to the
+  program: on this Mac the local paths are typed in; on an SSH device they are
+  uploaded into the remote attachment cache first and the remote paths are
+  typed in. Pasting copied folders (⌘V) now works on remote devices too —
+  folders travel as one tar stream, capped at 200 MB and 20,000 items.
+
+### Fixed
+- ⌘-clicking a link while an agent captures the mouse (Claude Code's
+  fullscreen mode) now opens it on this Mac. The click used to reach the
+  agent, which opened the link itself — on a remote device, in the remote
+  machine's browser.
+- Dictation apps such as Typeless no longer leave their "copy this text" panel
+  up after inserting into the terminal: the terminal now exposes itself to
+  accessibility as a text area (visible text, selection), as Terminal and
+  Ghostty do.
+
 ## [0.6.7] - 2026-09-20
 
 ### Added

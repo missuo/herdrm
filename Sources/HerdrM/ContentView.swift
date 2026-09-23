@@ -473,6 +473,8 @@ struct DetailView: View {
                     lineSpacing: terminalLineSpacing,
                     dark: colorScheme == .dark,
                     mouseReporting: terminalMouseReporting,
+                    onAttachmentError: { model.actionError = $0 },
+                    onAttachmentUploadingChanged: { uploadingAttachment = $0 },
                     onExit: { _ in model.closeShellSession(session.id) }
                 )
                     .id("shell-\(session.id)")
@@ -487,6 +489,10 @@ struct DetailView: View {
             }
         }
         .background(Theme.terminalBackground)
+        .overlay(alignment: .bottomTrailing) {
+            // The attach side shows its own; this covers standalone shells.
+            if uploadingAttachment, model.selectedShellID != nil { uploadIndicator }
+        }
     }
 
     @ViewBuilder

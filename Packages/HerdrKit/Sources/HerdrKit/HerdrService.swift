@@ -555,10 +555,16 @@ public actor HerdrService {
         )
     }
 
-    /// Makes a local file readable by this device and returns the device-local path.
-    /// Remote files are streamed over SSH into the user's private cache.
+    /// Makes a local file or folder readable by this device and returns the
+    /// device-local path. Remote copies are streamed over SSH into the user's
+    /// private cache; a folder keeps its name there.
     public func stageAttachment(from localURL: URL) async throws -> String {
-        try SSHTunnel.validateUploadCandidate(localURL)
+        let isDirectory = (try? localURL.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+        if isDirectory {
+            try SSHTunnel.validateDirectoryUploadCandidate(localURL)
+        } else {
+            try SSHTunnel.validateUploadCandidate(localURL)
+        }
         switch device.kind {
         case .local:
             return localURL.path
@@ -566,7 +572,9 @@ public actor HerdrService {
             guard let tunnel else {
                 throw HerdrError.fileTransferFailed("no SSH connection for this device")
             }
-            return try await tunnel.uploadFile(from: localURL)
+            return isDirectory
+                ? try await tunnel.uploadDirectory(from: localURL)
+                : try await tunnel.uploadFile(from: localURL)
         case .tailcat:
             throw HerdrError.fileTransferFailed(
                 "file upload is not supported over a tailcat tunnel"

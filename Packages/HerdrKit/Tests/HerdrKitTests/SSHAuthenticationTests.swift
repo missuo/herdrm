@@ -234,6 +234,72 @@ final class SSHFileTransferTests: XCTestCase {
         XCTAssertTrue(arguments.contains("test.png.part"))
     }
 
+    func testDirectoryUploadStreamsTarOfTheFolder() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("herdrm-dir-upload-\(UUID().uuidString)", isDirectory: true)
+        let folder = directory.appendingPathComponent("-my notes", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: folder.appendingPathComponent("sub"),
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("hello".utf8).write(to: folder.appendingPathComponent("a.txt"))
+        try Data("deep".utf8).write(to: folder.appendingPathComponent("sub/b.txt"))
+
+        let capturedURL = directory.appendingPathComponent("captured.tar")
+        let argumentsURL = directory.appendingPathComponent("arguments.txt")
+        let executableURL = directory.appendingPathComponent("fake-ssh")
+        let script = """
+        #!/bin/sh
+        printf '%s\\n' "$@" > \(HerdrService.shellQuoted(argumentsURL.path))
+        cat > \(HerdrService.shellQuoted(capturedURL.path))
+        printf '/home/test/.cache/herdrm/attachments/abc/-my notes\\n'
+        """
+        try script.write(to: executableURL, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executableURL.path)
+
+        let remotePath = try await SSHTunnel.uploadDirectory(
+            target: "test@example.invalid",
+            localURL: folder,
+            remoteDirectoryName: "abc",
+            credentialID: nil,
+            executableURL: executableURL
+        )
+
+        XCTAssertEqual(remotePath, "/home/test/.cache/herdrm/attachments/abc/-my notes")
+        let arguments = try String(contentsOf: argumentsURL, encoding: .utf8)
+        XCTAssertTrue(arguments.contains("tar -xmf -"))
+        XCTAssertTrue(arguments.contains("umask 077"))
+
+        let list = Process()
+        list.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+        list.arguments = ["-tf", capturedURL.path]
+        let output = Pipe()
+        list.standardOutput = output
+        try list.run()
+        list.waitUntilExit()
+        let entries = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .split(separator: "\n").map(String.init)
+        XCTAssertTrue(entries.contains("./-my notes/a.txt"), "\(entries)")
+        XCTAssertTrue(entries.contains("./-my notes/sub/b.txt"), "\(entries)")
+        XCTAssertFalse(entries.contains { $0.contains("/._") }, "\(entries)")
+    }
+
+    func testDirectoryUploadValidation() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("herdrm-dir-guard-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fileURL = directory.appendingPathComponent("small.bin")
+        try Data([0x01, 0x02]).write(to: fileURL)
+
+        XCTAssertEqual(try SSHTunnel.validateDirectoryUploadCandidate(directory), 2)
+        XCTAssertThrowsError(try SSHTunnel.validateDirectoryUploadCandidate(fileURL))
+        let broken = directory.appendingPathComponent("line\nbreak", isDirectory: true)
+        try FileManager.default.createDirectory(at: broken, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try SSHTunnel.validateDirectoryUploadCandidate(broken))
+    }
+
     func testUploadFilenamePreservesOnlySafeExtension() {
         let png = SSHTunnel.uploadFilename(for: URL(fileURLWithPath: "/tmp/private design.PNG"))
         XCTAssertTrue(png.hasSuffix(".png"))

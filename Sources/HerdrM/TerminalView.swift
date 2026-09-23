@@ -245,15 +245,21 @@ final class TerminalProcessHost {
     /// the process's IO queue.
     private let adapterLock = NSLock()
     private var lightAdapter: LightTerminalANSIAdapter?
+    private let viewportBox = ViewportBox()
+
+    /// The last grid Ghostty reported, for mapping a click to a cell.
+    var viewport: InMemoryTerminalViewport? { viewportBox.value }
 
     /// Called on the main queue with the child's real exit status.
     var onExit: ((Int32?) -> Void)?
 
     init() {
         let process = self.process
+        let viewportBox = self.viewportBox
         session = InMemoryTerminalSession(
             write: { data in process.write(data) },
             resize: { viewport in
+                viewportBox.value = viewport
                 process.resize(
                     columns: viewport.columns,
                     rows: viewport.rows,
@@ -308,6 +314,17 @@ final class TerminalProcessHost {
     }
 }
 
+/// Lock-guarded because the resize callback's thread is Ghostty's choice.
+private final class ViewportBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: InMemoryTerminalViewport?
+
+    var value: InMemoryTerminalViewport? {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
+}
+
 private struct ClipboardFile: Sendable {
     let localURL: URL
     let removeAfterUpload: Bool
@@ -325,7 +342,7 @@ private enum ClipboardFileError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .unsupportedItem: return String(localized: "Remote paste supports regular files, not folders or special files.")
+        case .unsupportedItem: return String(localized: "Remote paste supports files and folders, not special files.")
         case .imageEncodingFailed: return String(localized: "The clipboard image could not be encoded as PNG.")
         case .transferUnavailable: return String(localized: "The remote file transfer service is unavailable.")
         }
@@ -442,6 +459,17 @@ final class LineBreakTerminalView: AppTerminalView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        pendingLinkClick = nil
+        if isMouseCaptured, mouseReportingEnabled,
+           event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+               .subtracting([.capsLock, .function]) == .command,
+           let url = hoveredLink ?? linkURL(at: event) {
+            // A captured ⌘-click would reach the TUI, and fullscreen Claude
+            // Code opens links itself — with `open` on its own host, which for
+            // a remote device is the remote Mac. The whole gesture stays here.
+            pendingLinkClick = url
+            return
+        }
         gestureIsLocal = !mouseReportingEnabled
             || isSelectionGesture(event)
             || !isMouseCaptured
@@ -449,12 +477,167 @@ final class LineBreakTerminalView: AppTerminalView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard pendingLinkClick == nil else { return }
         super.mouseDragged(with: routedMouseEvent(event))
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let url = pendingLinkClick {
+            pendingLinkClick = nil
+            Self.openClickedLink(url)
+            return
+        }
         defer { gestureIsLocal = false }
         super.mouseUp(with: routedMouseEvent(event))
+    }
+
+    // MARK: Links under mouse capture
+
+    /// The link Ghostty reports under a ⌘-hovering pointer (URL match or
+    /// OSC 8 target). Ghostty may not report it while a TUI captures the
+    /// mouse, so `linkURL(at:)` backs it up from the screen text.
+    var hoveredLink: String?
+    /// A ⌘-click taken locally: its drag and release must not reach the TUI.
+    private var pendingLinkClick: String?
+
+    /// Ghostty's default window padding, in points.
+    private static let gridPadding: CGFloat = 2
+
+    /// The URL printed under the click, reading the clicked row plus the rows
+    /// it soft-wraps into (a long URL fills its row edge to edge).
+    private func linkURL(at event: NSEvent) -> String? {
+        guard let viewport = processHost?.viewport,
+              viewport.columns > 0, viewport.cellWidthPixels > 0, viewport.cellHeightPixels > 0,
+              let text = processHost?.session.readViewportText()
+        else { return nil }
+        let scale = window?.backingScaleFactor ?? 2
+        let cellWidth = CGFloat(viewport.cellWidthPixels) / scale
+        let cellHeight = CGFloat(viewport.cellHeightPixels) / scale
+        let point = convert(event.locationInWindow, from: nil)
+        let fromTop = isFlipped ? point.y : bounds.height - point.y
+        let column = Int(((point.x - Self.gridPadding) / cellWidth).rounded(.down))
+        let row = Int(((fromTop - Self.gridPadding) / cellHeight).rounded(.down))
+        let lines = text.components(separatedBy: "\n")
+        return Self.url(in: lines, row: row, column: column, columns: Int(viewport.columns))
+    }
+
+    static func url(in lines: [String], row: Int, column: Int, columns: Int) -> String? {
+        guard lines.indices.contains(row), column >= 0 else { return nil }
+        let isFull = { (line: String) in displayWidth(line) >= columns }
+        var first = row
+        while first > 0, isFull(lines[first - 1]) { first -= 1 }
+        var last = row
+        while last + 1 < lines.count, isFull(lines[last]) { last += 1 }
+
+        var joined = ""
+        var clickOffset: Int?
+        for index in first...last {
+            if index == row {
+                var width = 0
+                var offset = joined.utf16.count
+                for character in lines[index] {
+                    let next = width + cellWidth(character)
+                    if column < next { clickOffset = offset; break }
+                    width = next
+                    offset += character.utf16.count
+                }
+            }
+            joined += lines[index]
+        }
+        guard let clickOffset,
+              let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
+        else { return nil }
+        let range = NSRange(joined.startIndex..., in: joined)
+        for match in detector.matches(in: joined, range: range)
+        where NSLocationInRange(clickOffset, match.range) {
+            // Bare words the detector promotes (README.md, foo.io) are not links.
+            let matched = (joined as NSString).substring(with: match.range)
+            guard matched.contains("://") || matched.hasPrefix("mailto:"),
+                  let url = match.url
+            else { return nil }
+            return url.absoluteString
+        }
+        return nil
+    }
+
+    private static func displayWidth(_ line: String) -> Int {
+        line.reduce(0) { $0 + cellWidth($1) }
+    }
+
+    /// Terminal cell width: East Asian wide and emoji-presentation characters
+    /// take two cells.
+    private static func cellWidth(_ character: Character) -> Int {
+        guard let scalar = character.unicodeScalars.first else { return 1 }
+        if scalar.properties.isEmojiPresentation { return 2 }
+        switch scalar.value {
+        case 0x1100...0x115F, 0x2E80...0x303E, 0x3041...0x33FF, 0x3400...0x4DBF,
+             0x4E00...0x9FFF, 0xA000...0xA4CF, 0xAC00...0xD7A3, 0xF900...0xFAFF,
+             0xFE30...0xFE4F, 0xFF00...0xFF60, 0xFFE0...0xFFE6, 0x20000...0x3FFFD:
+            return 2
+        default:
+            return 1
+        }
+    }
+
+    // MARK: Accessibility
+
+    // Dictation tools (Typeless and the like) paste with ⌘V and then look for
+    // a focused text area to confirm the insert landed. Without an
+    // accessibility role the terminal reads as "no text field", and the tool
+    // leaves its copy-this-text panel up. Same shape as Ghostty.app's surface.
+
+    private var accessibilityTextCache: (text: String, time: TimeInterval)?
+
+    private var accessibilityText: String {
+        let now = ProcessInfo.processInfo.systemUptime
+        // Dictation tools poll the focused element; one viewport read per
+        // half second is plenty.
+        if let cache = accessibilityTextCache, now - cache.time < 0.5 { return cache.text }
+        let text = processHost?.session.readViewportText() ?? ""
+        accessibilityTextCache = (text, now)
+        return text
+    }
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .textArea }
+
+    override func accessibilityHelp() -> String? { String(localized: "Terminal content area") }
+
+    override func accessibilityValue() -> Any? { accessibilityText }
+
+    override func accessibilityNumberOfCharacters() -> Int {
+        (accessibilityText as NSString).length
+    }
+
+    override func accessibilityVisibleCharacterRange() -> NSRange {
+        NSRange(location: 0, length: accessibilityNumberOfCharacters())
+    }
+
+    override func accessibilitySelectedText() -> String? {
+        attachedSurface?.readSelection() ?? ""
+    }
+
+    /// The insertion point sits at the end of the visible text: the terminal
+    /// cursor has no offset in this flat string that a caller could use.
+    override func accessibilitySelectedTextRange() -> NSRange {
+        NSRange(location: accessibilityNumberOfCharacters(), length: 0)
+    }
+
+    override func accessibilityString(for range: NSRange) -> String? {
+        let text = accessibilityText as NSString
+        guard NSMaxRange(range) <= text.length else { return nil }
+        return text.substring(with: range)
+    }
+
+    override func accessibilityAttributedString(for range: NSRange) -> NSAttributedString? {
+        accessibilityString(for: range).map { NSAttributedString(string: $0) }
+    }
+
+    override func accessibilityLine(for index: Int) -> Int {
+        let text = accessibilityText as NSString
+        let end = min(max(index, 0), text.length)
+        return text.substring(to: end).reduce(0) { $1 == "\n" ? $0 + 1 : $0 }
     }
 
     // MARK: Context menu
@@ -549,6 +732,59 @@ final class LineBreakTerminalView: AppTerminalView {
               url.scheme == "http" || url.scheme == "https"
         else { return nil }
         return url
+    }
+
+    // MARK: Drag and drop
+
+    // Files and folders dropped from Finder become paths the program can read:
+    // local paths on this Mac, or copies uploaded into the remote device's
+    // attachment cache — the same pipeline as pasting copied files.
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { registerForDraggedTypes([.fileURL]) }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(in: sender.draggingPasteboard)?.isEmpty == false ? .copy : []
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        draggingEntered(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let fileURLs = Self.fileURLs(in: sender.draggingPasteboard), !fileURLs.isEmpty else {
+            return false
+        }
+        window?.makeFirstResponder(self)
+        dropFiles(fileURLs)
+        return true
+    }
+
+    /// Unlike a paste, a drop always delivers paths: the dragged files are not
+    /// on the general pasteboard, so the native-clipboard route cannot carry
+    /// them, and a plain shell (no attachment capabilities) wants paths too.
+    private func dropFiles(_ fileURLs: [URL]) {
+        let pathSyntax: AgentAttachmentPathSyntax
+        if case .devicePaths(let syntax) = AgentAttachmentDeliveryPolicy.action(
+            capabilities: attachmentCapabilities,
+            deviceKind: attachmentDeviceKind,
+            source: .files(allImages: fileURLs.allSatisfy(Self.isImageFile))
+        ) {
+            pathSyntax = syntax
+        } else {
+            pathSyntax = .shellQuoted
+        }
+        if case .local = attachmentDeviceKind {
+            sendPastedText(fileURLs.map { pathSyntax.format($0.path) }.joined(separator: " "))
+            return
+        }
+        do {
+            enqueuePathPaste(try Self.clipboardFiles(from: fileURLs), pathSyntax: pathSyntax)
+        } catch {
+            reportAttachmentError(error)
+        }
     }
 
     // MARK: Paste and attachments
@@ -782,8 +1018,8 @@ final class LineBreakTerminalView: AppTerminalView {
 
     private static func clipboardFiles(from fileURLs: [URL]) throws -> [ClipboardFile] {
         try fileURLs.map { url in
-            let values = try url.resourceValues(forKeys: [.isRegularFileKey])
-            guard values.isRegularFile == true else {
+            let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey])
+            guard values.isRegularFile == true || values.isDirectory == true else {
                 throw ClipboardFileError.unsupportedItem
             }
             return ClipboardFile(localURL: url, removeAfterUpload: false)
@@ -1000,9 +1236,14 @@ struct AttachTerminalView: NSViewRepresentable {
         )
     }
 
-    final class Coordinator: NSObject, TerminalSurfaceLifecycleDelegate, TerminalSurfaceOpenURLDelegate {
+    final class Coordinator: NSObject, TerminalSurfaceLifecycleDelegate, TerminalSurfaceOpenURLDelegate,
+        TerminalSurfaceHoverLinkDelegate {
         func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
             LineBreakTerminalView.openClickedLink(url)
+        }
+
+        func terminalDidUpdateHoverLink(_ url: String?) {
+            view?.hoveredLink = url
         }
 
         /// Written on the main actor; read from `deinit`, which is nonisolated.
@@ -1148,6 +1389,8 @@ struct ShellTerminalView: NSViewRepresentable {
     var lineSpacing: Double = TerminalDefaults.defaultLineSpacing
     var dark: Bool = false
     var mouseReporting: Bool = true
+    var onAttachmentError: (String) -> Void = { _ in }
+    var onAttachmentUploadingChanged: (Bool) -> Void = { _ in }
     var onExit: ((Int32?) -> Void)? = nil
     /// Delivers the created view so a focus tracker can observe its window's
     /// first responder without retaining the terminal itself.
@@ -1159,6 +1402,12 @@ struct ShellTerminalView: NSViewRepresentable {
         let host = TerminalProcessHost()
         let view = LineBreakTerminalView(frame: .zero)
         view.processHost = host
+        // A shell has no agent manifest: pastes go through as text, while
+        // dropped files still upload to a remote device.
+        view.attachmentDeviceKind = device.kind
+        view.attachmentService = HerdrService(device: device, autoStartLocalServer: false)
+        view.onAttachmentError = onAttachmentError
+        view.onAttachmentUploadingChanged = onAttachmentUploadingChanged
         context.coordinator.view = view
         context.coordinator.host = host
         context.coordinator.onExit = onExit
@@ -1202,6 +1451,8 @@ struct ShellTerminalView: NSViewRepresentable {
 
     func updateNSView(_ nsView: LineBreakTerminalView, context: Context) {
         context.coordinator.onExit = onExit
+        nsView.onAttachmentError = onAttachmentError
+        nsView.onAttachmentUploadingChanged = onAttachmentUploadingChanged
         applyTerminalAppearance(
             nsView,
             fontName: fontName,
@@ -1225,9 +1476,14 @@ struct ShellTerminalView: NSViewRepresentable {
         coordinator.host?.terminate()
     }
 
-    final class Coordinator: NSObject, TerminalSurfaceLifecycleDelegate, TerminalSurfaceOpenURLDelegate {
+    final class Coordinator: NSObject, TerminalSurfaceLifecycleDelegate, TerminalSurfaceOpenURLDelegate,
+        TerminalSurfaceHoverLinkDelegate {
         func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
             LineBreakTerminalView.openClickedLink(url)
+        }
+
+        func terminalDidUpdateHoverLink(_ url: String?) {
+            view?.hoveredLink = url
         }
 
         var onExit: ((Int32?) -> Void)?
