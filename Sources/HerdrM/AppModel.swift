@@ -238,11 +238,15 @@ final class AppModel: ObservableObject {
         return nil
     }
 
-    func attachmentCapabilities(
-        deviceID: UUID,
-        agentKind: String?
-    ) -> AgentAttachmentCapabilities? {
-        session(deviceID).attachmentCapabilities.capabilities(for: agentKind)
+    /// Resolved from the live agent list, not the kept-alive attach entry: an
+    /// agent started here is attached before herdr has detected its kind, and
+    /// that entry's snapshot would keep it kindless (plain-text paste) forever.
+    /// The live record wins even while its kind is nil, so an agent restarted
+    /// in the same pane does not inherit the previous agent's paste policy.
+    func attachmentCapabilities(for entry: AgentEntry) -> AgentAttachmentCapabilities? {
+        let session = session(entry.device.id)
+        let agentKind = session.agents.first { $0.paneID == entry.agent.paneID }?.agentKindRaw
+        return session.attachmentCapabilities.capabilities(for: agentKind)
     }
 
     var filteredDevice: Device? {
