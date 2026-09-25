@@ -754,9 +754,33 @@ final class LineBreakTerminalView: AppTerminalView {
     // attachment cache — the same pipeline as pasting copied files.
     // Dropped text (from an editor or a browser) pastes as text.
 
+    //
+    // Only the terminal on screen takes drops. Kept-alive attaches stay in the
+    // window at zero opacity, and AppKit picks a drag destination from the
+    // view tree without regard to SwiftUI's opacity or hit testing — so a
+    // hidden terminal stacked above the visible one would swallow the drop.
+
+    /// Mirrors `setSurfaceVisible`: false while kept alive behind another view.
+    private var acceptsDrops = true
+
+    override func setSurfaceVisible(_ visible: Bool) {
+        super.setSurfaceVisible(visible)
+        guard visible != acceptsDrops else { return }
+        acceptsDrops = visible
+        updateDragRegistration()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { registerForDraggedTypes([.fileURL, .string]) }
+        updateDragRegistration()
+    }
+
+    private func updateDragRegistration() {
+        if window != nil, acceptsDrops {
+            registerForDraggedTypes([.fileURL, .string])
+        } else {
+            unregisterDraggedTypes()
+        }
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

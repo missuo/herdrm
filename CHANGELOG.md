@@ -18,6 +18,10 @@ the Sparkle update description — a release without a section here fails CI.
   Terminal turns it off.
 
 ### Fixed
+- **Drops land in the agent you are looking at.** With several agents open,
+  a file dropped on one agent was typed into another: every kept-alive
+  terminal stayed registered for drops while hidden, and macOS gave the drop
+  to the topmost one. Only the visible terminal accepts drops now.
 - **Sidebar stats lines no longer freeze on a pane herdr thinks is scrolled
   up.** Statusline plugins (herdr-agent-quota, grazr-style token scripts)
   skip every metadata update while herdr's server-side viewport for a pane is
