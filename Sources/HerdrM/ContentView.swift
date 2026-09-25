@@ -444,6 +444,7 @@ struct DetailView: View {
     @AppStorage(TerminalDefaults.fontWeightKey) private var terminalFontWeight = TerminalDefaults.defaultFontWeight
     @AppStorage(TerminalDefaults.lineSpacingKey) private var terminalLineSpacing = TerminalDefaults.defaultLineSpacing
     @AppStorage("terminal.mouseReporting") private var terminalMouseReporting = true
+    @AppStorage("terminal.copyOnSelect") private var terminalCopyOnSelect = true
     @Environment(\.colorScheme) private var colorScheme
     /// Per-entry attach state, keyed by `AttachedEntry.id`. `endedAttach` holds the exit
     /// code of a dead attach (nil code = no status, e.g. killed by a signal); a present
@@ -473,6 +474,7 @@ struct DetailView: View {
                     lineSpacing: terminalLineSpacing,
                     dark: colorScheme == .dark,
                     mouseReporting: terminalMouseReporting,
+                    copyOnSelect: terminalCopyOnSelect,
                     isVisible: model.selectedShellID == session.id && !model.isFileManagerActive,
                     onAttachmentError: { model.actionError = $0 },
                     onAttachmentUploadingChanged: { uploadingAttachment = $0 },
@@ -523,6 +525,7 @@ struct DetailView: View {
                     lineSpacing: terminalLineSpacing,
                     dark: colorScheme == .dark,
                     mouseReporting: terminalMouseReporting,
+                    copyOnSelect: terminalCopyOnSelect,
                     isVisible: model.selectedShellID == nil && !model.isFileManagerActive,
                     onExit: { _ in model.shellSplitAxis = nil },
                     onViewReady: {
@@ -636,6 +639,7 @@ struct DetailView: View {
                 lineSpacing: terminalLineSpacing,
                 dark: colorScheme == .dark,
                 mouseReporting: terminalMouseReporting,
+                copyOnSelect: terminalCopyOnSelect,
                 // A selected shell or the file manager covers the attach side.
                 isVisible: isSelected && model.selectedShellID == nil && !model.isFileManagerActive,
                 onAttachmentError: { model.actionError = $0 },

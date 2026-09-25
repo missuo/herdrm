@@ -544,6 +544,28 @@ public actor HerdrService {
         )
     }
 
+    /// Snaps herdr's server-side viewport for a pane to the bottom.
+    ///
+    /// HerdrM renders its own scrollback, so that viewport is invisible here —
+    /// but statusline plugins (herdr-agent-quota, the herdr-claude-tokens
+    /// script) skip every metadata update while it is scrolled up, which
+    /// silently freezes the sidebar stats lines.
+    public func scrollToBottom(paneID: String) async throws {
+        _ = try await client().request(
+            method: "pane.scroll",
+            params: .object(["pane_id": .string(paneID), "offset_from_bottom": .number(0)])
+        )
+    }
+
+    /// Rows the pane's server-side viewport sits above the bottom (0 = at bottom).
+    public func paneScrollOffset(paneID: String) async throws -> Int? {
+        let result = try await client().request(
+            method: "pane.get",
+            params: .object(["pane_id": .string(paneID)])
+        )
+        return Self.integer(result["pane"]?["scroll"]?["offset_from_bottom"]).map(Int.init)
+    }
+
     public func closePane(paneID: String) async throws {
         _ = try await client().request(method: "pane.close", params: .object(["pane_id": .string(paneID)]))
     }

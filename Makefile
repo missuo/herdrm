@@ -1,4 +1,4 @@
-.PHONY: gen build run test kit-test uiux-test ssh-test mobile-build clean
+.PHONY: gen build run test kit-test uiux-test ssh-test mobile-build clean release install
 
 # HerdrMobile / HerdrSSH are arm64-only (libssh2 + OpenSSL xcframeworks).
 # Keep code signing on so Simulator Keychain (device SSH key) works; unsigned
@@ -24,6 +24,24 @@ gen:
 
 build: gen
 	xcodebuild -project HerdrM.xcodeproj -scheme HerdrM -configuration Debug -derivedDataPath build build CODE_SIGN_IDENTITY="$(CODE_SIGN_IDENTITY)" CODE_SIGN_STYLE=Manual -skipPackagePluginValidation | tail -5
+
+# Optimised build, ad-hoc signed. The project enables the hardened runtime, whose
+# library validation refuses the bundled Sparkle/Tailcat frameworks when the app
+# has no Team ID (dyld: "different Team IDs"), so the tree is re-signed without
+# the runtime option — fine for a locally built copy, not for distribution.
+release: gen
+	xcodebuild -project HerdrM.xcodeproj -scheme HerdrM -configuration Release -derivedDataPath build build CODE_SIGN_IDENTITY="$(CODE_SIGN_IDENTITY)" CODE_SIGN_STYLE=Manual -skipPackagePluginValidation | tail -5
+	codesign --force --deep --sign - build/Build/Products/Release/herdrm.app
+
+# Replace /Applications/HerdrM.app with the local Release build (backs up the
+# previous copy next to it once, as HerdrM.previous.app).
+install: release
+	pkill -x herdrm || true
+	sleep 1
+	if [ -d /Applications/HerdrM.app ] && [ ! -d /Applications/HerdrM.previous.app ]; then ditto /Applications/HerdrM.app /Applications/HerdrM.previous.app; fi
+	rm -rf /Applications/HerdrM.app
+	ditto build/Build/Products/Release/herdrm.app /Applications/HerdrM.app
+	open /Applications/HerdrM.app
 
 # `open` only activates an already-running app, so a rebuilt binary would never
 # be exercised. Quit the previous Debug instance first (the /Applications copy is untouched).
