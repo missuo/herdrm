@@ -617,10 +617,7 @@ struct DetailView: View {
     private func attachChild(_ session: AppModel.AttachedEntry, isSelected: Bool) -> some View {
         let attachmentCapabilities: AgentAttachmentCapabilities? = {
             guard case .agent(let agentEntry) = session else { return nil }
-            return model.attachmentCapabilities(
-                deviceID: agentEntry.device.id,
-                agentKind: agentEntry.agent.agentKindRaw
-            )
+            return model.attachmentCapabilities(for: agentEntry)
         }()
         ZStack {
             AttachTerminalView(
