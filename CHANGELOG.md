@@ -7,6 +7,13 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+- **Dropped file paths end with a space**, the way cmux does, so the prompt
+  continues straight after them. This covers local drops and remote uploads.
+  Clipboard path pastes stay verbatim.
+- **Text drops.** Text dragged from an editor or a browser onto a pane pastes
+  as text. Previously the pane only accepted files.
+
 ### Fixed
 - **Sidebar stats lines no longer freeze on a pane herdr thinks is scrolled
   up.** Statusline plugins (herdr-agent-quota, grazr-style token scripts)
