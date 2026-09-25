@@ -25,7 +25,7 @@ final class SidebarHarness {
     init(spaces: Int, agents: Int, terminals: Int = 0, agentTokens: [String: String]? = nil, width: CGFloat = 260, height: CGFloat = 600) throws {
         model = try Self.fakeModel(spaces: spaces, agents: agents, terminals: terminals, agentTokens: agentTokens)
         root = NSHostingView(rootView: AnyView(
-            SidebarView(model: model, collapsed: .constant(false)).frame(width: width, height: height)
+            SidebarView(model: model, collapsed: .constant(false), width: width).frame(width: width, height: height)
         ))
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
@@ -81,6 +81,7 @@ final class SidebarHarness {
 
     var scrollOffset: CGFloat { scroll.contentView.bounds.origin.y }
     var listHeight: CGFloat { scroll.documentView?.bounds.height ?? 0 }
+    var listWidth: CGFloat { scroll.frame.width }
     var maxOffset: CGFloat { max(listHeight - scroll.contentView.bounds.height, 0) }
 
     // MARK: - Fake data

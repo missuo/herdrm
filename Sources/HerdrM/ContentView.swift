@@ -10,17 +10,11 @@ struct RootView: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            HStack(spacing: 0) {
-                SidebarView(model: model, collapsed: $sidebarCollapsed)
-                    .frame(width: sidebarCollapsed ? 0 : 260, alignment: .trailing)
-                    .clipped()
-                Rectangle()
-                    .fill(Theme.sidebarBorder)
-                    .frame(width: sidebarCollapsed ? 0 : 1)
-                    .ignoresSafeArea()
+            SidebarSplit(collapsed: sidebarCollapsed) { width in
+                SidebarView(model: model, collapsed: $sidebarCollapsed, width: width)
+            } detail: {
                 DetailView(model: model, sidebarCollapsed: $sidebarCollapsed)
             }
-            .animation(.easeInOut(duration: 0.2), value: sidebarCollapsed)
 
             // In-window device panel; NSPopover throws in ViewBridge on macOS 26+ betas.
             if model.showDevicePanel {

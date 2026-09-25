@@ -22,6 +22,7 @@ struct VisualEffectView: NSViewRepresentable {
 struct SidebarView: View {
     @ObservedObject var model: AppModel
     @Binding var collapsed: Bool
+    var width: CGFloat = SidebarWidth.defaultWidth
     @State private var deviceButtonHovered = false
     @State private var draggingSpaceID: String?
     @State private var spaceDrop: (id: String, after: Bool)?
@@ -172,7 +173,7 @@ struct SidebarView: View {
             Spacer(minLength: 0)
             footer
         }
-        .frame(width: 260)
+        .frame(width: width)
         .background(VisualEffectView(material: .sidebar).ignoresSafeArea())
     }
 

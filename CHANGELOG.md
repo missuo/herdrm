@@ -5,6 +5,13 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- The sidebar can be resized: drag the line between the sidebar and the
+  terminal (200–480 pt), double-click it to go back to the default 260 pt. The
+  width is remembered across launches, so long Space and Agent names fit.
+
 ## [0.6.9] - 2026-09-23
 
 ### Added
