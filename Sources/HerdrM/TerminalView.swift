@@ -3,6 +3,7 @@ import GhosttyTerminal
 import HerdrKit
 import SwiftUI
 import UniformTypeIdentifiers
+import os
 
 enum TerminalDefaults {
     static let fontNameKey = "terminal.fontName"   // "" = system monospaced
@@ -653,14 +654,19 @@ final class LineBreakTerminalView: AppTerminalView {
     /// viewport, as `linkURL(at:)` reads it: the IME point is zero-width
     /// while nothing is selected.
     private func cursorCell() -> (cell: TerminalCaretGrid.Cell, rect: NSRect)? {
+        let log = Logger(subsystem: "dev.bybee.herdrm", category: "ax-caret")
         guard attachedSurface != nil, let window,
               let viewport = processHost?.viewport,
               viewport.cellWidthPixels > 0, viewport.cellHeightPixels > 0
-        else { return nil }
+        else {
+            log.error("caret: surface=\(self.attachedSurface != nil) window=\(self.window != nil) viewport=\(String(describing: self.processHost?.viewport), privacy: .public)")
+            return nil
+        }
         let scale = window.backingScaleFactor
         let cellWidth = CGFloat(viewport.cellWidthPixels) / scale
         let cellHeight = CGFloat(viewport.cellHeightPixels) / scale
         let screenRect = firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
+        log.error("caret: firstRect=\(NSStringFromRect(screenRect), privacy: .public) bounds=\(NSStringFromRect(self.bounds), privacy: .public) flipped=\(self.isFlipped) cell=\(cellWidth)x\(cellHeight)")
         guard screenRect != .zero else { return nil }
         // `firstRect` puts the rect's minY on the cursor cell's bottom edge.
         let point = convert(window.convertFromScreen(screenRect), from: nil)
