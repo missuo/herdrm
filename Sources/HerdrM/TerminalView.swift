@@ -630,8 +630,8 @@ final class LineBreakTerminalView: AppTerminalView {
     }
 
     /// `AXBoundsForRange`: the cells of `range` in screen coordinates, placed
-    /// from the cursor's own cell, which is the one rect ghostty reports (for
-    /// IME). A zero-length range is a zero-width caret box at that cell.
+    /// from the cursor's own cell, the one position ghostty reports (for IME).
+    /// A zero-length range is a zero-width caret box at that cell.
     override func accessibilityFrame(for range: NSRange) -> NSRect {
         guard let window, let cursor = cursorCell() else { return .zero }
         let text = accessibilityText
@@ -639,28 +639,46 @@ final class LineBreakTerminalView: AppTerminalView {
         let end = TerminalCaretGrid.cell(at: NSMaxRange(range), in: text)
         let cellWidth = cursor.rect.width
         let cellHeight = cursor.rect.height
-        // Non-flipped view space: a later row is lower, so its y is smaller.
+        // A later row is lower: a smaller y in AppKit's default space.
         var rect = cursor.rect.offsetBy(
             dx: CGFloat(start.column - cursor.cell.column) * cellWidth,
-            dy: -CGFloat(start.row - cursor.cell.row) * cellHeight
+            dy: CGFloat(start.row - cursor.cell.row) * cellHeight * (isFlipped ? 1 : -1)
         )
         rect.size.width = end.row == start.row ? CGFloat(end.column - start.column) * cellWidth : cellWidth
         return window.convertToScreen(convert(rect, to: nil))
     }
 
-    /// The cursor's cell and its rect in view space, from the IME rect
-    /// `firstRect` reports, which is one cell wide and one cell tall.
+    /// The cursor's cell and that cell's rect in view space. The position comes
+    /// from ghostty's IME point (via `firstRect`), the cell size from the
+    /// viewport, as `linkURL(at:)` reads it: the IME point is zero-width
+    /// while nothing is selected.
     private func cursorCell() -> (cell: TerminalCaretGrid.Cell, rect: NSRect)? {
-        guard attachedSurface != nil, let window else { return nil }
+        guard attachedSurface != nil, let window,
+              let viewport = processHost?.viewport,
+              viewport.cellWidthPixels > 0, viewport.cellHeightPixels > 0
+        else { return nil }
+        let scale = window.backingScaleFactor
+        let cellWidth = CGFloat(viewport.cellWidthPixels) / scale
+        let cellHeight = CGFloat(viewport.cellHeightPixels) / scale
         let screenRect = firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
-        guard screenRect.width > 0, screenRect.height > 0 else { return nil }
-        let rect = convert(window.convertFromScreen(screenRect), from: nil)
-        guard let cell = TerminalCaretGrid.cell(
-            minX: rect.minX,
-            minYFromTop: bounds.height - rect.maxY,
-            cellWidth: rect.width,
-            cellHeight: rect.height
+        guard screenRect != .zero else { return nil }
+        // `firstRect` puts the rect's minY on the cursor cell's bottom edge.
+        let point = convert(window.convertFromScreen(screenRect), from: nil)
+        let bottomFromTop = isFlipped ? point.minY : bounds.height - point.minY
+        guard let cell = TerminalCaretGrid.cursorCell(
+            x: point.minX,
+            bottomFromTop: bottomFromTop,
+            cellWidth: cellWidth,
+            cellHeight: cellHeight,
+            padding: Self.gridPadding
         ) else { return nil }
+        let top = Self.gridPadding + CGFloat(cell.row) * cellHeight
+        let rect = NSRect(
+            x: Self.gridPadding + CGFloat(cell.column) * cellWidth,
+            y: isFlipped ? top : bounds.height - top - cellHeight,
+            width: cellWidth,
+            height: cellHeight
+        )
         return (cell, rect)
     }
 

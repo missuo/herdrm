@@ -17,13 +17,22 @@ enum TerminalCaretGrid {
         var column: Int
     }
 
-    /// The cell whose top-left corner is at (`minX`, `minYFromTop`) in view space measured from the
-    /// top. Ghostty's window padding is smaller than a cell, so flooring lands in the right cell.
-    static func cell(minX: CGFloat, minYFromTop: CGFloat, cellWidth: CGFloat, cellHeight: CGFloat) -> Cell? {
-        guard cellWidth > 0, cellHeight > 0, minX.isFinite, minYFromTop.isFinite else { return nil }
+    /// The cell the cursor is in, from ghostty's IME point: the cursor cell's left edge and its
+    /// bottom edge measured from the top of the view, in points. Both are cell boundaries offset
+    /// by the window padding, so rounding to the nearest boundary absorbs any sub-point drift.
+    /// The point's own width and height are not used: ghostty reports a zero width when nothing
+    /// is selected, so the cell size comes from the viewport instead.
+    static func cursorCell(
+        x: CGFloat,
+        bottomFromTop: CGFloat,
+        cellWidth: CGFloat,
+        cellHeight: CGFloat,
+        padding: CGFloat
+    ) -> Cell? {
+        guard cellWidth > 0, cellHeight > 0, x.isFinite, bottomFromTop.isFinite else { return nil }
         return Cell(
-            row: max(0, Int((minYFromTop / cellHeight).rounded(.down))),
-            column: max(0, Int((minX / cellWidth).rounded(.down)))
+            row: max(0, Int(((bottomFromTop - padding) / cellHeight).rounded()) - 1),
+            column: max(0, Int(((x - padding) / cellWidth).rounded()))
         )
     }
 

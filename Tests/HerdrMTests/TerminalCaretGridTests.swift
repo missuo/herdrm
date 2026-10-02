@@ -30,10 +30,18 @@ final class TerminalCaretGridTests: XCTestCase {
         }
     }
 
-    func testCellFromCursorRectFloorsPastThePadding() {
-        // 2pt padding, 8.5 x 17 cells: the cursor at row 3, column 5.
-        let cell = TerminalCaretGrid.cell(minX: 2 + 5 * 8.5, minYFromTop: 2 + 3 * 17, cellWidth: 8.5, cellHeight: 17)
+    func testCursorCellFromTheIMEPointRoundsPastThePadding() {
+        // 2pt padding, 8.5 x 17 cells: the cursor at row 3, column 5. Its bottom edge is the top
+        // of row 4.
+        let cell = TerminalCaretGrid.cursorCell(
+            x: 2 + 5 * 8.5, bottomFromTop: 2 + 4 * 17, cellWidth: 8.5, cellHeight: 17, padding: 2
+        )
         XCTAssertEqual(cell, .init(row: 3, column: 5))
-        XCTAssertNil(TerminalCaretGrid.cell(minX: 10, minYFromTop: 10, cellWidth: 0, cellHeight: 17))
+        // Sub-point drift still lands in the same cell.
+        XCTAssertEqual(
+            TerminalCaretGrid.cursorCell(x: 44.9, bottomFromTop: 70.3, cellWidth: 8.5, cellHeight: 17, padding: 2),
+            .init(row: 3, column: 5)
+        )
+        XCTAssertNil(TerminalCaretGrid.cursorCell(x: 10, bottomFromTop: 10, cellWidth: 0, cellHeight: 17, padding: 2))
     }
 }
