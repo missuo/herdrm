@@ -590,9 +590,10 @@ final class LineBreakTerminalView: AppTerminalView {
 
     private var accessibilityText: String {
         let now = ProcessInfo.processInfo.systemUptime
-        // Dictation tools poll the focused element; one viewport read per
-        // half second is plenty.
-        if let cache = accessibilityTextCache, now - cache.time < 0.5 { return cache.text }
+        // One viewport read serves the burst of attribute queries a tool makes
+        // per poll. Kept short: an autocomplete overlay reads the text before
+        // the cursor on every keystroke, and a stale read misses the last key.
+        if let cache = accessibilityTextCache, now - cache.time < 0.05 { return cache.text }
         let text = processHost?.session.readViewportText() ?? ""
         accessibilityTextCache = (text, now)
         return text
@@ -618,10 +619,49 @@ final class LineBreakTerminalView: AppTerminalView {
         attachedSurface?.readSelection() ?? ""
     }
 
-    /// The insertion point sits at the end of the visible text: the terminal
-    /// cursor has no offset in this flat string that a caller could use.
+    /// The insertion point is the terminal cursor's cell in the viewport text,
+    /// so the text before it ends with what is being typed on the prompt line.
+    /// Without a cursor (no surface yet) it sits at the end of the text.
     override func accessibilitySelectedTextRange() -> NSRange {
-        NSRange(location: accessibilityNumberOfCharacters(), length: 0)
+        guard let cursor = cursorCell() else {
+            return NSRange(location: accessibilityNumberOfCharacters(), length: 0)
+        }
+        return NSRange(location: TerminalCaretGrid.offset(of: cursor.cell, in: accessibilityText), length: 0)
+    }
+
+    /// `AXBoundsForRange`: the cells of `range` in screen coordinates, placed
+    /// from the cursor's own cell, which is the one rect ghostty reports (for
+    /// IME). A zero-length range is a zero-width caret box at that cell.
+    override func accessibilityFrame(for range: NSRange) -> NSRect {
+        guard let window, let cursor = cursorCell() else { return .zero }
+        let text = accessibilityText
+        let start = TerminalCaretGrid.cell(at: range.location, in: text)
+        let end = TerminalCaretGrid.cell(at: NSMaxRange(range), in: text)
+        let cellWidth = cursor.rect.width
+        let cellHeight = cursor.rect.height
+        // Non-flipped view space: a later row is lower, so its y is smaller.
+        var rect = cursor.rect.offsetBy(
+            dx: CGFloat(start.column - cursor.cell.column) * cellWidth,
+            dy: -CGFloat(start.row - cursor.cell.row) * cellHeight
+        )
+        rect.size.width = end.row == start.row ? CGFloat(end.column - start.column) * cellWidth : cellWidth
+        return window.convertToScreen(convert(rect, to: nil))
+    }
+
+    /// The cursor's cell and its rect in view space, from the IME rect
+    /// `firstRect` reports, which is one cell wide and one cell tall.
+    private func cursorCell() -> (cell: TerminalCaretGrid.Cell, rect: NSRect)? {
+        guard attachedSurface != nil, let window else { return nil }
+        let screenRect = firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
+        guard screenRect.width > 0, screenRect.height > 0 else { return nil }
+        let rect = convert(window.convertFromScreen(screenRect), from: nil)
+        guard let cell = TerminalCaretGrid.cell(
+            minX: rect.minX,
+            minYFromTop: bounds.height - rect.maxY,
+            cellWidth: rect.width,
+            cellHeight: rect.height
+        ) else { return nil }
+        return (cell, rect)
     }
 
     override func accessibilityString(for range: NSRange) -> String? {
