@@ -45,6 +45,8 @@ struct DeviceSessionState {
     var workspaces: [WorkspaceInfo] = []
     var tabs: [TabInfo] = []
     var panes: [PaneInfo] = []
+    var allPanes: [PaneInfo] = []
+    var managedAgentKinds: [String: String] = [:]
     var agentCatalog: AgentCatalogState = .loading
     var attachmentCapabilities = AgentAttachmentCapabilityRegistry()
     /// The agent row's context menu, grouped per plugin. Empty until loaded,
@@ -222,6 +224,7 @@ final class AppModel: ObservableObject {
     }
     @Published var closeRequest: CloseRequest?
 
+    let managedIdentities: ManagedAgentIdentityStore
     private let store = DeviceStore()
     private var services: [UUID: HerdrService] = [:]
     private var sessionTasks: [UUID: Task<Void, Never>] = [:]
@@ -234,7 +237,8 @@ final class AppModel: ObservableObject {
     private var statusGenerations: [UUID: UInt64] = [:]
     private var previousStatuses: [UUID: [String: AgentStatus]] = [:]
 
-    init() {
+    init(managedAgentRegistry: ManagedAgentRegistry = ManagedAgentRegistry()) {
+        managedIdentities = ManagedAgentIdentityStore(registry: managedAgentRegistry)
         let loaded = DeviceStore().load()
         devices = loaded
         // Restore the device filter only if that device still exists;
@@ -300,7 +304,10 @@ final class AppModel: ObservableObject {
         let device: Device
         let agent: AgentInfo
         let tabLabel: String?
+        var managedKind: String? = nil
 
+        var kind: String { agent.agentKindRaw ?? managedKind ?? "agent" }
+        var isManagedUndetected: Bool { managedKind != nil && agent.agentKindRaw == nil }
         var id: String { "\(device.id.uuidString)-\(agent.paneID)" }
         var ref: PaneRef { PaneRef(deviceID: device.id, paneID: agent.paneID) }
         var title: String { agent.title(tabLabel: tabLabel) }
@@ -310,7 +317,8 @@ final class AppModel: ObservableObject {
         AgentEntry(
             device: device,
             agent: agent,
-            tabLabel: session(device.id).tabs.first { $0.tabID == agent.tabID }?.customLabel
+            tabLabel: session(device.id).tabs.first { $0.tabID == agent.tabID }?.customLabel,
+            managedKind: session(device.id).managedAgentKinds[agent.paneID]
         )
     }
 
@@ -375,7 +383,8 @@ final class AppModel: ObservableObject {
 
         var attachTarget: TerminalAttachTarget {
             switch self {
-            case .agent(let entry): return .agent(paneID: entry.agent.paneID)
+            case .agent(let entry):
+                return ManagedAgentProjection.attachmentTarget(agent: entry.agent, managedKind: entry.managedKind)
             case .terminal(let entry): return .terminal(terminalID: entry.terminalID)
             }
         }
@@ -1087,13 +1096,17 @@ final class AppModel: ObservableObject {
             previousStatuses[deviceID] = Dictionary(
                 uniqueKeysWithValues: snapshot.agents.map { ($0.paneID, $0.status) }
             )
-            sessions[deviceID]?.agents = snapshot.agents
+            let identityProjection = projectManagedAgentIdentities(device: device, snapshot: snapshot)
+            sessions[deviceID]?.agents = identityProjection.agents
+            sessions[deviceID]?.allPanes = snapshot.panes ?? []
+            sessions[deviceID]?.managedAgentKinds = identityProjection.kindsByPane
             sessions[deviceID]?.workspaces = snapshot.workspaces
             sessions[deviceID]?.tabs = TabReorder.ordered(
                 snapshot.tabs ?? [],
                 workspaces: snapshot.workspaces
             )
-            sessions[deviceID]?.panes = snapshot.ordinaryTerminalPanes
+            let managedPaneIDs = Set(identityProjection.agents.map(\.paneID))
+            sessions[deviceID]?.panes = snapshot.ordinaryTerminalPanes.filter { !managedPaneIDs.contains($0.paneID) }
             let paneIDs = Set((snapshot.panes ?? []).map(\.paneID))
                 .union(snapshot.agents.map(\.paneID))
             // Drop kept-alive attaches whose pane is gone (closed). A pane only taken
@@ -1307,8 +1320,13 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             Task {
                 do {
+                    let paneIDs = Set(self.session(entry.device.id).allPanes.filter { $0.workspaceID == entry.workspace.workspaceID }.map(\.paneID))
+                    let removal = self.managedAgentRemoval(device: entry.device, paneIDs: paneIDs)
                     try await self.service(for: entry.device)
                         .closeWorkspace(workspaceID: entry.workspace.workspaceID)
+                    // Reject snapshots captured before the close so they cannot re-adopt removed identities.
+                    self.statusGenerations[entry.device.id, default: 0] &+= 1
+                    try self.forgetManagedAgents(device: entry.device, removal: removal)
                     if self.selectedSpace == entry.ref { self.selectedSpace = nil }
                     await self.refresh(entry.device.id)
                 } catch {
@@ -1327,7 +1345,11 @@ final class AppModel: ObservableObject {
             guard let self else { return }
             Task {
                 do {
+                    let removal = self.managedAgentRemoval(device: device, paneIDs: [ref.paneID])
                     try await self.service(for: device).closePane(paneID: ref.paneID)
+                    // Reject snapshots captured before the close so they cannot re-adopt removed identities.
+                    self.statusGenerations[device.id, default: 0] &+= 1
+                    try self.forgetManagedAgents(device: device, removal: removal)
                     if self.selectedPane == ref { self.selectedPane = nil }
                     await self.refresh(device.id)
                 } catch {
@@ -1622,21 +1644,30 @@ final class AppModel: ObservableObject {
         Task {
             let service = service(for: device)
             var createdPane: String?
+            var identitySaved = false
             do {
                 let pane = try await service.createTab(workspaceID: workspaceID, cwd: nil, label: kind)
                 createdPane = pane
+                var startedName = kind
+                if device.isLocal && !device.isNamedSession {
+                    guard await refresh(device.id) else { throw HerdrError.malformedResponse("New agent pane is missing from the snapshot.") }
+                    let names = Set(session(device.id).agents.compactMap(\.name)).union(managedIdentities.intents.map(\.name))
+                    if names.contains(kind) { startedName = "\(kind)-\(UUID().uuidString.prefix(4).lowercased())" }
+                    try rememberManagedAgent(device: device, paneID: pane, requestedName: startedName, kind: kind, onCommitted: { identitySaved = true })
+                }
                 do {
                     try await service.startAgent(
-                        name: kind,
+                        name: startedName,
                         kind: kind,
                         paneID: pane,
                         args: args,
                         waitForShell: true
                     )
                 } catch HerdrError.rpc(let code, _) where code == "agent_name_taken" {
-                    let suffix = String(UUID().uuidString.prefix(4)).lowercased()
+                    startedName = "\(kind)-\(UUID().uuidString.prefix(4).lowercased())"
+                    try rememberManagedAgent(device: device, paneID: pane, requestedName: startedName, kind: kind, onCommitted: { identitySaved = true })
                     try await service.startAgent(
-                        name: "\(kind)-\(suffix)",
+                        name: startedName,
                         kind: kind,
                         paneID: pane,
                         args: args,
@@ -1648,7 +1679,13 @@ final class AppModel: ObservableObject {
                 selectedPane = PaneRef(deviceID: device.id, paneID: pane)
             } catch {
                 if let createdPane {
-                    try? await service.closePane(paneID: createdPane)
+                    if identitySaved {
+                        await refresh(device.id)
+                        isFileManagerActive = false
+                        selectedPane = PaneRef(deviceID: device.id, paneID: createdPane)
+                    } else {
+                        try? await service.closePane(paneID: createdPane)
+                    }
                 }
                 actionError = actionErrorMessage(error, device: device)
             }

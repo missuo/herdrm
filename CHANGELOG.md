@@ -7,6 +7,12 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Fixed
+- Agents in the primary Local session keep their names and types when process
+  detection is temporarily unavailable or herdrm is reopened. Saved rows attach to the
+  surviving terminal without reporting an agent as running. Explicitly closed
+  agents are removed after the server confirms the close.
+
 ## [0.6.11] - 2026-10-03
 
 ### Added

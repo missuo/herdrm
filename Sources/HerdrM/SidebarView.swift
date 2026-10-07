@@ -417,7 +417,7 @@ struct SidebarView: View {
                 AgentStatusGlyph(status: agent.status, unreadDone: unread)
             }
             HStack(spacing: 5) {
-                AgentKindBadge(kind: agent.agent)
+                AgentKindBadge(kind: entry.kind)
                 Text("·")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textGhost)
@@ -429,7 +429,10 @@ struct SidebarView: View {
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                if agent.status == .blocked {
+                if entry.isManagedUndetected {
+                    Text("Saved · Not detected")
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+                } else if agent.status == .blocked {
                     Text("needs input")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.warning)
@@ -501,6 +504,7 @@ struct SidebarView: View {
 
     private func accessibilityLabel(unread: Bool) -> String {
         var parts = [entry.title]
+        if entry.isManagedUndetected { parts.append(String(localized: "Saved · Not detected")) }
         switch entry.agent.status {
         case .working: parts.append(String(localized: "Working"))
         case .blocked: parts.append(String(localized: "Needs input"))
