@@ -103,10 +103,9 @@ struct AgentRowDragHost: View {
     let onGrazrAccounts: () -> Void
     let onSwitchGrazrAccount: (GrazrAccount) -> Void
     let onReauthenticateGrazrAccount: (GrazrAccount) -> Void
-    /// nil puts the pane back on the shared rotation.
+    /// nil puts the pane back on the shared rotation. An account not signed
+    /// in for pinned agents yet signs in first.
     let onPinGrazrAccount: (GrazrAccount?) -> Void
-    let onSetUpGrazrToken: (GrazrAccount) -> Void
-    let onInstallGrazrPins: () -> Void
     let onMenuOpen: () -> Void
     let onClose: () -> Void
     let onDragStart: (String) -> Void
@@ -184,18 +183,12 @@ struct AgentRowDragHost: View {
     }
 
     /// Which account this agent runs on: the shared rotation, or one of its
-    /// own. An account without a pin token offers to set one up instead.
+    /// own. "…" marks an account that opens a sign-in first.
     private var grazrPinMenu: SidebarContextMenuItem? {
         guard isClaude, let report = grazrReport, !report.accounts.isEmpty else { return nil }
         let now = Date()
         let pinned = report.pinnedAccount(paneID: paneID)
         var items: [SidebarContextMenuItem] = []
-        if !report.pinsInstalled {
-            items += [
-                .item(title: String(localized: "Install Pin Support"), action: onInstallGrazrPins),
-                .separator,
-            ]
-        }
         items.append(.choice(
             title: String(localized: "Shared Rotation"),
             isChecked: pinned == nil,
@@ -203,18 +196,12 @@ struct AgentRowDragHost: View {
         ))
         items.append(.separator)
         for account in report.sortedAccounts {
-            if account.hasToken(now: now) {
-                items.append(.choice(
-                    title: account.name,
-                    isChecked: pinned?.id == account.id,
-                    action: pinned?.id == account.id ? nil : { onPinGrazrAccount(account) }
-                ))
-            } else {
-                items.append(.item(
-                    title: String(localized: "Set Up Token for \(account.name)…"),
-                    action: { onSetUpGrazrToken(account) }
-                ))
-            }
+            let isPinned = pinned?.id == account.id
+            items.append(.choice(
+                title: account.hasToken(now: now) || isPinned ? account.name : "\(account.name)…",
+                isChecked: isPinned,
+                action: isPinned ? nil : { onPinGrazrAccount(account) }
+            ))
         }
         if report.pinIsPending(paneID: paneID) {
             items += [
@@ -222,7 +209,7 @@ struct AgentRowDragHost: View {
                 .choice(title: String(localized: "Applies when Claude restarts here"), isChecked: false, action: nil),
             ]
         }
-        return .submenu(title: String(localized: "Pin to Account"), items: items)
+        return .submenu(title: String(localized: "This Agent's Account"), items: items)
     }
 
     /// One per account whose login grazr found refused.

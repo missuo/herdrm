@@ -1450,17 +1450,17 @@ struct NewAgentSheet: View {
     }
 
     private var grazrAccount: GrazrAccount? {
-        grazrReport?.pinnableAccounts(now: Date()).first { $0.id == grazrAccountID }
+        grazrReport?.accounts.first { $0.id == grazrAccountID }
     }
 
-    private func grazrHint(_ report: GrazrReport) -> (String, Color) {
-        if report.pinnableAccounts(now: Date()).isEmpty {
-            return (String(localized: "Set up an account's pin token in the Accounts window to give an agent a subscription of its own."), Theme.textTertiary)
+    private var grazrHint: String {
+        guard let grazrAccount else {
+            return String(localized: "grazr moves the agent between accounts as they run low.")
         }
-        if !report.pinsInstalled && grazrAccount != nil {
-            return (String(localized: "grazr's pin support is not installed on \(chosenDevice.name), so the agent starts on the shared account. Install it from an agent's grazr menu."), Theme.warning)
+        guard grazrAccount.hasToken(now: Date()) else {
+            return String(localized: "Sign in to \(grazrAccount.name) in a terminal first; the agent starts once that is done.")
         }
-        return (String(localized: "A pinned agent keeps its account; grazr's rotation leaves it alone."), Theme.textTertiary)
+        return String(localized: "Runs only on this account; the shared rotation skips it.")
     }
 
     private var parsedArguments: [String]? {
@@ -1606,16 +1606,16 @@ struct NewAgentSheet: View {
                         SheetSectionLabel("ACCOUNT")
                         Picker("", selection: $grazrAccountID) {
                             Text("Shared rotation").tag("")
-                            ForEach(report.pinnableAccounts(now: Date())) { account in
-                                Text(account.name).tag(account.id)
+                            ForEach(report.sortedAccounts) { account in
+                                Text(account.hasToken(now: Date()) ? account.name : "\(account.name)…")
+                                    .tag(account.id)
                             }
                         }
                         .labelsHidden()
                         .fixedSize()
-                        let hint = grazrHint(report)
-                        Text(hint.0)
+                        Text(grazrHint)
                             .font(.system(size: 10.5))
-                            .foregroundStyle(hint.1)
+                            .foregroundStyle(Theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }

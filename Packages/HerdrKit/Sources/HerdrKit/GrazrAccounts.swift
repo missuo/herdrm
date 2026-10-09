@@ -208,10 +208,6 @@ public enum Grazr {
         pinsCommand(["unpin", paneID])
     }
 
-    public static func setPinnedRotationCommand(keep: Bool) -> String {
-        pinsCommand(["set", "PINNED_ROTATION", keep ? "keep" : "exclude"])
-    }
-
     public static let installPinsCommand = pinsCommand(["pins-install"])
 
     /// Where `installTokenCommand` puts the token script on the device.
@@ -219,7 +215,9 @@ public enum Grazr {
 
     /// Writes the script `tokenInvocation` runs in a terminal: grazr's own
     /// `token` entry, which has Claude make the account's pin token in the
-    /// browser and stores it. The token never passes through HerdrM.
+    /// browser and stores it. The token never passes through HerdrM. Given a
+    /// pane, it then pins that pane to the account, installing grazr's claude
+    /// shim first when it is not there yet.
     public static var installTokenCommand: String {
         "mkdir -p ~/.cache/herdrm && cat > \(tokenScriptPath) <<'GRAZR_EOF'\n"
             + #"""
@@ -237,6 +235,12 @@ public enum Grazr {
             if not hasattr(grazr, "token"):
                 fail("This grazr cannot pin agents. Update it to 0.4.7+senad.3 or later")
             code = grazr.main(["grazr.py", "token", sys.argv[1]])
+            if code == 0 and len(sys.argv) > 2:
+                print()
+                if not os.path.exists(os.path.join(state, "bin", "claude")):
+                    code = grazr.main(["grazr.py", "pins-install"])
+                if code == 0:
+                    code = grazr.main(["grazr.py", "pin", sys.argv[2], sys.argv[1]])
             print("\npress any key to close")
             grazr.read_key()
             sys.exit(code)
@@ -244,8 +248,11 @@ public enum Grazr {
             """#
     }
 
-    public static func tokenInvocation(accountID: String) -> String {
-        "exec python3 \(tokenScriptPath) \(HerdrService.shellQuoted(accountID))"
+    /// With `paneID`, the pane is pinned to the account once its token is in.
+    public static func tokenInvocation(accountID: String, paneID: String? = nil) -> String {
+        (["exec python3 \(tokenScriptPath)", HerdrService.shellQuoted(accountID)]
+            + (paneID.map { [HerdrService.shellQuoted($0)] } ?? []))
+            .joined(separator: " ")
     }
 
     /// Where `installReauthCommand` puts the sign-in script on the device.
@@ -436,15 +443,18 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         return pin.account != pin.running
     }
 
+    /// Accounts the shared rotation leaves to the agents pinned to them, as
+    /// grazr's `pins.held` reads them: pinned to, or still running pinned on.
+    /// None under `PINNED_ROTATION=keep`.
+    public var heldAccountIDs: Set<String> {
+        guard !keepsPinnedInRotation else { return [] }
+        return Set(pins.values.flatMap { [$0.account, $0.running].compactMap { $0 } })
+    }
+
     /// The panes pinned to `account` or still running on it, sorted.
     public func pinnedPanes(for account: GrazrAccount) -> [String] {
         pins.filter { $0.value.account == account.id || $0.value.running == account.id }
             .map(\.key).sorted()
-    }
-
-    /// Accounts with a token an agent can be pinned to at `now`.
-    public func pinnableAccounts(now: Date) -> [GrazrAccount] {
-        sortedAccounts.filter { $0.hasToken(now: now) }
     }
 
     /// The models that carry a weekly limit of their own on any account
@@ -499,9 +509,11 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
 
     /// The accounts grazr rotates through, in its order: `ACCOUNTS`, plus the
     /// active account when the config leaves it out. grazr never moves into an
-    /// unlisted account, so the others are not part of it.
+    /// unlisted account, or one an agent holds, so those are not part of it.
     public var rotation: [GrazrAccount] {
+        let held = heldAccountIDs
         let listed = order.compactMap { name in accounts.first { $0.name == name } }
+            .filter { $0.id == active || !held.contains($0.id) }
         guard let active, !listed.contains(where: { $0.id == active }),
               let current = accounts.first(where: { $0.id == active })
         else { return listed }
@@ -530,13 +542,18 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
 
     /// The account grazr's next swap goes to, as its `core.next_account`
     /// picks it when that swap comes: the first listed account, not active and
-    /// not blocked, with headroom then. One whose window resets before the
-    /// active account runs out counts, since it is full again by the time.
+    /// not blocked or held by a pinned agent, with headroom then. One whose
+    /// window resets before the active account runs out counts, since it is
+    /// full again by the time.
     public func predictedNext(now: Date) -> GrazrAccount? {
         let swap = expectedSwap(now: now)
+        let held = heldAccountIDs
         return order.lazy
             .compactMap { name in accounts.first { $0.name == name } }
-            .first { $0.id != active && block(for: $0, now: now) == nil && hasHeadroom($0, now: swap) }
+            .first {
+                $0.id != active && !held.contains($0.id) && block(for: $0, now: now) == nil
+                    && hasHeadroom($0, now: swap)
+            }
     }
 
     /// When `account` next has headroom: `now` when it has it already,

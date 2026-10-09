@@ -497,11 +497,11 @@ struct SidebarView: View {
                 onReauthenticateGrazrAccount: {
                     model.reauthenticateGrazrAccount($0, on: entry.device, workspaceID: entry.agent.workspaceID)
                 },
-                onPinGrazrAccount: { model.pinGrazrAccount($0, paneID: entry.agent.paneID, on: entry.device) },
-                onSetUpGrazrToken: {
-                    model.setUpGrazrToken($0, on: entry.device, workspaceID: entry.agent.workspaceID)
+                onPinGrazrAccount: {
+                    model.pinGrazrAccount(
+                        $0, paneID: entry.agent.paneID, on: entry.device, workspaceID: entry.agent.workspaceID
+                    )
                 },
-                onInstallGrazrPins: { model.installGrazrPins(on: entry.device) },
                 onMenuOpen: { Task { await model.loadPluginActions(deviceID: entry.device.id) } },
                 onClose: { model.requestClosePane(entry.ref, name: entry.title) },
                 onDragStart: { draggingAgentID = $0 },

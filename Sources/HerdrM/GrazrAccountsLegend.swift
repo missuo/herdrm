@@ -7,6 +7,8 @@ struct GrazrAccountsLegend: View {
     let report: GrazrReport
     let window: GrazrDialWindow
     let now: Date
+    /// Agent names by pane id, for an account an agent is pinned to.
+    var agentNames: [String: String] = [:]
     /// The clock's account colours; nil fills only the active account's dot.
     var dot: ((GrazrAccount) -> Color?)? = nil
 
@@ -95,6 +97,11 @@ struct GrazrAccountsLegend: View {
         if account.id == report.active {
             let eta = report.swapEstimate(for: account, now: now).flatMap { $0 > now ? $0 : nil }
             return (eta.map { String(localized: "active · ~\(GrazrStyle.time($0, now: now))") } ?? String(localized: "active"), Theme.statsAccount)
+        }
+        // Out of the shared rotation: the agents pinned to it have it to themselves.
+        if report.heldAccountIDs.contains(account.id) {
+            let agents = report.pinnedPanes(for: account).map { agentNames[$0] ?? $0 }
+            return (String(localized: "pinned · \(agents.joined(separator: ", "))"), Theme.statsAccount)
         }
         if let block = report.block(for: account, now: now) {
             return (String(localized: "blocked: \(block.reason)"), Theme.danger)

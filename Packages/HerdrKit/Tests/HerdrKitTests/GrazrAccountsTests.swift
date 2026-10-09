@@ -133,6 +133,43 @@ final class GrazrAccountsTests: XCTestCase {
         XCTAssertEqual(report.rotation.map(\.id), ["b", "a", "z"])
     }
 
+    /// grazr leaves an account an agent is pinned to (or still runs pinned
+    /// on) to that agent, so neither the rotation nor its next swap names it,
+    /// unless PINNED_ROTATION=keep shares it still. The active one stays.
+    func testAPinnedAccountLeavesTheRotationUnlessKept() {
+        let accounts = ["a", "b", "c", "d"].map { GrazrAccount(id: $0, name: $0) }
+        let pins = [
+            "w1:p1": GrazrPin(account: "b", running: "b"),
+            "w1:p2": GrazrPin(account: nil, running: "c"),
+            "w1:p3": GrazrPin(account: "a"),
+        ]
+        let report = GrazrReport(active: "a", accounts: accounts, order: ["a", "b", "c", "d"], pins: pins)
+        XCTAssertEqual(report.heldAccountIDs, ["a", "b", "c"])
+        XCTAssertEqual(report.rotation.map(\.id), ["a", "d"])
+        XCTAssertEqual(report.predictedNext(now: now)?.id, "d")
+
+        let kept = GrazrReport(
+            active: "a", accounts: accounts, order: report.order,
+            settings: ["PINNED_ROTATION": "keep"], pins: pins
+        )
+        XCTAssertEqual(kept.heldAccountIDs, [])
+        XCTAssertEqual(kept.rotation.map(\.id), ["a", "b", "c", "d"])
+        XCTAssertEqual(kept.predictedNext(now: now)?.id, "b")
+    }
+
+    func testTheSignInPinsThePaneItWasOpenedFor() {
+        XCTAssertEqual(
+            Grazr.tokenInvocation(accountID: "uuid-a"),
+            "exec python3 ~/.cache/herdrm/grazr-token.py 'uuid-a'"
+        )
+        XCTAssertEqual(
+            Grazr.tokenInvocation(accountID: "uuid-a", paneID: "w1:p2"),
+            "exec python3 ~/.cache/herdrm/grazr-token.py 'uuid-a' 'w1:p2'"
+        )
+        XCTAssertTrue(Grazr.installTokenCommand.contains(#"grazr.main(["grazr.py", "pin", sys.argv[2], sys.argv[1]])"#))
+        XCTAssertTrue(Grazr.installTokenCommand.contains(#"grazr.main(["grazr.py", "pins-install"])"#))
+    }
+
     func testTheNextAccountIsTheFirstListedOneWithHeadroom() {
         let report = GrazrReport(
             active: "a",
@@ -539,10 +576,35 @@ final class GrazrAccountsTests: XCTestCase {
         XCTAssertFalse(refused.ok)
         let unpinned = try await run(Grazr.unpinCommand(paneID: "w1:p1"))
         XCTAssertEqual(unpinned.summary, "unpin w1:p1")
-        let kept = try await run(Grazr.setPinnedRotationCommand(keep: true))
-        XCTAssertEqual(kept.summary, "set PINNED_ROTATION keep")
         let installed = try await run(Grazr.installPinsCommand)
         XCTAssertEqual(installed.summary, "pins-install")
+
+        // The sign-in stores the token, installs the shim where it is missing,
+        // then pins the pane it was opened for; without a pane it only signs in.
+        try write("""
+        import os
+        def token():
+            pass
+        def read_key():
+            return ""
+        def main(argv):
+            print("grazr " + " ".join(argv[1:]))
+            if argv[1] == "pins-install":
+                os.makedirs(os.path.join(os.environ["HERDR_PLUGIN_STATE_DIR"], "bin"), exist_ok=True)
+                open(os.path.join(os.environ["HERDR_PLUGIN_STATE_DIR"], "bin", "claude"), "w").close()
+            return 0
+        """, to: root.appendingPathComponent("grazr.py"))
+        _ = try await DeviceFileService(device: .local).run(environment + Grazr.installTokenCommand)
+        func signIn(_ invocation: String) async throws -> [String] {
+            let output = try await DeviceFileService(device: .local).run(environment + "export PATH=\"$HOME/.local/bin:$PATH\"; (\(invocation)) </dev/null")
+            return String(decoding: output, as: UTF8.self).split(separator: "\n").filter { $0.hasPrefix("grazr ") }.map(String.init)
+        }
+        let first = try await signIn(Grazr.tokenInvocation(accountID: "uuid-a", paneID: "w1:p2"))
+        XCTAssertEqual(first, ["grazr token uuid-a", "grazr pins-install", "grazr pin w1:p2 uuid-a"])
+        let again = try await signIn(Grazr.tokenInvocation(accountID: "uuid-a", paneID: "w1:p3"))
+        XCTAssertEqual(again, ["grazr token uuid-a", "grazr pin w1:p3 uuid-a"])
+        let alone = try await signIn(Grazr.tokenInvocation(accountID: "uuid-a"))
+        XCTAssertEqual(alone, ["grazr token uuid-a"])
 
         try write("def main(argv):\n    return 0\n", to: root.appendingPathComponent("grazr.py"))
         let older = try await run(Grazr.unpinCommand(paneID: "w1:p1"))
@@ -598,8 +660,8 @@ final class GrazrAccountsTests: XCTestCase {
         XCTAssertEqual(["w1:p1", "w1:p2", "w1:p3", "w9:p9"].map(report.pinIsPending), [false, true, true, false])
         XCTAssertEqual(report.pinnedPanes(for: home), ["w1:p1", "w1:p2"])
         XCTAssertEqual(report.pinnedPanes(for: work), ["w1:p3"])
-        // A lapsed token cannot be pinned to.
-        XCTAssertEqual(report.pinnableAccounts(now: now), [home])
+        // A lapsed token needs a new sign-in before an agent runs on it.
+        XCTAssertEqual(report.accounts.filter { $0.hasToken(now: now) }, [home])
         XCTAssertEqual(home.tokenDaysLeft(now: now), 10)
         XCTAssertNil(work.tokenDaysLeft(now: now))
         XCTAssertTrue(report.keepsPinnedInRotation)

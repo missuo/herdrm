@@ -11,8 +11,6 @@ struct GrazrAccountsSheet: View {
     @State private var failure: String?
     @State private var loading = false
     @State private var swapping = false
-    /// A pin setting or the shim install is on its way to the device.
-    @State private var pinning = false
     /// grazr's word when Refresh could not ask Claude, shown by the button.
     @State private var refreshNote: String?
     @AppStorage("grazr.accounts.view") private var view = AccountsView.list
@@ -51,11 +49,6 @@ struct GrazrAccountsSheet: View {
                 .padding(.trailing, 16)
             }
             Rectangle().fill(Theme.hairline).frame(height: 1)
-
-            if let report, report.installed, !report.accounts.isEmpty {
-                pinBar(report)
-                Rectangle().fill(Theme.hairline).frame(height: 1)
-            }
 
             content
                 .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 520)
@@ -139,9 +132,9 @@ struct GrazrAccountsSheet: View {
                         // Redraws each minute so a window past its reset shows as refilled.
                         TimelineView(.periodic(from: .now, by: 60)) { context in
                             if view == .clock {
-                                GrazrAccountsClock(report: report, span: dialWindow, now: context.date)
+                                GrazrAccountsClock(report: report, span: dialWindow, now: context.date, agentNames: agentNames)
                             } else {
-                                GrazrAccountsDial(report: report, window: dialWindow, now: context.date)
+                                GrazrAccountsDial(report: report, window: dialWindow, now: context.date, agentNames: agentNames)
                             }
                         }
                     }
@@ -171,59 +164,12 @@ struct GrazrAccountsSheet: View {
         }
     }
 
-    /// Agents on this device by pane id, for the cards' "Pinned" line.
+    /// Agents on this device by pane id, for what says who is pinned where.
     private var agentNames: [String: String] {
         Dictionary(
             model.session(device.id).agents.map { ($0.paneID, $0.title) },
             uniquingKeysWith: { first, _ in first }
         )
-    }
-
-    /// Whether the shared rotation may use an account an agent is pinned to,
-    /// and, until it is there, the shim pins need.
-    private func pinBar(_ report: GrazrReport) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "pin")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textTertiary)
-            Text("Pinned accounts")
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.textSecondary)
-            Picker("Pinned accounts", selection: Binding(
-                get: { report.keepsPinnedInRotation },
-                set: { keep in
-                    pinning = true
-                    model.setGrazrPinnedRotation(keep: keep, on: device) {
-                        pinning = false
-                        Task { await load() }
-                    }
-                }
-            )) {
-                Text("Agent's own").tag(false)
-                Text("Also shared").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .controlSize(.small)
-            .disabled(pinning)
-            .help("Agent's own: the shared rotation never moves to an account an agent is pinned to. Also shared: it still may.")
-            Spacer(minLength: 0)
-            if !report.pinsInstalled {
-                Button("Install Pin Support") {
-                    pinning = true
-                    model.installGrazrPins(on: device) {
-                        pinning = false
-                        Task { await load() }
-                    }
-                }
-                .controlSize(.small)
-                .disabled(pinning)
-                .help("Put grazr's claude shim first on PATH in Herdr panes on \(device.name), so pinned agents start on their own account")
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
     }
 
     private func message(_ text: String, systemImage: String) -> some View {
@@ -325,24 +271,13 @@ private struct GrazrAccountCard: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                if let updated = account.updated {
-                    Text("Reading from \(Self.relative(Date(timeIntervalSince1970: updated), now: now))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.textGhost)
-                }
-                Spacer(minLength: 0)
-                tokenStatus
+            if let updated = account.updated {
+                Text("Reading from \(Self.relative(Date(timeIntervalSince1970: updated), now: now))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textGhost)
             }
             if !pinnedAgents.isEmpty {
-                Label {
-                    Text("Pinned: \(pinnedAgents.joined(separator: ", "))")
-                } icon: {
-                    Image(systemName: "pin.fill")
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.statsAccount)
-                .lineLimit(1)
+                pinnedLine
             }
         }
         .padding(12)
@@ -357,22 +292,29 @@ private struct GrazrAccountCard: View {
         )
     }
 
-    /// The pin token agents run on: how long it has left, or a way to make one.
-    @ViewBuilder
-    private var tokenStatus: some View {
-        if let days = account.tokenDaysLeft(now: now) {
-            Text("Pin token · \(days) days left")
-                .font(.system(size: 11))
-                .foregroundStyle(days < 30 ? Theme.warning : Theme.textTertiary)
-            if days < 30 {
+    /// The agents that have this account to themselves, and, once the
+    /// sign-in they run on is close to lapsing, a way to renew it.
+    private var pinnedLine: some View {
+        let days = account.tokenDaysLeft(now: now)
+        return HStack(spacing: 8) {
+            Label {
+                Text("Pinned: \(pinnedAgents.joined(separator: ", "))")
+            } icon: {
+                Image(systemName: "pin.fill")
+            }
+            .foregroundStyle(Theme.statsAccount)
+            .lineLimit(1)
+            if days ?? 0 < 30 {
+                Text(days.map { String(localized: "sign-in expires in \($0) days") } ?? String(localized: "sign-in expired"))
+                    .foregroundStyle(Theme.warning)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
                 Button("Renew…", action: onSetUpToken)
                     .controlSize(.small)
+                    .help("Sign in to this account again in a terminal on the device, for the agents pinned to it")
             }
-        } else {
-            Button("Set Up Pin Token…", action: onSetUpToken)
-                .controlSize(.small)
-                .help("Have Claude make a token for this account in a terminal on the device, so an agent can be pinned to it")
         }
+        .font(.system(size: 11))
     }
 
     private func windowRow(_ window: GrazrWindow) -> some View {
