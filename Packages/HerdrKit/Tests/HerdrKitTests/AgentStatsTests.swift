@@ -91,6 +91,16 @@ final class AgentStatsTests: XCTestCase {
         XCTAssertEqual(lines, [AgentStatsLine(kind: .context, text: "context 10%")])
     }
 
+    func testAPinnedAccountLineShowsTheNameWithoutGrazrsMark() {
+        let pinned = AgentStatsLine.lines(from: ["grazr": "home@x · pinned"])[0]
+        let shared = AgentStatsLine.lines(from: ["grazr": "work@x"])[0]
+
+        XCTAssertTrue(pinned.isPinnedAccount)
+        XCTAssertEqual(pinned.displayText, "home@x")
+        XCTAssertFalse(shared.isPinnedAccount)
+        XCTAssertEqual(shared.displayText, "work@x")
+    }
+
     private func decode(_ json: String) throws -> AgentInfo {
         try JSONDecoder().decode(AgentInfo.self, from: Data(json.utf8))
     }
