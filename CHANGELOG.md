@@ -5,13 +5,26 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
-## [Unreleased]
+## [0.6.15] - 2026-10-10
 
 ### Added
 - **Find in terminal (⌘F).** Opens a find bar over the focused pane that
   searches the pane's output and highlights matches. Return / ⇧Return (or
   ⌘G / ⇧⌘G) step down / up through matches, Esc closes it and returns to the
   terminal.
+- **Pin an agent to a Claude account of its own.** grazr rotates one shared
+  Claude login, so every agent used to run on the same subscription. Each Claude
+  agent now gets one choice — Shared Rotation, or an account of its own (Agent
+  menu › grazr › This Agent's Account, and an Account picker in New Agent). A
+  pinned pane runs Claude on that account's own long-lived token, the rotation
+  leaves it alone, and its usage is recorded under the account it actually runs
+  on. The pin survives a herdr restart and `claude --resume`. Signing in an
+  account that pinned agents need opens grazr's `claude setup-token` in a
+  terminal on the device and pins the pane in the same step — the token never
+  passes through herdrm. The Accounts window shows which agents are pinned to
+  each account (with Renew… once a sign-in has under 30 days left), and a pinned
+  account's line carries a pin glyph in the sidebar. Pinned accounts leave the
+  rotation dial, clock and legend, as grazr does. (#127, thanks @senadaruc!)
 
 ## [0.6.14] - 2026-10-08
 
