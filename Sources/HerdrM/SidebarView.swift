@@ -453,11 +453,19 @@ struct SidebarView: View {
             // Plugin stats (grazr account, Claude model / context / usage),
             // one line each, only for the tokens the pane actually carries.
             ForEach(agent.statsLines, id: \.kind) { line in
-                Text(line.text)
-                    .font(.system(size: 11, weight: line.kind == .model ? .semibold : .regular))
-                    .foregroundStyle(AgentStatsStyle.color(for: line.kind))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                HStack(spacing: 3) {
+                    // An agent on an account of its own, not the shared rotation.
+                    if line.isPinnedAccount {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 8.5))
+                            .help("Pinned to this account; grazr's rotation leaves it alone")
+                    }
+                    Text(line.displayText)
+                        .font(.system(size: 11, weight: line.kind == .model ? .semibold : .regular))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                .foregroundStyle(AgentStatsStyle.color(for: line.kind))
             }
         }
         .padding(.horizontal, 8)
@@ -477,6 +485,8 @@ struct SidebarView: View {
         .overlay {
             AgentRowDragHost(
                 entryID: entry.id,
+                paneID: entry.agent.paneID,
+                isClaude: entry.agent.agent == "claude",
                 pluginActions: model.session(entry.device.id).pluginActions,
                 grazrReport: model.session(entry.device.id).grazrReport,
                 onClick: { model.selectAgent(entry.ref) },
@@ -486,6 +496,11 @@ struct SidebarView: View {
                 onSwitchGrazrAccount: { model.switchGrazrAccount($0, on: entry.device) },
                 onReauthenticateGrazrAccount: {
                     model.reauthenticateGrazrAccount($0, on: entry.device, workspaceID: entry.agent.workspaceID)
+                },
+                onPinGrazrAccount: {
+                    model.pinGrazrAccount(
+                        $0, paneID: entry.agent.paneID, on: entry.device, workspaceID: entry.agent.workspaceID
+                    )
                 },
                 onMenuOpen: { Task { await model.loadPluginActions(deviceID: entry.device.id) } },
                 onClose: { model.requestClosePane(entry.ref, name: entry.title) },
@@ -526,7 +541,9 @@ struct SidebarView: View {
         case .idle, .unknown: break
         }
         if let account = entry.agent.statsLines.first(where: { $0.kind == .account }) {
-            parts.append(account.text)
+            parts.append(account.isPinnedAccount
+                ? String(localized: "pinned to \(account.displayText)")
+                : account.text)
         }
         return parts.joined(separator: ", ")
     }

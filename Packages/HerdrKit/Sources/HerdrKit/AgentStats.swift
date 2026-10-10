@@ -25,6 +25,19 @@ public struct AgentStatsLine: Equatable, Hashable, Sendable {
         self.text = text
     }
 
+    /// grazr's mark on `$grazr` for a pane pinned to its own account.
+    public static let pinnedSuffix = " · pinned"
+
+    /// An account line for a pane that runs on an account of its own.
+    public var isPinnedAccount: Bool {
+        kind == .account && text.hasSuffix(Self.pinnedSuffix)
+    }
+
+    /// The text to show: a pinned account's name without grazr's mark.
+    public var displayText: String {
+        isPinnedAccount ? String(text.dropLast(Self.pinnedSuffix.count)) : text
+    }
+
     public static func lines(from tokens: [String: String]) -> [AgentStatsLine] {
         func value(_ key: String) -> String? {
             guard let raw = tokens[key] else { return nil }

@@ -7,6 +7,8 @@ struct GrazrAccountsLegend: View {
     let report: GrazrReport
     let window: GrazrDialWindow
     let now: Date
+    /// Agent names by pane id, for an account an agent is pinned to.
+    var agentNames: [String: String] = [:]
     /// The clock's account colours; nil fills only the active account's dot.
     var dot: ((GrazrAccount) -> Color?)? = nil
 
@@ -65,6 +67,25 @@ struct GrazrAccountsLegend: View {
                 .foregroundStyle(isActive ? Theme.statsAccount : Theme.text)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            // Pinned yet still shared (PINNED_ROTATION=keep, or the active
+            // account): the status says where it stands in the rotation, so
+            // the agents it is pinned to go beside the name.
+            let saysPinned = !isActive && report.heldAccountIDs.contains(account.id)
+            let agents = saysPinned ? [] : pinnedAgents(of: account)
+            if !agents.isEmpty {
+                Label {
+                    Text(agents.joined(separator: ", "))
+                } icon: {
+                    Image(systemName: "pin.fill")
+                }
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.statsAccount)
+                .lineLimit(1)
+                .layoutPriority(-1)
+                .help(report.keepsPinnedInRotation
+                    ? String(localized: "Pinned: \(agents.joined(separator: ", ")); also in grazr's shared rotation")
+                    : String(localized: "Pinned: \(agents.joined(separator: ", ")); leaves the shared rotation once grazr swaps away"))
+            }
             Spacer(minLength: 8)
             Text(left.map { "\($0)%" } ?? "–")
                 .font(.system(size: 11.5).monospacedDigit())
@@ -87,6 +108,10 @@ struct GrazrAccountsLegend: View {
         .padding(.vertical, 4)
     }
 
+    private func pinnedAgents(of account: GrazrAccount) -> [String] {
+        report.pinnedPanes(for: account).map { agentNames[$0] ?? $0 }
+    }
+
     private func futureRefill(of account: GrazrAccount) -> Date? {
         report.availableAt(account, now: now).flatMap { $0 > now ? $0 : nil }
     }
@@ -95,6 +120,10 @@ struct GrazrAccountsLegend: View {
         if account.id == report.active {
             let eta = report.swapEstimate(for: account, now: now).flatMap { $0 > now ? $0 : nil }
             return (eta.map { String(localized: "active · ~\(GrazrStyle.time($0, now: now))") } ?? String(localized: "active"), Theme.statsAccount)
+        }
+        // Out of the shared rotation: the agents pinned to it have it to themselves.
+        if report.heldAccountIDs.contains(account.id) {
+            return (String(localized: "pinned · \(pinnedAgents(of: account).joined(separator: ", "))"), Theme.statsAccount)
         }
         if let block = report.block(for: account, now: now) {
             return (String(localized: "blocked: \(block.reason)"), Theme.danger)

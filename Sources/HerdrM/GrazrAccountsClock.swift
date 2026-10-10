@@ -10,6 +10,8 @@ struct GrazrAccountsClock: View {
     /// `.session` is the 24-hour face, `.week` the 7-day one.
     let span: GrazrDialWindow
     let now: Date
+    /// Agent names by pane id, for the legend's pinned accounts.
+    var agentNames: [String: String] = [:]
 
     @State private var pointer: CGPoint?
 
@@ -56,7 +58,7 @@ struct GrazrAccountsClock: View {
             Text("Projected at the current pace")
                 .font(.system(size: 10.5))
                 .foregroundStyle(Theme.textTertiary)
-            GrazrAccountsLegend(report: report, window: span, now: now) { color(for: $0) }
+            GrazrAccountsLegend(report: report, window: span, now: now, agentNames: agentNames) { color(for: $0) }
         }
         .frame(maxWidth: .infinity)
     }

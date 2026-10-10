@@ -1561,6 +1561,8 @@ struct NewAgentSheet: View {
     @State private var kind = ""
     @State private var workspaceID: String = ""
     @State private var arguments = ""
+    /// A grazr account for the agent alone; "" is the shared rotation.
+    @State private var grazrAccountID = ""
 
     private var chosenDevice: Device {
         model.device(deviceID) ?? .local
@@ -1576,6 +1578,26 @@ struct NewAgentSheet: View {
 
     private var yoloArguments: String? {
         AgentLaunchArguments.yoloArguments(for: kind)
+    }
+
+    /// grazr on the chosen device, for a Claude agent only.
+    private var grazrReport: GrazrReport? {
+        guard kind == "claude", let report = session.grazrReport, !report.accounts.isEmpty else { return nil }
+        return report
+    }
+
+    private var grazrAccount: GrazrAccount? {
+        grazrReport?.accounts.first { $0.id == grazrAccountID }
+    }
+
+    private var grazrHint: String {
+        guard let grazrAccount else {
+            return String(localized: "grazr moves the agent between accounts as they run low.")
+        }
+        guard grazrAccount.hasToken(now: Date()) else {
+            return String(localized: "Sign in to \(grazrAccount.name) in a terminal first; the agent starts once that is done.")
+        }
+        return String(localized: "Runs only on this account; the shared rotation skips it.")
     }
 
     private var parsedArguments: [String]? {
@@ -1620,6 +1642,7 @@ struct NewAgentSheet: View {
                     .fixedSize()
                     .onChange(of: deviceID) { _, _ in
                         workspaceID = ""
+                        grazrAccountID = ""
                         if !kinds.contains(kind) { kind = kinds.first ?? "" }
                     }
 
@@ -1713,6 +1736,25 @@ struct NewAgentSheet: View {
                         .controlSize(.small)
                         .padding(.top, 4)
                     }
+
+                    if let report = grazrReport {
+                        Spacer().frame(height: 8)
+
+                        SheetSectionLabel("ACCOUNT")
+                        Picker("", selection: $grazrAccountID) {
+                            Text("Shared rotation").tag("")
+                            ForEach(report.sortedAccounts) { account in
+                                Text(account.hasToken(now: Date()) ? account.name : "\(account.name)…")
+                                    .tag(account.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
+                        Text(grazrHint)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
             }
             .padding(16)
@@ -1728,7 +1770,8 @@ struct NewAgentSheet: View {
                         device: chosenDevice,
                         kind: kind,
                         workspaceID: workspaceID.isEmpty ? nil : workspaceID,
-                        args: parsedArguments ?? []
+                        args: parsedArguments ?? [],
+                        grazrAccount: grazrAccount
                     )
                     dismiss()
                 }

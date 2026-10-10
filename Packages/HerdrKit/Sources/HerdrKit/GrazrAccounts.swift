@@ -44,6 +44,8 @@ public enum Grazr {
 
     claude = (load(os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or home, ".claude.json"), {}) or {}).get("oauthAccount") or {}
     report = {"installed": os.path.isdir(state), "accounts": [], "order": [], "settings": {}, "blocked": {}}
+    # When each pin token lapses: grazr's bookkeeping, never the token.
+    tokens = load(os.path.join(state, "tokens.json"), {}) or {}
     report["active"] = claude.get("accountUuid")
     for path in sorted(glob.glob(os.path.join(state, "accounts", "*.json"))):
         entry = load(path)
@@ -71,6 +73,7 @@ public enum Grazr {
             "plan": (plan(claude) if identifier == report["active"] else None) or plan(oauth),
             "windows": windows,
             "updated": os.path.getmtime(path),
+            "token_expires": (tokens.get(identifier) or {}).get("expires_at") if isinstance(tokens, dict) else None,
         })
 
     try:
@@ -87,6 +90,13 @@ public enum Grazr {
     for identifier, entry in (load(os.path.join(state, "blocked.json"), {}) or {}).items():
         if isinstance(entry, dict):
             report["blocked"][identifier] = {"reason": str(entry.get("reason") or ""), "until": entry.get("until")}
+
+    report["pins"] = {
+        pane: {"account": entry.get("account"), "running": entry.get("running")}
+        for pane, entry in (load(os.path.join(state, "pins.json"), {}) or {}).items()
+        if isinstance(entry, dict)
+    }
+    report["pins_installed"] = os.path.exists(os.path.join(state, "bin", "claude"))
 
     print(json.dumps(report))
     GRAZR_EOF
@@ -162,6 +172,88 @@ public enum Grazr {
             print(json.dumps({"ok": code == 0, "output": output.getvalue()}))
             GRAZR_EOF
             """#
+
+    /// Runs `grazr.py <arguments>` (pin, unpin, set, pins-install) and prints
+    /// a `GrazrSwitchResult` with what grazr said. A grazr from before pinned
+    /// agents says it needs updating instead.
+    public static func pinsCommand(_ arguments: [String]) -> String {
+        SSHTunnel.remotePathExport + "\n"
+            + "python3 - \(arguments.map(HerdrService.shellQuoted).joined(separator: " ")) <<'GRAZR_EOF'\n"
+            + #"""
+            import json, sys
+
+            def fail(output):
+                print(json.dumps({"ok": False, "output": output}))
+                sys.exit(0)
+
+            """#
+            + pluginPreamble
+            + #"""
+
+            if not hasattr(grazr, "pin"):
+                fail("This grazr cannot pin agents. Update it to 0.4.7+senad.3 or later")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = grazr.main(["grazr.py"] + sys.argv[1:])
+            print(json.dumps({"ok": code == 0, "output": output.getvalue()}))
+            GRAZR_EOF
+            """#
+    }
+
+    public static func pinCommand(paneID: String, accountID: String) -> String {
+        pinsCommand(["pin", paneID, accountID])
+    }
+
+    public static func unpinCommand(paneID: String) -> String {
+        pinsCommand(["unpin", paneID])
+    }
+
+    public static let installPinsCommand = pinsCommand(["pins-install"])
+
+    /// Where `installTokenCommand` puts the token script on the device.
+    public static let tokenScriptPath = "~/.cache/herdrm/grazr-token.py"
+
+    /// Writes the script `tokenInvocation` runs in a terminal: grazr's own
+    /// `token` entry, which has Claude make the account's pin token in the
+    /// browser and stores it. The token never passes through HerdrM. Given a
+    /// pane, it then pins that pane to the account, installing grazr's claude
+    /// shim first when it is not there yet.
+    public static var installTokenCommand: String {
+        "mkdir -p ~/.cache/herdrm && cat > \(tokenScriptPath) <<'GRAZR_EOF'\n"
+            + #"""
+            import json, sys
+
+            def fail(message):
+                print(message + "\n\npress return to close")
+                sys.stdin.readline()
+                sys.exit(1)
+
+            """#
+            + pluginPreamble
+            + #"""
+
+            if not hasattr(grazr, "token"):
+                fail("This grazr cannot pin agents. Update it to 0.4.7+senad.3 or later")
+            code = grazr.main(["grazr.py", "token", sys.argv[1]])
+            if code == 0 and len(sys.argv) > 2:
+                print()
+                if not os.path.exists(os.path.join(state, "bin", "claude")):
+                    code = grazr.main(["grazr.py", "pins-install"])
+                if code == 0:
+                    code = grazr.main(["grazr.py", "pin", sys.argv[2], sys.argv[1]])
+            print("\npress any key to close")
+            grazr.read_key()
+            sys.exit(code)
+            GRAZR_EOF
+            """#
+    }
+
+    /// With `paneID`, the pane is pinned to the account once its token is in.
+    public static func tokenInvocation(accountID: String, paneID: String? = nil) -> String {
+        (["exec python3 \(tokenScriptPath)", HerdrService.shellQuoted(accountID)]
+            + (paneID.map { [HerdrService.shellQuoted($0)] } ?? []))
+            .joined(separator: " ")
+    }
 
     /// Where `installReauthCommand` puts the sign-in script on the device.
     public static let reauthScriptPath = "~/.cache/herdrm/grazr-reauth.py"
@@ -279,6 +371,27 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
     public let order: [String]
     public let settings: [String: String]
     public let blocked: [String: GrazrBlock]
+    /// Agents pinned to an account, by Herdr pane id.
+    public let pins: [String: GrazrPin]
+    /// Whether grazr's `claude` shim is installed, without which a pin waits.
+    public let pinsInstalled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case installed, active, accounts, order, settings, blocked, pins
+        case pinsInstalled = "pins_installed"
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        installed = try container.decode(Bool.self, forKey: .installed)
+        active = try container.decodeIfPresent(String.self, forKey: .active)
+        accounts = try container.decode([GrazrAccount].self, forKey: .accounts)
+        order = try container.decode([String].self, forKey: .order)
+        settings = try container.decode([String: String].self, forKey: .settings)
+        blocked = try container.decode([String: GrazrBlock].self, forKey: .blocked)
+        pins = try container.decodeIfPresent([String: GrazrPin].self, forKey: .pins) ?? [:]
+        pinsInstalled = try container.decodeIfPresent(Bool.self, forKey: .pinsInstalled) ?? false
+    }
 
     public init(
         installed: Bool = true,
@@ -286,7 +399,9 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         accounts: [GrazrAccount] = [],
         order: [String] = [],
         settings: [String: String] = [:],
-        blocked: [String: GrazrBlock] = [:]
+        blocked: [String: GrazrBlock] = [:],
+        pins: [String: GrazrPin] = [:],
+        pinsInstalled: Bool = false
     ) {
         self.installed = installed
         self.active = active
@@ -294,6 +409,8 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         self.order = order
         self.settings = settings
         self.blocked = blocked
+        self.pins = pins
+        self.pinsInstalled = pinsInstalled
     }
 
     /// grazr's own defaults when config.env does not say.
@@ -301,6 +418,44 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
     public var weeklyThreshold: Int { settings["REMAINING_WEEKLY"].flatMap(Int.init) ?? 20 }
     public var enabled: Bool { settings["ENABLED"] != "0" }
     public var dryRun: Bool { settings["DRY_RUN"] == "1" }
+    /// `PINNED_ROTATION=keep`: the shared rotation may still move to an
+    /// account an agent is pinned to. grazr excludes it by default.
+    public var keepsPinnedInRotation: Bool { settings["PINNED_ROTATION"] == "keep" }
+
+    // MARK: - Pinned agents
+
+    /// The account `paneID` is pinned to, nil when it is on the shared rotation.
+    public func pinnedAccount(paneID: String) -> GrazrAccount? {
+        guard let id = pins[paneID]?.account else { return nil }
+        return accounts.first { $0.id == id }
+    }
+
+    /// The account Claude in `paneID` runs pinned on right now, which differs
+    /// from the pin until Claude restarts there.
+    public func runningAccount(paneID: String) -> GrazrAccount? {
+        guard let id = pins[paneID]?.running else { return nil }
+        return accounts.first { $0.id == id }
+    }
+
+    /// Whether a pin set or dropped on `paneID` still waits for Claude to restart.
+    public func pinIsPending(paneID: String) -> Bool {
+        guard let pin = pins[paneID] else { return false }
+        return pin.account != pin.running
+    }
+
+    /// Accounts the shared rotation leaves to the agents pinned to them, as
+    /// grazr's `pins.held` reads them: pinned to, or still running pinned on.
+    /// None under `PINNED_ROTATION=keep`.
+    public var heldAccountIDs: Set<String> {
+        guard !keepsPinnedInRotation else { return [] }
+        return Set(pins.values.flatMap { [$0.account, $0.running].compactMap { $0 } })
+    }
+
+    /// The panes pinned to `account` or still running on it, sorted.
+    public func pinnedPanes(for account: GrazrAccount) -> [String] {
+        pins.filter { $0.value.account == account.id || $0.value.running == account.id }
+            .map(\.key).sorted()
+    }
 
     /// The models that carry a weekly limit of their own on any account
     /// ("Fable"), by name: one inner ring each on the dial's week.
@@ -354,9 +509,11 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
 
     /// The accounts grazr rotates through, in its order: `ACCOUNTS`, plus the
     /// active account when the config leaves it out. grazr never moves into an
-    /// unlisted account, so the others are not part of it.
+    /// unlisted account, or one an agent holds, so those are not part of it.
     public var rotation: [GrazrAccount] {
+        let held = heldAccountIDs
         let listed = order.compactMap { name in accounts.first { $0.name == name } }
+            .filter { $0.id == active || !held.contains($0.id) }
         guard let active, !listed.contains(where: { $0.id == active }),
               let current = accounts.first(where: { $0.id == active })
         else { return listed }
@@ -385,13 +542,18 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
 
     /// The account grazr's next swap goes to, as its `core.next_account`
     /// picks it when that swap comes: the first listed account, not active and
-    /// not blocked, with headroom then. One whose window resets before the
-    /// active account runs out counts, since it is full again by the time.
+    /// not blocked or held by a pinned agent, with headroom then. One whose
+    /// window resets before the active account runs out counts, since it is
+    /// full again by the time.
     public func predictedNext(now: Date) -> GrazrAccount? {
         let swap = expectedSwap(now: now)
+        let held = heldAccountIDs
         return order.lazy
             .compactMap { name in accounts.first { $0.name == name } }
-            .first { $0.id != active && block(for: $0, now: now) == nil && hasHeadroom($0, now: swap) }
+            .first {
+                $0.id != active && !held.contains($0.id) && block(for: $0, now: now) == nil
+                    && hasHeadroom($0, now: swap)
+            }
     }
 
     /// When `account` next has headroom: `now` when it has it already,
@@ -496,10 +658,17 @@ public struct GrazrAccount: Decodable, Sendable, Equatable, Identifiable {
     public let windows: [GrazrWindow]
     /// When grazr last wrote this account's reading (unix seconds).
     public let updated: Double?
+    /// When this account's pin token lapses (unix seconds); nil without one.
+    public let tokenExpires: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, organization, plan, windows, updated
+        case tokenExpires = "token_expires"
+    }
 
     public init(
         id: String, name: String, organization: String? = nil, plan: GrazrPlan? = nil,
-        windows: [GrazrWindow] = [], updated: Double? = nil
+        windows: [GrazrWindow] = [], updated: Double? = nil, tokenExpires: Double? = nil
     ) {
         self.id = id
         self.name = name
@@ -507,6 +676,18 @@ public struct GrazrAccount: Decodable, Sendable, Equatable, Identifiable {
         self.plan = plan
         self.windows = windows
         self.updated = updated
+        self.tokenExpires = tokenExpires
+    }
+
+    /// An agent can be pinned to it: it has a token that has not lapsed.
+    public func hasToken(now: Date) -> Bool {
+        tokenExpires.map { $0 > now.timeIntervalSince1970 } ?? false
+    }
+
+    /// Whole days until the pin token lapses, nil without a current one.
+    public func tokenDaysLeft(now: Date) -> Int? {
+        guard let tokenExpires, hasToken(now: now) else { return nil }
+        return Int((tokenExpires - now.timeIntervalSince1970) / 86_400)
     }
 
     /// Session first, then the all-models week, then per-model weeks.
@@ -539,6 +720,20 @@ public struct GrazrAccount: Decodable, Sendable, Equatable, Identifiable {
     /// The tightest window still open: how close the account is to the wall.
     public func leastLeft(now: Date) -> Int? {
         windows.filter { $0.isOpen(now: now) }.map(\.remaining).min()
+    }
+}
+
+/// One Herdr pane pinned to an account, from grazr's pins.json.
+public struct GrazrPin: Decodable, Sendable, Equatable {
+    /// The account the pane is pinned to; nil once unpinned while Claude
+    /// there still runs on the old one.
+    public let account: String?
+    /// The account Claude in the pane started on, nil on the shared rotation.
+    public let running: String?
+
+    public init(account: String?, running: String? = nil) {
+        self.account = account
+        self.running = running
     }
 }
 

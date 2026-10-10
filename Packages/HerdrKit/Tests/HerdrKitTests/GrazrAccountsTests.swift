@@ -133,6 +133,43 @@ final class GrazrAccountsTests: XCTestCase {
         XCTAssertEqual(report.rotation.map(\.id), ["b", "a", "z"])
     }
 
+    /// grazr leaves an account an agent is pinned to (or still runs pinned
+    /// on) to that agent, so neither the rotation nor its next swap names it,
+    /// unless PINNED_ROTATION=keep shares it still. The active one stays.
+    func testAPinnedAccountLeavesTheRotationUnlessKept() {
+        let accounts = ["a", "b", "c", "d"].map { GrazrAccount(id: $0, name: $0) }
+        let pins = [
+            "w1:p1": GrazrPin(account: "b", running: "b"),
+            "w1:p2": GrazrPin(account: nil, running: "c"),
+            "w1:p3": GrazrPin(account: "a"),
+        ]
+        let report = GrazrReport(active: "a", accounts: accounts, order: ["a", "b", "c", "d"], pins: pins)
+        XCTAssertEqual(report.heldAccountIDs, ["a", "b", "c"])
+        XCTAssertEqual(report.rotation.map(\.id), ["a", "d"])
+        XCTAssertEqual(report.predictedNext(now: now)?.id, "d")
+
+        let kept = GrazrReport(
+            active: "a", accounts: accounts, order: report.order,
+            settings: ["PINNED_ROTATION": "keep"], pins: pins
+        )
+        XCTAssertEqual(kept.heldAccountIDs, [])
+        XCTAssertEqual(kept.rotation.map(\.id), ["a", "b", "c", "d"])
+        XCTAssertEqual(kept.predictedNext(now: now)?.id, "b")
+    }
+
+    func testTheSignInPinsThePaneItWasOpenedFor() {
+        XCTAssertEqual(
+            Grazr.tokenInvocation(accountID: "uuid-a"),
+            "exec python3 ~/.cache/herdrm/grazr-token.py 'uuid-a'"
+        )
+        XCTAssertEqual(
+            Grazr.tokenInvocation(accountID: "uuid-a", paneID: "w1:p2"),
+            "exec python3 ~/.cache/herdrm/grazr-token.py 'uuid-a' 'w1:p2'"
+        )
+        XCTAssertTrue(Grazr.installTokenCommand.contains(#"grazr.main(["grazr.py", "pin", sys.argv[2], sys.argv[1]])"#))
+        XCTAssertTrue(Grazr.installTokenCommand.contains(#"grazr.main(["grazr.py", "pins-install"])"#))
+    }
+
     func testTheNextAccountIsTheFirstListedOneWithHeadroom() {
         let report = GrazrReport(
             active: "a",
@@ -465,6 +502,116 @@ final class GrazrAccountsTests: XCTestCase {
         XCTAssertTrue(elsewhere.contains("That login is uuid-work@x, not home's@x, so nothing changed"), elsewhere)
         XCTAssertFalse(elsewhere.contains("Enrolled"), elsewhere)
     }
+
+    /// Pins and token expiry come through; the token itself, kept beside the
+    /// parked logins on Linux, never does.
+    func testTheReaderReportsPinsAndTokenExpiryButNoToken() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grazr-pins-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let state = home.appendingPathComponent(".local/state/herdr/plugins/wazum.grazr")
+        for directory in ["accounts", "tokens", "bin"] {
+            try FileManager.default.createDirectory(
+                at: state.appendingPathComponent(directory), withIntermediateDirectories: true
+            )
+        }
+        func write(_ text: String, to path: String) throws {
+            try text.write(to: state.appendingPathComponent(path), atomically: true, encoding: .utf8)
+        }
+        try write(#"{"name": "home@x", "oauthAccount": {"accountUuid": "uuid-home"}, "snapshot": []}"#,
+                  to: "accounts/uuid-home.json")
+        try write("sk-ant-oat01-SECRET-T", to: "tokens/uuid-home")
+        try write(#"{"uuid-home": {"set_at": 1, "expires_at": 1900000000}}"#, to: "tokens.json")
+        try write(#"{"w1:p1": {"account": "uuid-home", "running": null, "at": 1}}"#, to: "pins.json")
+        try write("#!/usr/bin/env python3\n", to: "bin/claude")
+
+        let environment = "HOME='\(home.path)' XDG_STATE_HOME= XDG_CONFIG_HOME= CLAUDE_CONFIG_DIR= "
+        let output = try await DeviceFileService(device: .local).run(environment + Grazr.readerCommand)
+        XCTAssertFalse(String(decoding: output, as: UTF8.self).contains("SECRET"))
+
+        let report = try JSONDecoder().decode(GrazrReport.self, from: output)
+        XCTAssertEqual(report.pins, ["w1:p1": GrazrPin(account: "uuid-home", running: nil)])
+        XCTAssertTrue(report.pinsInstalled)
+        XCTAssertEqual(report.accounts.first?.tokenExpires, 1_900_000_000)
+        XCTAssertTrue(report.pinIsPending(paneID: "w1:p1"))
+    }
+
+    /// The pin scripts hand their arguments to grazr in herdr's plugin
+    /// environment; a grazr from before pinned agents says it needs updating.
+    func testPinCommandsRunGrazrWithTheirArguments() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grazr-pin-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let root = home.appendingPathComponent("plugins/wazum.grazr")
+        let bin = home.appendingPathComponent(".local/bin")
+        for directory in [root, bin] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        func write(_ text: String, to url: URL) throws {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        try write("""
+        #!/bin/sh
+        printf '{"result":{"plugins":[{"plugin_id":"wazum.grazr","plugin_root":"%s"}]}}' '\(root.path)'
+        """, to: bin.appendingPathComponent("herdr"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("herdr").path)
+        try write("", to: root.appendingPathComponent("accounts.py"))
+        try write("", to: root.appendingPathComponent("core.py"))
+        let environment = "export HOME='\(home.path)' XDG_STATE_HOME= XDG_CONFIG_HOME=; "
+        func run(_ command: String) async throws -> GrazrSwitchResult {
+            let output = try await DeviceFileService(device: .local).run(environment + command)
+            return try JSONDecoder().decode(GrazrSwitchResult.self, from: output)
+        }
+
+        try write("""
+        def pin():
+            pass
+        def main(argv):
+            print(" ".join(argv[1:]))
+            return 0 if argv[1] != "pin" or argv[3] != "spent" else 1
+        """, to: root.appendingPathComponent("grazr.py"))
+        let pinned = try await run(Grazr.pinCommand(paneID: "w1:p1", accountID: "uuid-a b"))
+        XCTAssertEqual(pinned, GrazrSwitchResult(ok: true, output: "pin w1:p1 uuid-a b\n"))
+        let refused = try await run(Grazr.pinCommand(paneID: "w1:p1", accountID: "spent"))
+        XCTAssertFalse(refused.ok)
+        let unpinned = try await run(Grazr.unpinCommand(paneID: "w1:p1"))
+        XCTAssertEqual(unpinned.summary, "unpin w1:p1")
+        let installed = try await run(Grazr.installPinsCommand)
+        XCTAssertEqual(installed.summary, "pins-install")
+
+        // The sign-in stores the token, installs the shim where it is missing,
+        // then pins the pane it was opened for; without a pane it only signs in.
+        try write("""
+        import os
+        def token():
+            pass
+        def read_key():
+            return ""
+        def main(argv):
+            print("grazr " + " ".join(argv[1:]))
+            if argv[1] == "pins-install":
+                os.makedirs(os.path.join(os.environ["HERDR_PLUGIN_STATE_DIR"], "bin"), exist_ok=True)
+                open(os.path.join(os.environ["HERDR_PLUGIN_STATE_DIR"], "bin", "claude"), "w").close()
+            return 0
+        """, to: root.appendingPathComponent("grazr.py"))
+        _ = try await DeviceFileService(device: .local).run(environment + Grazr.installTokenCommand)
+        func signIn(_ invocation: String) async throws -> [String] {
+            let output = try await DeviceFileService(device: .local).run(environment + "export PATH=\"$HOME/.local/bin:$PATH\"; (\(invocation)) </dev/null")
+            return String(decoding: output, as: UTF8.self).split(separator: "\n").filter { $0.hasPrefix("grazr ") }.map(String.init)
+        }
+        let first = try await signIn(Grazr.tokenInvocation(accountID: "uuid-a", paneID: "w1:p2"))
+        XCTAssertEqual(first, ["grazr token uuid-a", "grazr pins-install", "grazr pin w1:p2 uuid-a"])
+        let again = try await signIn(Grazr.tokenInvocation(accountID: "uuid-a", paneID: "w1:p3"))
+        XCTAssertEqual(again, ["grazr token uuid-a", "grazr pin w1:p3 uuid-a"])
+        let alone = try await signIn(Grazr.tokenInvocation(accountID: "uuid-a"))
+        XCTAssertEqual(alone, ["grazr token uuid-a"])
+
+        try write("def main(argv):\n    return 0\n", to: root.appendingPathComponent("grazr.py"))
+        let older = try await run(Grazr.unpinCommand(paneID: "w1:p1"))
+        XCTAssertFalse(older.ok)
+        XCTAssertEqual(older.summary, "This grazr cannot pin agents. Update it to 0.4.7+senad.3 or later")
+    }
+
     #endif
 
     func testAPlanReadsAsItsNameAndMultiplier() {
@@ -490,5 +637,34 @@ final class GrazrAccountsTests: XCTestCase {
         let report = try JSONDecoder().decode(GrazrReport.self, from: json)
 
         XCTAssertEqual(report.accounts.map { $0.plan?.label }, ["Max 20x", nil, nil])
+    }
+
+    func testPinsSayWhichPaneRunsOnWhichAccount() {
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let home = GrazrAccount(id: "home", name: "home@x", tokenExpires: now.timeIntervalSince1970 + 86_400 * 10.5)
+        let work = GrazrAccount(id: "work", name: "work@x", tokenExpires: now.timeIntervalSince1970 - 1)
+        let report = GrazrReport(
+            active: "work",
+            accounts: [home, work],
+            settings: ["PINNED_ROTATION": "keep"],
+            pins: [
+                "w1:p1": GrazrPin(account: "home", running: "home"),
+                "w1:p2": GrazrPin(account: "home"),
+                "w1:p3": GrazrPin(account: nil, running: "work"),
+            ]
+        )
+
+        XCTAssertEqual(report.pinnedAccount(paneID: "w1:p1"), home)
+        XCTAssertNil(report.pinnedAccount(paneID: "w1:p3"))
+        XCTAssertEqual(report.runningAccount(paneID: "w1:p3"), work)
+        XCTAssertEqual(["w1:p1", "w1:p2", "w1:p3", "w9:p9"].map(report.pinIsPending), [false, true, true, false])
+        XCTAssertEqual(report.pinnedPanes(for: home), ["w1:p1", "w1:p2"])
+        XCTAssertEqual(report.pinnedPanes(for: work), ["w1:p3"])
+        // A lapsed token needs a new sign-in before an agent runs on it.
+        XCTAssertEqual(report.accounts.filter { $0.hasToken(now: now) }, [home])
+        XCTAssertEqual(home.tokenDaysLeft(now: now), 10)
+        XCTAssertNil(work.tokenDaysLeft(now: now))
+        XCTAssertTrue(report.keepsPinnedInRotation)
+        XCTAssertFalse(GrazrReport().keepsPinnedInRotation)
     }
 }

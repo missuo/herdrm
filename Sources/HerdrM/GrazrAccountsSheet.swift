@@ -132,9 +132,9 @@ struct GrazrAccountsSheet: View {
                         // Redraws each minute so a window past its reset shows as refilled.
                         TimelineView(.periodic(from: .now, by: 60)) { context in
                             if view == .clock {
-                                GrazrAccountsClock(report: report, span: dialWindow, now: context.date)
+                                GrazrAccountsClock(report: report, span: dialWindow, now: context.date, agentNames: agentNames)
                             } else {
-                                GrazrAccountsDial(report: report, window: dialWindow, now: context.date)
+                                GrazrAccountsDial(report: report, window: dialWindow, now: context.date, agentNames: agentNames)
                             }
                         }
                     }
@@ -149,8 +149,10 @@ struct GrazrAccountsSheet: View {
                                 account: account,
                                 now: Date(),
                                 switching: swapping,
+                                agentNames: agentNames,
                                 onSwitch: { switchTo(account) },
-                                onReauthenticate: { model.reauthenticateGrazrAccount(account, on: device) }
+                                onReauthenticate: { model.reauthenticateGrazrAccount(account, on: device) },
+                                onSetUpToken: { model.setUpGrazrToken(account, on: device) }
                             )
                         }
                     }
@@ -160,6 +162,14 @@ struct GrazrAccountsSheet: View {
         } else {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    /// Agents on this device by pane id, for what says who is pinned where.
+    private var agentNames: [String: String] {
+        Dictionary(
+            model.session(device.id).agents.map { ($0.paneID, $0.title) },
+            uniquingKeysWith: { first, _ in first }
+        )
     }
 
     private func message(_ text: String, systemImage: String) -> some View {
@@ -210,10 +220,17 @@ private struct GrazrAccountCard: View {
     let account: GrazrAccount
     let now: Date
     let switching: Bool
+    let agentNames: [String: String]
     let onSwitch: () -> Void
     let onReauthenticate: () -> Void
+    let onSetUpToken: () -> Void
 
     private var isActive: Bool { account.id == report.active }
+
+    /// Agents pinned to this account, by name.
+    private var pinnedAgents: [String] {
+        report.pinnedPanes(for: account).map { agentNames[$0] ?? $0 }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -259,6 +276,9 @@ private struct GrazrAccountCard: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.textGhost)
             }
+            if !pinnedAgents.isEmpty {
+                pinnedLine
+            }
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -270,6 +290,31 @@ private struct GrazrAccountCard: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isActive ? Theme.statsAccount.opacity(0.5) : .clear, lineWidth: 1)
         )
+    }
+
+    /// The agents that have this account to themselves, and, once the
+    /// sign-in they run on is close to lapsing, a way to renew it.
+    private var pinnedLine: some View {
+        let days = account.tokenDaysLeft(now: now)
+        return HStack(spacing: 8) {
+            Label {
+                Text("Pinned: \(pinnedAgents.joined(separator: ", "))")
+            } icon: {
+                Image(systemName: "pin.fill")
+            }
+            .foregroundStyle(Theme.statsAccount)
+            .lineLimit(1)
+            if days ?? 0 < 30 {
+                Text(days.map { String(localized: "sign-in expires in \($0) days") } ?? String(localized: "sign-in expired"))
+                    .foregroundStyle(Theme.warning)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Button("Renew…", action: onSetUpToken)
+                    .controlSize(.small)
+                    .help("Sign in to this account again in a terminal on the device, for the agents pinned to it")
+            }
+        }
+        .font(.system(size: 11))
     }
 
     private func windowRow(_ window: GrazrWindow) -> some View {

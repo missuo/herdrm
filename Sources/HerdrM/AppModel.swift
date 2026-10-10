@@ -1183,41 +1183,160 @@ final class AppModel: ObservableObject {
     /// isolated config dir, so the account Claude is on is left alone, then
     /// grazr parks the new credential and lifts the block.
     func reauthenticateGrazrAccount(_ account: GrazrAccount, on device: Device, workspaceID: String? = nil) {
+        Task {
+            await openGrazrTerminal(
+                install: Grazr.installReauthCommand,
+                invocation: Grazr.reauthInvocation(accountID: account.id, name: account.name),
+                label: String(localized: "grazr sign-in"),
+                on: device,
+                workspaceID: workspaceID
+            )
+        }
+    }
+
+    /// Signs `account` in for pinned agents, in a terminal on the device:
+    /// `claude setup-token` in the browser makes a long-lived token, and
+    /// grazr stores what you paste. With `pinPaneID`, that pane is pinned to
+    /// the account once the token is in. The token stays on the device;
+    /// HerdrM never sees it.
+    func setUpGrazrToken(
+        _ account: GrazrAccount, on device: Device, workspaceID: String? = nil, pinPaneID: String? = nil
+    ) {
+        Task {
+            await openGrazrTerminal(
+                install: Grazr.installTokenCommand,
+                invocation: Grazr.tokenInvocation(accountID: account.id, paneID: pinPaneID),
+                label: String(localized: "grazr sign-in"),
+                on: device,
+                workspaceID: workspaceID
+            )
+        }
+    }
+
+    /// Pins the agent in `paneID` to `account`, or back to the shared rotation
+    /// when nil. Claude there moves when it next starts. An account not
+    /// signed in for pinned agents yet is signed in first, in a terminal.
+    func pinGrazrAccount(
+        _ account: GrazrAccount?, paneID: String, on device: Device, workspaceID: String? = nil,
+        onFinish: (() -> Void)? = nil
+    ) {
+        if let account, !account.hasToken(now: Date()) {
+            setUpGrazrToken(account, on: device, workspaceID: workspaceID, pinPaneID: paneID)
+            onFinish?()
+            return
+        }
+        let title = account.map { String(localized: "grazr: pin to \($0.name)") }
+            ?? String(localized: "grazr: back to the shared rotation")
+        Task {
+            defer { onFinish?() }
+            if let account {
+                guard await pinGrazrPane(paneID, to: account, on: device) else { return }
+            } else {
+                guard await runGrazrPins(Grazr.unpinCommand(paneID: paneID), title: title, on: device, successBody: nil)
+                else { return }
+            }
+            NotificationManager.shared.postPluginResult(
+                title: title, body: String(localized: "Applies when Claude next starts in that pane"),
+                deviceName: device.name
+            )
+            await refresh(device.id)
+        }
+    }
+
+    /// Pins `paneID` to `account`, putting grazr's `claude` shim in place
+    /// first when the device does not have it yet: without it a pin waits.
+    private func pinGrazrPane(_ paneID: String, to account: GrazrAccount, on device: Device) async -> Bool {
+        if session(device.id).grazrReport?.pinsInstalled != true {
+            guard await runGrazrPins(
+                Grazr.installPinsCommand,
+                title: String(localized: "grazr: pin support"), on: device,
+                successBody: String(localized: "Installed. New panes on \(device.name) run Claude through grazr")
+            ) else { return false }
+        }
+        return await runGrazrPins(
+            Grazr.pinCommand(paneID: paneID, accountID: account.id),
+            title: String(localized: "grazr: pin to \(account.name)"), on: device, successBody: nil
+        )
+    }
+
+    /// Waits for `account` to be signed in for pinned agents from the
+    /// terminal in `signInPane`: true once grazr has its token, false when
+    /// that terminal closes without one or after a quarter of an hour.
+    private func waitForGrazrToken(_ account: GrazrAccount, signInPane: String, on device: Device) async -> Bool {
+        let service = service(for: device)
+        let deadline = Date().addingTimeInterval(15 * 60)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await loadGrazrReport(deviceID: device.id)
+            if session(device.id).grazrReport?.accounts.first(where: { $0.id == account.id })?.hasToken(now: Date()) == true {
+                return true
+            }
+            if (try? await service.readPane(paneID: signInPane)) == nil { return false }
+        }
+        return false
+    }
+
+    /// Runs one of grazr's pin commands, says how it went, and rereads grazr.
+    @discardableResult
+    private func runGrazrPins(_ command: String, title: String, on device: Device, successBody: String?) async -> Bool {
+        var ok = false
+        do {
+            let output = try await DeviceFileService(device: device).run(command)
+            let result = try JSONDecoder().decode(GrazrSwitchResult.self, from: output)
+            ok = result.ok
+            if result.ok {
+                if let successBody {
+                    NotificationManager.shared.postPluginResult(title: title, body: successBody, deviceName: device.name)
+                }
+            } else {
+                actionError = result.summary.map { "\(title): \($0)" } ?? String(localized: "\(title) failed")
+            }
+        } catch {
+            actionError = actionErrorMessage(error, device: device)
+        }
+        await loadGrazrReport(deviceID: device.id)
+        return ok
+    }
+
+    /// A terminal tab on the device running one of grazr's interactive
+    /// scripts, written there first so the tab shows one short line. Returns
+    /// the tab's pane, nil when it could not be opened.
+    @discardableResult
+    private func openGrazrTerminal(
+        install: String, invocation: String, label: String, on device: Device, workspaceID: String?
+    ) async -> String? {
         let workspaceID = workspaceID
             ?? selectedSpace.flatMap { $0.deviceID == device.id ? $0.workspaceID : nil }
             ?? session(device.id).workspaces.first?.workspaceID
-        Task {
-            do {
-                _ = try await DeviceFileService(device: device).run(Grazr.installReauthCommand)
-                let service = service(for: device)
-                let paneID = try await service.createTab(
-                    workspaceID: workspaceID,
-                    cwd: nil,
-                    label: String(localized: "grazr sign-in")
-                )
-                // Typed once the shell has drawn its prompt; a prompt still
-                // starting up can drop what arrives before it.
-                for _ in 0..<30 {
-                    let screen = try? await service.readPane(paneID: paneID)
-                    if screen?.text.contains(where: { !$0.isWhitespace }) == true { break }
-                    try await Task.sleep(nanoseconds: 100_000_000)
-                }
-                try await service.sendInput(
-                    paneID: paneID,
-                    text: Grazr.reauthInvocation(accountID: account.id, name: account.name)
-                )
-                try await service.sendKeys(paneID: paneID, keys: ["enter"])
-                await refresh(device.id)
-                grazrAccountsDevice = nil
-                isFileManagerActive = false
-                if let workspaceID {
-                    selectedSpace = SpaceRef(deviceID: device.id, workspaceID: workspaceID)
-                }
-                selectedPane = PaneRef(deviceID: device.id, paneID: paneID)
-                selectedShellID = nil
-            } catch {
-                actionError = actionErrorMessage(error, device: device)
+        do {
+            _ = try await DeviceFileService(device: device).run(install)
+            let service = service(for: device)
+            let paneID = try await service.createTab(
+                workspaceID: workspaceID,
+                cwd: nil,
+                label: label
+            )
+            // Typed once the shell has drawn its prompt; a prompt still
+            // starting up can drop what arrives before it.
+            for _ in 0..<30 {
+                let screen = try? await service.readPane(paneID: paneID)
+                if screen?.text.contains(where: { !$0.isWhitespace }) == true { break }
+                try await Task.sleep(nanoseconds: 100_000_000)
             }
+            try await service.sendInput(paneID: paneID, text: invocation)
+            try await service.sendKeys(paneID: paneID, keys: ["enter"])
+            await refresh(device.id)
+            grazrAccountsDevice = nil
+            isFileManagerActive = false
+            if let workspaceID {
+                selectedSpace = SpaceRef(deviceID: device.id, workspaceID: workspaceID)
+            }
+            selectedPane = PaneRef(deviceID: device.id, paneID: paneID)
+            selectedShellID = nil
+            return paneID
+        } catch {
+            actionError = actionErrorMessage(error, device: device)
+            return nil
         }
     }
 
@@ -2092,9 +2211,22 @@ final class AppModel: ObservableObject {
         device: Device,
         kind: String,
         workspaceID: String?,
-        args: [String]
+        args: [String],
+        grazrAccount: GrazrAccount? = nil
     ) {
         Task {
+            // An account not signed in for pinned agents yet is signed in
+            // first; the agent starts once grazr has the token.
+            if let grazrAccount, !grazrAccount.hasToken(now: Date()) {
+                guard let signIn = await openGrazrTerminal(
+                    install: Grazr.installTokenCommand,
+                    invocation: Grazr.tokenInvocation(accountID: grazrAccount.id),
+                    label: String(localized: "grazr sign-in"),
+                    on: device,
+                    workspaceID: workspaceID
+                ), await waitForGrazrToken(grazrAccount, signInPane: signIn, on: device)
+                else { return }
+            }
             let service = service(for: device)
             var createdPane: String?
             do {
@@ -2102,6 +2234,11 @@ final class AppModel: ObservableObject {
                     service: service, device: device, workspaceID: workspaceID, kind: kind
                 )
                 createdPane = pane
+                // Before Claude starts: grazr's shim reads the pin then. A pin
+                // that fails leaves the agent on the shared rotation, and says so.
+                if let grazrAccount {
+                    await pinGrazrPane(pane, to: grazrAccount, on: device)
+                }
                 do {
                     try await service.startAgent(
                         name: kind,

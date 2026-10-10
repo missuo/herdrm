@@ -92,6 +92,9 @@ struct SpaceRowDragHost: View {
 
 struct AgentRowDragHost: View {
     let entryID: String
+    let paneID: String
+    /// Only a Claude pane can be pinned to one of grazr's accounts.
+    let isClaude: Bool
     let pluginActions: [PluginActionGroup]
     let grazrReport: GrazrReport?
     let onClick: () -> Void
@@ -100,6 +103,9 @@ struct AgentRowDragHost: View {
     let onGrazrAccounts: () -> Void
     let onSwitchGrazrAccount: (GrazrAccount) -> Void
     let onReauthenticateGrazrAccount: (GrazrAccount) -> Void
+    /// nil puts the pane back on the shared rotation. An account not signed
+    /// in for pinned agents yet signs in first.
+    let onPinGrazrAccount: (GrazrAccount?) -> Void
     let onMenuOpen: () -> Void
     let onClose: () -> Void
     let onDragStart: (String) -> Void
@@ -140,6 +146,9 @@ struct AgentRowDragHost: View {
                     var accounts: [SidebarContextMenuItem] = [
                         .item(title: String(localized: "Accounts…"), action: onGrazrAccounts),
                     ]
+                    if let pinMenu = grazrPinMenu {
+                        accounts.append(pinMenu)
+                    }
                     if let switchMenu = grazrSwitchMenu {
                         accounts.append(switchMenu)
                     }
@@ -170,7 +179,37 @@ struct AgentRowDragHost: View {
                 action: report.canSwitch(to: account, now: now) ? { onSwitchGrazrAccount(account) } : nil
             )
         }
-        return .submenu(title: String(localized: "Switch to Account"), items: accounts)
+        return .submenu(title: String(localized: "Switch Shared Account"), items: accounts)
+    }
+
+    /// Which account this agent runs on: the shared rotation, or one of its
+    /// own. "…" marks an account that opens a sign-in first.
+    private var grazrPinMenu: SidebarContextMenuItem? {
+        guard isClaude, let report = grazrReport, !report.accounts.isEmpty else { return nil }
+        let now = Date()
+        let pinned = report.pinnedAccount(paneID: paneID)
+        var items: [SidebarContextMenuItem] = []
+        items.append(.choice(
+            title: String(localized: "Shared Rotation"),
+            isChecked: pinned == nil,
+            action: pinned == nil ? nil : { onPinGrazrAccount(nil) }
+        ))
+        items.append(.separator)
+        for account in report.sortedAccounts {
+            let isPinned = pinned?.id == account.id
+            items.append(.choice(
+                title: account.hasToken(now: now) || isPinned ? account.name : "\(account.name)…",
+                isChecked: isPinned,
+                action: isPinned ? nil : { onPinGrazrAccount(account) }
+            ))
+        }
+        if report.pinIsPending(paneID: paneID) {
+            items += [
+                .separator,
+                .choice(title: String(localized: "Applies when Claude restarts here"), isChecked: false, action: nil),
+            ]
+        }
+        return .submenu(title: String(localized: "This Agent's Account"), items: items)
     }
 
     /// One per account whose login grazr found refused.

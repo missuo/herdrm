@@ -15,6 +15,8 @@ struct GrazrAccountsDial: View {
     let report: GrazrReport
     let window: GrazrDialWindow
     let now: Date
+    /// Agent names by pane id, for the legend's pinned accounts.
+    var agentNames: [String: String] = [:]
 
     /// Where the pointer rests over the dial, for the ring tip.
     @State private var pointer: CGPoint?
@@ -84,7 +86,7 @@ struct GrazrAccountsDial: View {
                     .font(.system(size: 10.5))
                 }
             }
-            GrazrAccountsLegend(report: report, window: window, now: now)
+            GrazrAccountsLegend(report: report, window: window, now: now, agentNames: agentNames)
         }
         .frame(maxWidth: .infinity)
     }
