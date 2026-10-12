@@ -27,6 +27,10 @@ struct SidebarView: View {
     @ObservedObject var model: AppModel
     @Binding var collapsed: Bool
     var width: CGFloat = SidebarWidth.defaultWidth
+    /// Usage readings behind the footer hint. Its own model — the sheet's
+    /// per-presentation instance is gone by dismiss — so the hint keeps the
+    /// states it read, and the store's cache keeps re-reads cheap.
+    @StateObject private var usageHint = UsageModel()
     @State private var deviceButtonHovered = false
     @State private var draggingSpaceID: String?
     @State private var spaceDrop: (id: String, after: Bool)?
@@ -188,6 +192,12 @@ struct SidebarView: View {
             Spacer(minLength: 0)
             if showsMachineStats, let device = model.statsDevice {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
+                UsageHintLine(
+                    usage: usageHint,
+                    devices: model.devices,
+                    onSelect: { model.usageDevice = $0 }
+                )
+                .padding(.horizontal, 6)
                 SidebarMachineStats(
                     stats: model.machineStats,
                     device: device,
@@ -750,6 +760,118 @@ struct SidebarView: View {
         case .connecting: return Theme.warning
         case .failed: return Theme.danger
         case .idle: return Theme.textGhost
+        }
+    }
+}
+
+/// The sidebar footer's usage hint: the tightest open window across every
+/// device and provider with fresh readings — the one with the least left —
+/// rendered `5h 12% · 20:27` in the severity colour (danger under 15 % left,
+/// warning under 25 %, the footer's quiet gray otherwise) and opening the
+/// Usage sheet on the window's device when tapped. Renders nothing until some
+/// provider has reported readings; the first read runs only for devices with
+/// no states yet, so the sheet's (or the store's cached) readings stand.
+struct UsageHintLine: View {
+    /// Stands in for `UsageModel.refresh` in the hint's UIUX tests, so
+    /// appearing never runs the providers' real commands. nil refreshes
+    /// for real.
+    typealias Refresh = (UsageModel, Device, _ force: Bool) async -> Void
+
+    @ObservedObject var usage: UsageModel
+    /// Devices the readings may belong to, in sidebar order; the tap names one.
+    var devices: [Device] = []
+    var now: Date = Date()
+    /// Called with the device of the window the user tapped; the sidebar
+    /// presents the Usage sheet on it.
+    var onSelect: (Device) -> Void = { _ in }
+    var refresh: Refresh? = nil
+
+    var body: some View {
+        Group {
+            if let tightest = Self.tightestOpenWindow(states: usage.states, devices: devices, now: now) {
+                Button {
+                    onSelect(tightest.device)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chart.bar")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.textGhost)
+                        Text(verbatim: hintText(tightest.window))
+                            .font(.system(size: 10.5).monospacedDigit())
+                            .foregroundStyle(Self.severityColor(left: tightest.window.left(now: now)))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .help(String(localized: "Usage across your devices — click for details"))
+                .accessibilityLabel(hintText(tightest.window))
+            }
+        }
+        .task(id: devices.map(\.id)) { await refreshUnknownDevices() }
+    }
+
+    /// The line the hint shows: `5h 12% · 20:27`, or without the time when
+    /// the window reports no reset.
+    private func hintText(_ window: GrazrWindow) -> String {
+        let left = window.left(now: now)
+        guard let resetsAt = window.resetsAt else {
+            return String(localized: "\(window.label) \(left)%")
+        }
+        return String(localized: "\(window.label) \(left)% · \(GrazrStyle.time(resetsAt, now: now))")
+    }
+
+    /// The open window with the least left, across every provider on every
+    /// device with fresh readings. A window past its reset has refilled and
+    /// never shows; a device without a name in `devices` is skipped — the tap
+    /// could not open a sheet on it. Ties keep the first in device and
+    /// provider order.
+    static func tightestOpenWindow(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        now: Date
+    ) -> (device: Device, window: GrazrWindow)? {
+        var best: (device: Device, window: GrazrWindow)?
+        for device in devices {
+            guard let perProvider = states[device.id] else { continue }
+            for provider in UsageProvider.allCases {
+                guard case .readings(let readings) = perProvider[provider] else { continue }
+                for reading in readings {
+                    for window in reading.windows where window.isOpen(now: now) {
+                        if window.left(now: now) < best?.window.left(now: now) ?? .max {
+                            best = (device, window)
+                        }
+                    }
+                }
+            }
+        }
+        return best
+    }
+
+    /// The hint's severity colour: danger under 15 % left, warning under 25 %,
+    /// the footer's quiet gray otherwise — SidebarMachineStats' levelColor
+    /// line, with the usage thresholds the sheet's meters tint at.
+    static func severityColor(left: Int) -> Color {
+        if left < 15 { return Theme.danger }
+        if left < 25 { return Theme.warning }
+        return Theme.textSecondary
+    }
+
+    /// First read for devices with no states yet; the sheet's guard — cached
+    /// or preloaded states stand, so a re-mount re-runs nothing inside the
+    /// store's five-minute window.
+    private func refreshUnknownDevices() async {
+        for device in devices where usage.states[device.id] == nil {
+            if let refresh {
+                await refresh(usage, device, false)
+            } else {
+                await usage.refresh(device, force: false)
+            }
         }
     }
 }

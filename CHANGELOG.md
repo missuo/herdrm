@@ -5,6 +5,25 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- **Usage meters with a sidebar hint.** A new Usage sheet shows one card per
+  provider — Claude (via grazr), Codex, OpenCode and Gemini — for each device,
+  with quota meters where a provider reports windows (what is left, when it
+  resets) and token statistics where it only publishes those. Every card
+  stands alone, so one stuck provider never blanks the sheet, and ⌘R re-reads
+  every visible device. All readings come from commands run on the device
+  itself — herdrm never authenticates anywhere — cached for five minutes. The
+  sidebar footer gains a one-line hint with the tightest open window across
+  devices, tinted red under 15 % left and amber under 25 %, which opens the
+  sheet on click.
+
+D
+
+D
+
+HEAD
 ## [0.6.21] - 2026-10-21
 
 ### Fixed
@@ -73,6 +92,7 @@ the Sparkle update description — a release without a section here fails CI.
   changing folders. The active heading shows an arrow and announces its
   direction to VoiceOver.
 
+1af0a00 (feat(usage): sidebar hint with tightest open window; changelog)
 ## [0.6.18] - 2026-10-17
 
 ### Added
@@ -115,7 +135,6 @@ the Sparkle update description — a release without a section here fails CI.
   Sidebar, Settings. They were read by the space's name or by their icons'
   names, such as "Gear Shape". A new test fails when any sidebar control has
   no name or is read by its icon's name.
-
 ## [0.6.17] - 2026-10-13
 
 ### Changed

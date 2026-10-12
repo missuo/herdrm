@@ -401,6 +401,22 @@
         }
       }
     },
+    "Usage across your devices — click for details": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage across your devices — click for details"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有设备的用量 — 点击查看详情"
+          }
+        }
+      }
+    },
     "Usage": {
       "localizations": {
         "en": {
@@ -605,6 +621,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ 输入 · %@ 输出 · %@ 缓存"
+          }
+        }
+      }
+    },
+    "%@ %lld% · %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ %lld% · %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 剩余 %lld%% · %@"
+          }
+        }
+      }
+    },
+    "%@ %lld%": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ %lld%"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 剩余 %lld%%"
           }
         }
       }
