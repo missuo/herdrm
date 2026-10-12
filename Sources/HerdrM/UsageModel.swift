@@ -69,15 +69,25 @@ extension UsageStore {
 }
 
 extension UsageProviderState {
+    /// Whether this is the `.notInstalled` state — the claude card keys its
+    /// grazr tooltip off it.
+    var isNotInstalled: Bool {
+        if case .notInstalled = self { return true }
+        return false
+    }
+
     /// The line the sheet shows for every state besides readings; `nil`
     /// when there are readings to render instead. A `.failed` state already
-    /// carries its localized reason.
-    var statusText: String? {
+    /// carries its localized reason. Claude's `.notInstalled` names grazr —
+    /// its quota source — so it never reads as "Claude is missing".
+    func statusText(for provider: UsageProvider) -> String? {
         switch self {
         case .loading:
             return String(localized: "Checking usage…")
         case .notInstalled:
-            return String(localized: "Not installed")
+            return provider == .claude
+                ? String(localized: "Needs grazr")
+                : String(localized: "Not installed")
         case .unknown:
             return String(localized: "No usage yet")
         case .failed(let message):
