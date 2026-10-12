@@ -10,6 +10,8 @@ import XCTest
 @MainActor
 private final class UsageHintHarness {
     let model: UsageModel
+    private let onSelect: (Device) -> Void
+    private let refresh: UsageHintLine.Refresh?
     private let root: NSHostingView<AnyView>
     private let window: NSWindow
 
@@ -17,7 +19,8 @@ private final class UsageHintHarness {
     ///   - devices: what the presenter knows, in sidebar order.
     ///   - refresh: stands in for `UsageModel.refresh`, so appearing never
     ///     runs the providers' real commands. nil lets the hint refresh for
-    ///     real — preloaded devices never read again either way.
+    ///     real — devices standing `.failed` or `.unknown` re-read too, so
+    ///     tests pinning preloaded states pass a no-op instead.
     init(
         model: UsageModel,
         devices: [Device] = [],
@@ -25,14 +28,11 @@ private final class UsageHintHarness {
         refresh: UsageHintLine.Refresh? = nil
     ) throws {
         self.model = model
-        let view = UsageHintLine(
-            usage: model,
-            devices: devices,
-            onSelect: onSelect,
-            refresh: refresh
-        )
-        .frame(width: 240)
-        root = NSHostingView(rootView: AnyView(view))
+        self.onSelect = onSelect
+        self.refresh = refresh
+        root = NSHostingView(rootView: AnyView(Self.view(
+            usage: model, devices: devices, onSelect: onSelect, refresh: refresh
+        )))
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 44), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: .darkAqua)
@@ -55,6 +55,26 @@ private final class UsageHintHarness {
         AccessibilityProbe.elements(in: window)
             .filter { $0.role != "AXWindow" }
             .compactMap(\.name)
+    }
+
+    /// Swaps the presented devices: `.task(id:)` refires on identity change,
+    /// the way the sidebar's device set changing re-runs the hint's refresh.
+    func setDevices(_ devices: [Device]) {
+        root.rootView = AnyView(Self.view(
+            usage: model, devices: devices, onSelect: onSelect, refresh: refresh
+        ))
+        root.layoutSubtreeIfNeeded()
+        settle()
+    }
+
+    private static func view(
+        usage: UsageModel,
+        devices: [Device],
+        onSelect: @escaping (Device) -> Void,
+        refresh: UsageHintLine.Refresh?
+    ) -> some View {
+        UsageHintLine(usage: usage, devices: devices, onSelect: onSelect, refresh: refresh)
+            .frame(width: 240)
     }
 
     /// The hint line's ideal height: zero when nothing renders.
@@ -192,6 +212,77 @@ final class UsageHintTests: XCTestCase {
             "state-less devices get their first read: \(reads)"
         )
         XCTAssertEqual(reads.map(\.1), [false, false], "the first read is not forced: \(reads)")
+    }
+
+    /// Every window reset but reads attempted: the neutral `Usage` entry keeps
+    /// the sheet one tap away — label only, no percentage or time — opening
+    /// it on the local device.
+    func testStatesWithoutOpenWindowRenderANeutralEntryThatOpensTheSheet() throws {
+        let studio = studio
+        let model = UsageModel()
+        model.preload(.local, [.claude: .failed("offline")])
+        model.preload(studio, [.codex: .readings([reading(.codex, windows: [
+            window("30d", left: 1, resetsIn: -60), // closed: refilled
+        ])])])
+        let app = AppModel()
+        let harness = try UsageHintHarness(
+            model: model, devices: [studio, .local],
+            onSelect: { app.usageDevice = $0 },
+            refresh: { _, _, _ in } // preloaded states stand; no real re-read
+        )
+
+        let usage = String(localized: "Usage")
+        XCTAssertEqual(harness.labels, [usage], "states but no open window: the neutral entry alone")
+        XCTAssertGreaterThan(harness.fittingHeight, 0)
+        try harness.pressHint(named: usage)
+        XCTAssertEqual(app.usageDevice, .local, "the neutral entry opens the sheet on the local device")
+    }
+
+    /// Never-read devices render nothing at all — the sheet's entry appears
+    /// only once a read has been attempted for a listed device.
+    func testNoStatesAtAllRendersNothing() throws {
+        let model = UsageModel()
+        model.preload(.local, [.claude: .failed("offline")])
+        let ghost = Device(id: UUID(), name: "Ghost", kind: .ssh(target: "ghost.example"))
+        let harness = try UsageHintHarness(
+            model: model, devices: [ghost],
+            refresh: { _, _, _ in } // nothing ever read
+        )
+
+        XCTAssertTrue(harness.labels.isEmpty, "no listed device ever read: \(harness.labels)")
+        XCTAssertEqual(harness.fittingHeight, 0)
+    }
+
+    /// A `.task` refire (device-set change) retries devices standing
+    /// `.failed` or `.unknown` and reads newcomers, all non-forced; devices
+    /// with fresh readings stand.
+    func testTaskRefireReadsFailedUnknownAndNewDevicesNonForced() throws {
+        let studio = studio
+        let model = UsageModel()
+        model.preload(studio, [
+            .claude: .failed("offline"),
+            .codex: .unknown, .gemini: .unknown, .opencode: .unknown,
+        ])
+        var reads: [(UUID, Bool)] = []
+        let harness = try UsageHintHarness(
+            model: model, devices: [studio],
+            refresh: { _, device, force in reads.append((device.id, force)) }
+        )
+        harness.settle(seconds: 0.3)
+        XCTAssertEqual(reads.map(\.0), [studio.id], "a failed provider re-reads on mount")
+        XCTAssertTrue(reads.allSatisfy { $0.1 == false }, "the retry is not forced: \(reads)")
+
+        let fresh = Device(id: UUID(), name: "Fresh", kind: .ssh(target: "fresh.example"))
+        harness.setDevices([studio, fresh])
+        harness.settle(seconds: 0.3)
+        XCTAssertEqual(
+            reads.map(\.0),
+            [studio.id, studio.id, fresh.id],
+            "the refire re-reads the failed device and reads the newcomer: \(reads)")
+        XCTAssertEqual(
+            reads.map(\.1),
+            [false, false, false],
+            "retries stay non-forced — the store's cache bounds the cost: \(reads)")
     }
 
     func testSeverityColorsFollowTheThresholdRuling() {
