@@ -214,11 +214,11 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
 - Consumes: `UsageModel.states` (fresh readings only), `GrazrWindow.left(now:)`/`label`, `GrazrStyle.time`, `AppModel.usageDevice`.
 - Produces: `struct UsageHintLine: View` — tightest open window across all devices/providers (`min` of `left(now:)` among windows with `isOpen`), rendered `"\(label) \(n)% · \(GrazrStyle.time(resetsAt, now: now))"` in the severity color grazr windows use; tap sets `model.usageDevice` to that window's device; renders nothing without fresh readings.
 
-- [ ] **Step 1: Write failing test** — inject states (two devices, windows 12% and 47% open, one closed) → hint shows `12%`; no fresh states → view is `EmptyView`-equivalent (frame zero content).
-- [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** the hint; insert `UsageHintLine` directly above `SidebarMachineStats` in the same padded block; add localization keys (en + zh-Hans); append the CHANGELOG entry under an `Unreleased`/next-version heading matching file convention.
-- [ ] **Step 4: Run everything** — `make kit-test && make uiux-test && make build` → green.
-- [ ] **Step 5: Commit** — `feat(usage): sidebar hint with tightest open window; changelog`.
+- [x] **Step 1: Write failing test** — inject states (two devices, windows 12% and 47% open, one closed) → hint shows `12%`; no fresh states → view is `EmptyView`-equivalent (frame zero content).
+- [x] **Step 2: Run, verify fail.**
+- [x] **Step 3: Implement** the hint; insert `UsageHintLine` directly above `SidebarMachineStats` in the same padded block; add localization keys (en + zh-Hans); append the CHANGELOG entry under an `Unreleased`/next-version heading matching file convention.
+- [x] **Step 4: Run everything** — `make kit-test && make uiux-test && make build` → green.
+- [x] **Step 5: Commit** — `feat(usage): sidebar hint with tightest open window; changelog`.
 
 ---
 
