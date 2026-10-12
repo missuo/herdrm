@@ -105,6 +105,40 @@ final class AgentUsageTests: XCTestCase {
         XCTAssertNil(parse(.codex, ""))
     }
 
+    // MARK: - State mapping
+
+    /// A read that never produced a result stays `unknown`: `.failed` is
+    /// reserved for thrown errors, never for undecodable-but-successful
+    /// output or a missing reading.
+    func testNilParseMapsToUnknown() {
+        XCTAssertEqual(UsageProviderState(parse: nil, fetchedAt: fetchedAt), .unknown)
+    }
+
+    /// A tailcat tunnel refuses command runs — `DeviceFileService.run`
+    /// throws before executing anything — and the store surfaces that
+    /// refusal as a thrown error, which the app's usage model maps to
+    /// `.failed`. The sheet must show a failure, never hang.
+    func testTailcatDeviceMapsToFailedState() async {
+        let tailcat = Device(name: "relay", kind: .tailcat)
+        let store = UsageStore(runner: { _, device in
+            guard case .tailcat = device.kind else {
+                XCTFail("nothing may run beyond the tunnel's refusal")
+                throw HerdrError.fileOperationFailed(Self.tailcatRefusal)
+            }
+            throw HerdrError.fileOperationFailed(Self.tailcatRefusal)
+        })
+
+        do {
+            _ = try await store.reading(.codex, on: tailcat)
+            XCTFail("the refusal must surface as a thrown error, not a reading")
+        } catch {
+            XCTAssertEqual(
+                (error as? HerdrError)?.errorDescription,
+                "file operation failed: \(Self.tailcatRefusal)",
+                "the refusal's message is what the sheet's failed state shows")
+        }
+    }
+
     private func parse(_ provider: UsageProvider, _ json: String) -> UsageParseResult? {
         UsageSource.parse(provider, stdout: Data(json.utf8), fetchedAt: fetchedAt)
     }
@@ -117,4 +151,7 @@ final class AgentUsageTests: XCTestCase {
           "cache_read": 0, "cache_write": 0}}
         """
     }
+
+    /// What `DeviceFileService.run` throws for commands over a tailcat tunnel.
+    private static let tailcatRefusal = "commands are not supported over a tailcat tunnel"
 }

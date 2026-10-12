@@ -353,6 +353,8 @@ final class AppModel: ObservableObject {
     @Published var terminalToRename: TerminalEntry?
     /// The device whose grazr accounts window is open.
     @Published var grazrAccountsDevice: Device?
+    /// The device whose usage sheet is open.
+    @Published var usageDevice: Device?
     /// The install's tailcat client public key ("nodekey:…") for hosts' allow
     /// lists. Loaded on demand, so users without tailcat devices never create one.
     @Published var tailcatClientPublicKey: String?
