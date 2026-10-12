@@ -1841,6 +1841,7 @@ final class AppModel: ObservableObject {
             try await service.sendKeys(paneID: paneID, keys: ["enter"])
             await refresh(device.id)
             grazrAccountsDevice = nil
+            usageDevice = nil
             isFileManagerActive = false
             if let workspaceID {
                 selectedSpace = SpaceRef(deviceID: device.id, workspaceID: workspaceID)
