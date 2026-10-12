@@ -50,7 +50,7 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
   - `enum UsageSource { static func parse(_ provider: UsageProvider, stdout: Data, fetchedAt: Date) -> UsageParseResult? }` — `nil` when stdout is not decodable JSON.
   - `enum UsageProviderState: Equatable, Sendable { case loading; case readings([AgentUsageReading]); case notInstalled; case unknown; case failed(String) }` + `UsageProviderState(parse:fetchedAt:)` mapping: `installed == false → .notInstalled`, `readings.isEmpty → .unknown`, else `.readings`.
 
-- [ ] **Step 1: Write failing tests** in `AgentUsageTests.swift`:
+- [x] **Step 1: Write failing tests** in `AgentUsageTests.swift`:
 
   - `testGrazrReportYieldsOneReadingPerAccount` — fixture: minimal grazr report JSON with `installed: true`, `active: "a1"`, two accounts (`a1` w/ one session window `remaining 12`, `a2` w/ weekly window); assert `parse(.claude, …)` gives `readings.count == 2`, first account name matches, `windows[0].group == "session"`, `remaining == 12`.
   - `testGrazrAbsentMeansNotInstalled` — `installed: false` fixture → `UsageParseResult.installed == false`, empty readings; `UsageProviderState(parse:)` → `.notInstalled`.
@@ -68,22 +68,22 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
   - `testGeminiAggregateParsesTokens` — normalized snippet output `{"installed": true, "tokens": {"input": 1, "output": 2, "reasoning": 0, "cache_read": 3, "cache_write": 0}, "files": 2}` → tokens mapped.
   - `testUndecodableStdoutReturnsNil` — `Data("".utf8)` → `parse(...) == nil`.
 
-- [ ] **Step 2: Run tests, verify they fail**
+- [x] **Step 2: Run tests, verify they fail**
 
   Run: `cd Packages/HerdrKit && swift test --filter AgentUsageTests`
   Expected: FAIL — types not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
   `AgentUsage.swift`: the five types above. Codex window mapping (exact): `group = minutes == 300 ? "session" : minutes == 10080 ? "weekly" : "\(minutes / 1440)d"`; `remaining = max(0, 100 - Int(used.rounded()))`; `kind = "usage"`; `scope = nil`.
   `UsageSources.swift`: `parse` per provider — claude decodes `GrazrReport` (readings = one per account, `account: account.name`, `windows: account.windows`, `tokens: nil`); codex/opencode/gemini decode the normalized DTOs above into one reading each (`account: nil`, except opencode: account from Task 2's auth section, `"Z.AI Coding Plan"` when listed). Any decode failure → `nil`.
 
-- [ ] **Step 4: Run tests, verify pass**
+- [x] **Step 4: Run tests, verify pass**
 
   Run: `cd Packages/HerdrKit && swift test --filter AgentUsageTests`
   Expected: PASS (8 tests).
 
-- [ ] **Step 5: Commit** — `git add Packages/HerdrKit/Sources/HerdrKit/AgentUsage.swift Packages/HerdrKit/Sources/HerdrKit/UsageSources.swift Packages/HerdrKit/Tests/HerdrKitTests/AgentUsageTests.swift && git commit -m "feat(usage): provider readings model and parsers"`
+- [x] **Step 5: Commit** — `git add Packages/HerdrKit/Sources/HerdrKit/AgentUsage.swift Packages/HerdrKit/Sources/HerdrKit/UsageSources.swift Packages/HerdrKit/Tests/HerdrKitTests/AgentUsageTests.swift && git commit -m "feat(usage): provider readings model and parsers"`
 
 ### Task 2: Device-side command builders
 
@@ -95,16 +95,16 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
 - Consumes: `SSHTunnel.remotePathExport`; `DeviceFileService(device: .local).run(_:timeout:)`; `Device.local`.
 - Produces: `enum UsageSource { static func command(for provider: UsageProvider) -> String? }` — `nil` for `.claude` (the store composes grazr's existing commands). Commands print exactly the normalized JSON Task 1 parses. All snippets must honor `$HOME` so tests can point them at fixture trees.
 
-- [ ] **Step 1: Write failing tests**:
+- [x] **Step 1: Write failing tests**:
 
   - `testCodexCommandReadsFixtureHome` — build a temp dir (`FileManager` temp + `sessions/rollout-x.jsonl` containing the spike record line), run `DeviceFileService(device: .local).run("HOME=\(tmp) " + UsageSource.command(for: .codex)!)`, decode via `UsageSource.parse(.codex, …)`; assert one `"30d"` window. Skips (`XCTSkip`) if python3 absent.
   - `testCodexCommandOnEmptyHomeIsInstalledFalseWithNoWindows` — empty temp HOME → `installed == true` is WRONG here: assert `installed == false` (no `~/.codex`).
   - `testGeminiCommandAggregatesFixtureUsageFiles` — temp HOME with `.gemini/tmp/<hash>/usage.json` files holding `{"total": {"tokens": {"input": 2, "output": 1, "cached": 3}}}`; assert summed tokens (`cache_read == 6` for two files). Two files whose second is invalid JSON → still sums the valid one (skip-on-parse-failure).
   - `testOpencodeCommandRunsWhereInstalled` — `XCTSkipUnless(command -v opencode)` equivalent (`which` via `Process`); run the built command; assert parse yields tokens with nonzero `input`. Assert the built string starts with `SSHTunnel.remotePathExport` (PATH on remote) and contains `auth list` after a `---AUTH---` separator echo.
 
-- [ ] **Step 2: Run tests, verify they fail** — `cd Packages/HerdrKit && swift test --filter UsageSourcesTests` → FAIL (command builders absent).
+- [x] **Step 2: Run tests, verify they fail** — `cd Packages/HerdrKit && swift test --filter UsageSourcesTests` → FAIL (command builders absent).
 
-- [ ] **Step 3: Implement `command(for:)`** — three commands, each `SSHTunnel.remotePathExport + "\n" +` body:
+- [x] **Step 3: Implement `command(for:)`** — three commands, each `SSHTunnel.remotePathExport + "\n" +` body:
 
   - **codex** (exact body):
     ```python
@@ -140,9 +140,9 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
 
   Swift-side: opencode parsing splits stdout at the `---AUTH---` marker when present (the marker is absent on `installed: false` output and in Task 1's plain fixtures — parsing must tolerate both); account = `"Z.AI Coding Plan"` iff that row appears.
 
-- [ ] **Step 4: Run tests, verify pass** — `cd Packages/HerdrKit && swift test --filter UsageSourcesTests` → PASS.
+- [x] **Step 4: Run tests, verify pass** — `cd Packages/HerdrKit && swift test --filter UsageSourcesTests` → PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(usage): device-side usage commands for codex, gemini, opencode"` (add the two files first).
+- [x] **Step 5: Commit** — `git commit -m "feat(usage): device-side usage commands for codex, gemini, opencode"` (add the two files first).
 
 ### Task 3: UsageStore — TTL cache + single-flight
 
