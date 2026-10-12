@@ -154,17 +154,17 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
 - Consumes: `UsageSource.command(for:)`, `UsageSource.parse`, `Grazr.refreshCommand`, `Grazr.readerCommand`, `Device` (`Identifiable`, `device.id`).
 - Produces: `actor UsageStore { init(runner: @escaping (String, Device) async throws -> Data = { try await DeviceFileService(device: $1).run($0) }, now: @escaping () -> Date = { Date() }); func reading(_ provider: UsageProvider, on device: Device, force: Bool = false) async throws -> UsageParseResult }` — 300 s TTL; in-flight task reuse per `"\(device.id):\(provider.rawValue)"`; errors clear both cache and in-flight (retryable); `.claude` runs `readerCommand` normally and `refreshCommand` then `readerCommand` when `force`.
 
-- [ ] **Step 1: Write failing tests** (`UsageStoreTests.swift`, injecting a recording runner and mutable clock):
+- [x] **Step 1: Write failing tests** (`UsageStoreTests.swift`, injecting a recording runner and mutable clock):
   - `testSingleFlightDeduplicatesConcurrentLoads` — runner sleeps 100 ms; two parallel `reading(.codex, on: .local)`; assert runner call count == 1, both results equal.
   - `testExpiredCacheRerunsCommand` — advance injected clock 301 s; second call re-runs (count 2).
   - `testFreshCacheServesWithoutRunning` — second call within TTL → count stays 1.
   - `testFailedRunIsRetryable` — runner throws once then succeeds; first call throws, second succeeds (no poisoned cache).
   - `testClaudeForceRunsRefreshThenReader` — `force: true` on `.claude`; assert command sequence `[refreshCommand, readerCommand]`; without force → `[readerCommand]`.
 
-- [ ] **Step 2: Run, verify fail** — `swift test --filter UsageStoreTests` → FAIL.
-- [ ] **Step 3: Implement** — actor with `cache: [Key: (at: Date, result: UsageParseResult)]`, `inFlight: [Key: Task<UsageParseResult, Error>]`; on Task completion remove from `inFlight`, store on success only.
-- [ ] **Step 4: Run, verify pass.**
-- [ ] **Step 5: Commit** — `feat(usage): single-flight usage store with five-minute cache`.
+- [x] **Step 2: Run, verify fail** — `swift test --filter UsageStoreTests` → FAIL.
+- [x] **Step 3: Implement** — actor with `cache: [Key: (at: Date, result: UsageParseResult)]`, `inFlight: [Key: Task<UsageParseResult, Error>]`; on Task completion remove from `inFlight`, store on success only.
+- [x] **Step 4: Run, verify pass.**
+- [x] **Step 5: Commit** — `feat(usage): single-flight usage store with five-minute cache`.
 
 ### Task 4: UsageModel + AppModel/ContentView hooks
 
