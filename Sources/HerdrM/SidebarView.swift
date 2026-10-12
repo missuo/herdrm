@@ -790,7 +790,12 @@ struct UsageHintLine: View {
     var refresh: Refresh? = nil
 
     var body: some View {
-        Group {
+        // A `Group` is transparent: while no row renders (nothing read yet)
+        // it forwards no view at all, so a `.task` on it never starts — no
+        // states without a task, no row without states. A `VStack` is a real
+        // container: it always appears (the task always runs) and still
+        // sizes to the row it carries.
+        VStack(spacing: 0) {
             if let tightest = Self.tightestOpenWindow(states: usage.states, devices: devices, now: now) {
                 Button {
                     onSelect(tightest.device)
