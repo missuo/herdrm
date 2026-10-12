@@ -513,6 +513,22 @@
         }
       }
     },
+    "Needs grazr": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Needs grazr"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "需要 grazr"
+          }
+        }
+      }
+    },
     "Gemini": {
       "localizations": {
         "en": {
@@ -557,6 +573,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Codex"
+          }
+        }
+      }
+    },
+    "Claude's quota readings come from grazr, a herdr plugin": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude's quota readings come from grazr, a herdr plugin"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude 的配额读数来自 herdr 插件 grazr"
           }
         }
       }
