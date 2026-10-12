@@ -179,11 +179,11 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
 - Consumes: `UsageStore`, `UsageProviderState`, `UsageProvider.allCases`.
 - Produces: `@MainActor final class UsageModel: ObservableObject { @Published private(set) var states: [UUID: [UsageProvider: UsageProviderState]]; func refresh(_ device: Device, force: Bool = false) async }` — TaskGroup over providers; catch → `.failed(String(localized: …))`; `AppModel.usageDevice` drives the sheet (Task 5) and the hint (Task 6).
 
-- [ ] **Step 1: Write failing tests** — extend `AgentUsageTests`: `testTailcatDeviceMapsToFailedState` uses `UsageStore(runner:)` injection whose closure asserts it is never called and rethrows; `UsageModel`-level mapping is covered by `testProviderStateFromParse` variants (Task 1 already added the pure mapping tests).
-- [ ] **Step 2: Run, verify fail.**
-- [ ] **Step 3: Implement** — `UsageModel` owns a `UsageStore` singleton; per device UUID it stores provider states; `refresh` never throws. AppModel gains the one published property (no logic — keep the fork diff minimal). ContentView gains `.sheet(item: $model.usageDevice) { device in UsageView(model: .init(), anchor: device) }` — view arrives in Task 5; until then present a minimal placeholder `EmptyView` extension in UsageModel.swift deleted by Task 5. *(If the placeholder offends, fold this task's sheet line into Task 5 — the AppModel property still lands here.)*
-- [ ] **Step 4: Build + run tests** — `make kit-test && make build` → green.
-- [ ] **Step 5: Commit** — `feat(usage): per-device provider state model and sheet hook`.
+- [x] **Step 1: Write failing tests** — extend `AgentUsageTests`: `testTailcatDeviceMapsToFailedState` uses `UsageStore(runner:)` injection whose closure asserts it is never called and rethrows; `UsageModel`-level mapping is covered by `testProviderStateFromParse` variants (Task 1 already added the pure mapping tests).
+- [x] **Step 2: Run, verify fail.**
+- [x] **Step 3: Implement** — `UsageModel` owns a `UsageStore` singleton; per device UUID it stores provider states; `refresh` never throws. AppModel gains the one published property (no logic — keep the fork diff minimal). ContentView gains `.sheet(item: $model.usageDevice) { device in UsageView(model: .init(), anchor: device) }` — view arrives in Task 5; until then present a minimal placeholder `EmptyView` extension in UsageModel.swift deleted by Task 5. *(If the placeholder offends, fold this task's sheet line into Task 5 — the AppModel property still lands here.)*
+- [x] **Step 4: Build + run tests** — `make kit-test && make build` → green.
+- [x] **Step 5: Commit** — `feat(usage): per-device provider state model and sheet hook`.
 
 ### Task 5: UsageView sheet
 
