@@ -196,11 +196,11 @@ Inputs/failure modes the task tests don't already pin — each gets a test in th
 - Consumes: `UsageModel.states`, `AgentUsageReading`, `GrazrWindow.left(now:)`/`label`, `GrazrStyle.time(_:now:)`, `Theme`, `SheetHeader`/`SheetSectionLabel` (ContentView.swift:1097/1123).
 - Produces: `struct UsageView: View` — sheet content; `UsageProviderCard` (private), `UsageWindowMeter` (private: label, `ProgressView(value: Double(left)/100)`, reset time via `GrazrStyle.time`).
 
-- [ ] **Step 1: Write failing UIUX tests** — render `UsageView` with injected states for: loading, `.readings` (claude 2 accounts + codex `"30d"` window + opencode tokens), `.notInstalled`, `.failed("offline")`; assert each card's accessibility labels exist (`accessibilityLabel` per card: `"Claude"`, `"Codex"`, …) and window meters expose `"98% left"`.
-- [ ] **Step 2: Run, verify fail** — `make uiux-test` → FAIL.
-- [ ] **Step 3: Implement** — one section per device (local first, then sidebar order), cards in `UsageProvider.allCases` order; claude renders one account row per reading (name, plan windows); tokens cards show `UsageTokens` formatted `input/output/cache` with a "usage" caption (never "quota"); footer shows `fetchedAt` age; ⌘R triggers `refresh(force: true)` on visible devices; remove Task 4's placeholder.
-- [ ] **Step 4: Run** — `make uiux-test && make build` → green.
-- [ ] **Step 5: Commit** — `feat(usage): usage sheet with provider meter cards`.
+- [x] **Step 1: Write failing UIUX tests** — render `UsageView` with injected states for: loading, `.readings` (claude 2 accounts + codex `"30d"` window + opencode tokens), `.notInstalled`, `.failed("offline")`; assert each card's accessibility labels exist (`accessibilityLabel` per card: `"Claude"`, `"Codex"`, …) and window meters expose `"98% left"`.
+- [x] **Step 2: Run, verify fail** — `make uiux-test` → FAIL.
+- [x] **Step 3: Implement** — one section per device (local first, then sidebar order), cards in `UsageProvider.allCases` order; claude renders one account row per reading (name, plan windows); tokens cards show `UsageTokens` formatted `input/output/cache` with a "usage" caption (never "quota"); footer shows `fetchedAt` age; ⌘R triggers `refresh(force: true)` on visible devices; remove Task 4's placeholder.
+- [x] **Step 4: Run** — `make uiux-test && make build` → green.
+- [x] **Step 5: Commit** — `feat(usage): usage sheet with provider meter cards`.
 
 ### Task 6: Sidebar footer hint + changelog
 
