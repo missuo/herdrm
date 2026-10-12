@@ -768,9 +768,12 @@ struct SidebarView: View {
 /// device and provider with fresh readings — the one with the least left —
 /// rendered `5h 12% · 20:27` in the severity colour (danger under 15 % left,
 /// warning under 25 %, the footer's quiet gray otherwise) and opening the
-/// Usage sheet on the window's device when tapped. Renders nothing until some
-/// provider has reported readings; the first read runs only for devices with
-/// no states yet, so the sheet's (or the store's cached) readings stand.
+/// Usage sheet on the window's device when tapped. When states stand but no
+/// window is open, a neutral `Usage` row keeps the sheet one tap away; both
+/// vanish only while no listed device has ever been read. The first read
+/// runs for devices with no states yet, and a `.task` refire re-reads
+/// devices standing `.failed` or `.unknown` — non-forced, so the sheet's
+/// (or the store's cached) readings stand within the store's window.
 struct UsageHintLine: View {
     /// Stands in for `UsageModel.refresh` in the hint's UIUX tests, so
     /// appearing never runs the providers' real commands. nil refreshes
@@ -811,6 +814,30 @@ struct UsageHintLine: View {
                 .focusEffectDisabled()
                 .help(String(localized: "Usage across your devices — click for details"))
                 .accessibilityLabel(hintText(tightest.window))
+            } else if Self.hasAnyReadState(states: usage.states, devices: devices),
+                      let fallback = Self.neutralEntryDevice(devices: devices) {
+                Button {
+                    onSelect(fallback)
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chart.bar")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.textGhost)
+                        Text("Usage")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .help(String(localized: "Usage across your devices — click for details"))
+                .accessibilityLabel(String(localized: "Usage"))
             }
         }
         .task(id: devices.map(\.id)) { await refreshUnknownDevices() }
@@ -862,17 +889,48 @@ struct UsageHintLine: View {
         return Theme.textSecondary
     }
 
-    /// First read for devices with no states yet; the sheet's guard — cached
-    /// or preloaded states stand, so a re-mount re-runs nothing inside the
-    /// store's five-minute window.
+    /// First read for devices with no states yet, and — when `.task` refires
+    /// on a device-set change — a retry for devices where any provider stands
+    /// `.failed` or `.unknown`. Plain non-forced refreshes: the store's
+    /// five-minute cache and single-flight fold bound the cost.
     private func refreshUnknownDevices() async {
-        for device in devices where usage.states[device.id] == nil {
+        for device in devices where Self.needsRead(usage.states[device.id]) {
             if let refresh {
                 await refresh(usage, device, false)
             } else {
                 await usage.refresh(device, force: false)
             }
         }
+    }
+
+    /// Whether `device`'s states call for a read: never read, or any
+    /// provider standing `.failed` or `.unknown` — every window reset, say —
+    /// so the sheet's one entry point keeps a real picture to open onto.
+    static func needsRead(_ states: [UsageProvider: UsageProviderState]?) -> Bool {
+        guard let states else { return true }
+        return states.contains { _, state in
+            switch state {
+            case .failed, .unknown: return true
+            default: return false
+            }
+        }
+    }
+
+    /// Whether any listed device has ever been read — the neutral entry's
+    /// condition: states stand as soon as a read ran, even when nothing
+    /// open came of it. Devices outside `devices` never count: the tap
+    /// could not open a sheet on them.
+    static func hasAnyReadState(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device]
+    ) -> Bool {
+        devices.contains { states[$0.id] != nil }
+    }
+
+    /// The device a neutral entry opens the sheet on: the local device when
+    /// listed, else the first.
+    static func neutralEntryDevice(devices: [Device]) -> Device? {
+        devices.first { $0 == Device.local } ?? devices.first
     }
 }
 

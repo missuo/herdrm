@@ -208,7 +208,11 @@ public enum UsageSource {
         let (statsData, auth) = splitAtAuthMarker(stdout)
         guard let stats = try? JSONDecoder().decode(OpencodeStats.self, from: statsData) else { return nil }
         guard stats.installed != false else { return UsageParseResult(installed: false, readings: []) }
-        guard stats.tokens != nil || stats.range != nil else { return nil }
+        // An installed opencode with an empty stats payload has nothing to
+        // show yet — codex's shape: `.unknown`, never a thrown failure.
+        guard stats.tokens != nil || stats.range != nil else {
+            return UsageParseResult(installed: true, readings: [])
+        }
         let range = stats.range
         let reading = AgentUsageReading(
             id: UsageProvider.opencode.rawValue, provider: .opencode,

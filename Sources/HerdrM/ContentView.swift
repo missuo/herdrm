@@ -115,7 +115,7 @@ struct RootView: View {
         .sheet(item: $model.terminalToRename) { entry in RenameTerminalSheet(model: model, entry: entry) }
         .sheet(item: $model.deviceToEdit) { device in EditDeviceSheet(model: model, device: device) }
         .sheet(item: $model.grazrAccountsDevice) { device in GrazrAccountsSheet(model: model, device: device) }
-        .sheet(item: $model.usageDevice) { device in UsageView(model: .init(), anchor: device) }
+        .sheet(item: $model.usageDevice) { device in UsageView(model: .init(), anchor: device, devices: model.devices) }
         .sheet(item: $model.sshAuthenticationRequest) { request in
             SSHAuthenticationSheet(model: model, request: request)
         }

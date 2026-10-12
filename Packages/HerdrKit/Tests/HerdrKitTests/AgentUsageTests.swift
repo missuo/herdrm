@@ -90,6 +90,18 @@ final class AgentUsageTests: XCTestCase {
         XCTAssertEqual(result.readings.first?.tokens?.periodEnd, Date(timeIntervalSince1970: 1_767_830_399))
     }
 
+    /// An installed opencode with an empty stats payload has nothing to show
+    /// yet — codex's shape: the card reads `.unknown`, never the store's
+    /// thrown "no usable usage" failure.
+    func testOpencodeEmptyStatsYieldsUnknown() throws {
+        let result = try XCTUnwrap(parse(.opencode, """
+            {"range": null, "tokens": null, "sessions": 0, "messages": 0}
+            """))
+        XCTAssertEqual(result.installed, true)
+        XCTAssertEqual(result.readings, [])
+        XCTAssertEqual(UsageProviderState(parse: result, fetchedAt: fetchedAt), .unknown)
+    }
+
     func testGeminiAggregateParsesTokens() throws {
         let result = try XCTUnwrap(parse(.gemini, """
             {"installed": true, "tokens": {"input": 1, "output": 2, "reasoning": 0,
