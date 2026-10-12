@@ -14,6 +14,90 @@ public enum UsageSource {
         }
     }
 
+    /// The shell command that prints `provider`'s normalized JSON on the
+    /// device, nil for Claude (the store runs grazr's own commands there).
+    /// Each prepends the remote PATH export so the tools resolve over SSH;
+    /// locally that export is a harmless no-op.
+    public static func command(for provider: UsageProvider) -> String? {
+        switch provider {
+        case .claude: nil
+        case .codex: codexCommand
+        case .opencode: opencodeCommand
+        case .gemini: geminiCommand
+        }
+    }
+
+    // MARK: - Device-side commands
+
+    /// Scans the newest codex session rollouts for the latest `token_count`
+    /// record and prints it normalized, the record `parseCodex` reads. Only
+    /// token totals and rate-limit windows leave the device; credentials
+    /// (`~/.codex/auth.json`) are never touched.
+    private static let codexCommand = SSHTunnel.remotePathExport + "\n"
+        + #"""
+        python3 - <<'USAGE_EOF'
+        import glob, json, os
+        sessions = os.path.join(os.path.expanduser("~"), ".codex", "sessions")
+        report = {"installed": os.path.isdir(sessions), "windows": [], "tokens": None, "updated": None}
+        files = sorted(glob.glob(os.path.join(sessions, "**", "*.jsonl"), recursive=True), key=os.path.getmtime) if report["installed"] else []
+        for path in reversed(files[-20:]):
+            for line in reversed(open(path, errors="replace").read().splitlines()):
+                try: rec = json.loads(line)
+                except Exception: continue
+                payload = rec.get("payload") or {}
+                if payload.get("type") != "token_count": continue
+                info, limits = payload.get("info") or {}, payload.get("rate_limits") or {}
+                total = info.get("total_token_usage") or {}
+                report["tokens"] = {"input": total.get("input_tokens"), "output": total.get("output_tokens"),
+                                    "reasoning": total.get("reasoning_output_tokens"),
+                                    "cache_read": total.get("cached_input_tokens"),
+                                    "cache_write": total.get("cache_write_input_tokens")}
+                report["updated"] = rec.get("timestamp")
+                report["windows"] = [w for side in ("primary", "secondary")
+                                     if isinstance((w := limits.get(side)), dict)
+                                     and isinstance(w.get("used_percent"), (int, float))]
+                break
+            else: continue
+            break
+        print(json.dumps(report))
+        USAGE_EOF
+        """#
+
+    /// Sums the last week's gemini `usage.json` files into one normalized
+    /// total, the record `parseGemini` reads. Files that fail to parse are
+    /// skipped; gemini writes no reasoning or cache-write counts.
+    private static let geminiCommand = SSHTunnel.remotePathExport + "\n"
+        + #"""
+        python3 - <<'USAGE_EOF'
+        import glob, json, os, time
+        home = os.path.expanduser("~")
+        totals, files = {"input": 0, "output": 0, "cached": 0}, 0
+        for path in glob.glob(os.path.join(home, ".gemini", "tmp", "*", "usage.json")):
+            if os.path.getmtime(path) < time.time() - 7 * 86400:
+                continue
+            try:
+                with open(path) as handle:
+                    tokens = (json.load(handle).get("total") or {}).get("tokens") or {}
+            except Exception:
+                continue
+            for key in totals:
+                if isinstance(tokens.get(key), (int, float)):
+                    totals[key] += int(tokens[key])
+            files += 1
+        print(json.dumps({
+            "installed": os.path.isdir(os.path.join(home, ".gemini")),
+            "tokens": {"input": totals["input"], "output": totals["output"], "reasoning": 0,
+                       "cache_read": totals["cached"], "cache_write": 0},
+            "files": files}))
+        USAGE_EOF
+        """#
+
+    /// Runs `opencode stats` for the last week with `opencode auth list`
+    /// after the `---AUTH---` marker `parseOpencode` splits on; where
+    /// opencode is missing, the installed-false envelope instead.
+    private static let opencodeCommand = SSHTunnel.remotePathExport + "\n"
+        + #"if command -v opencode >/dev/null 2>&1; then opencode stats --json --days 7; echo; echo ---AUTH---; opencode auth list; else echo '{"installed": false}'; fi"#
+
     // MARK: - Claude
 
     /// The grazr reader's report: one reading per enrolled account, quota
