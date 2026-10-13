@@ -292,7 +292,7 @@ private struct UsageHistoryBlock: View {
                 ForEach(Self.charted, id: \.self) { provider in
                     if let tokens = day.tokens[provider], Self.total(tokens) > 0 {
                         BarMark(
-                            x: .value(String(localized: "Day"), day.date, unit: .day),
+                            x: .value(String(localized: "Day"), Self.localStart(of: day.date), unit: .day),
                             y: .value(String(localized: "Tokens"), Self.total(tokens)),
                             stacking: .standard
                         )
@@ -396,16 +396,19 @@ private struct UsageHistoryBlock: View {
         visibleDays.isEmpty && Self.modelRows(in: history).isEmpty
     }
 
-    /// The days inside the window, oldest first — the chart's whole input.
+    /// The days inside the window, oldest first — the chart's whole input,
+    /// every day normalized through `localStart(of:)` so the cutoff counts
+    /// days in the same calendar the bars and labels render in.
     private var visibleDays: [UsageDay] {
-        let cutoff = Self.utcStart(of: now).addingTimeInterval(-Double(window.rawValue - 1) * 86400)
+        let cutoff = Self.localStart(of: now).addingTimeInterval(-Double(window.rawValue - 1) * 86400)
         return history.days
-            .filter { $0.date >= cutoff }
-            .sorted { $0.date < $1.date }
+            .filter { Self.localStart(of: $0.date) >= cutoff }
+            .sorted { Self.localStart(of: $0.date) < Self.localStart(of: $1.date) }
     }
 
-    /// "Oct 12 · 1.2M tokens" — the day's label in the transcript's own
-    /// zone (its midnight-UTC date), every charted provider summed.
+    /// "Oct 12 · 1.2M tokens" — the day's label in the device's calendar,
+    /// the same one the chart's axis buckets by, every charted provider
+    /// summed.
     private func dayLabel(_ day: UsageDay) -> String {
         let tokens = Self.charted.reduce(0) { $0 + (day.tokens[$1].map(Self.total) ?? 0) }
         return String(localized: "\(Self.dayText(day.date)) · \(Self.count(tokens)) tokens")
@@ -448,20 +451,21 @@ private struct UsageHistoryBlock: View {
         tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite
     }
 
-    /// Midnight UTC of `date`'s UTC day — the window the day dates live in.
-    private static func utcStart(of date: Date) -> Date {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
-        return calendar.startOfDay(for: date)
+    /// `date`'s start of day in the device's calendar — the one day
+    /// identity the chart's axis buckets by, the window cutoff counts,
+    /// and the labels format, so a bar, its axis tick, and its
+    /// accessibility label never disagree for users west or east of UTC.
+    private static func localStart(of date: Date) -> Date {
+        Calendar.current.startOfDay(for: date)
     }
 
-    /// "Oct 12" — the day's own label, UTC like the underlying date.
+    /// "Oct 12" — the day's own label, in the device's calendar like
+    /// every other day the block renders.
     private static func dayText(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = .current
-        formatter.timeZone = TimeZone(identifier: "UTC") ?? .current
         formatter.setLocalizedDateFormatFromTemplate("MMMd")
-        return formatter.string(from: date)
+        return formatter.string(from: localStart(of: date))
     }
 
     /// The K/M style the provider cards' token lines use.

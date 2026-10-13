@@ -1601,38 +1601,6 @@
         }
       }
     },
-    "%@ %lld% · %@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ %lld% · %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 剩余 %lld%% · %@"
-          }
-        }
-      }
-    },
-    "%@ %lld%": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ %lld%"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "%@ 剩余 %lld%%"
-          }
-        }
-      }
-    },
     "$%@ (approx.)": {
       "localizations": {
         "en": {
