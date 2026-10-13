@@ -125,6 +125,44 @@ final class UsageHistoryTests: XCTestCase {
         XCTAssertEqual(history?.modelTotals[.codex]?["gpt-5-codex"]?.input, 300)
     }
 
+    // MARK: - OpenCode
+
+    /// The pinned 2026-10-13 `opencode stats --json --days 30` shape: tokens
+    /// exist only as per-model range totals (`activity` is steps-only), so
+    /// `parse` merges every variant of one bare `model.id` into a single
+    /// entry and emits no daily series. The installed-false envelope and any
+    /// non-stats output are nil, matching the claude/codex parse semantics.
+    /// With opencode installed the real command must yield positive merged
+    /// totals too.
+    func testOpencodeHistoryMapsModelTotalsOnly() async throws {
+        let document = #"{"range": {"start": 1757894400000, "end": 1760486400000}, "sessions": 42, "activity": [{"date": "2026-09-14", "steps": 14}], "models": [{"model": {"id": "glm-5.3", "providerID": "zai-coding-plan", "variant": "default"}, "steps": 5227, "tokens": {"input": 11758747, "output": 1690291, "reasoning": 2101214, "cache": {"read": 406215424, "write": 0}}, "cost": 0}, {"model": {"id": "glm-5.3", "providerID": "zai-coding-plan", "variant": "high"}, "steps": 2613, "tokens": {"input": 5878061, "output": 845146, "reasoning": 1050607, "cache": {"read": 203107712, "write": 0}}, "cost": 0}]}"#
+        let history = try XCTUnwrap(
+            UsageHistorySource.parse(.opencode, stdout: Data(document.utf8), fetchedAt: fetchedAt))
+        XCTAssertEqual(history.generatedAt, fetchedAt)
+        XCTAssertEqual(history.days, [])
+        XCTAssertEqual(history.modelTotals[.opencode]?.count, 1)
+        XCTAssertEqual(
+            history.modelTotals[.opencode]?["glm-5.3"],
+            UsageTokens(
+                input: 17_636_808, output: 2_535_437, reasoning: 3_151_821,
+                cacheRead: 609_323_136, cacheWrite: 0))
+
+        XCTAssertNil(
+            UsageHistorySource.parse(
+                .opencode, stdout: Data(#"{"installed": false}"#.utf8), fetchedAt: fetchedAt))
+        XCTAssertNil(UsageHistorySource.parse(.opencode, stdout: Data(), fetchedAt: fetchedAt))
+
+        guard hasTool("opencode") else { throw XCTSkip("opencode is not installed") }
+        let command = try XCTUnwrap(UsageHistorySource.command(for: .opencode))
+        let output = try await DeviceFileService(device: .local).run(command)
+        let live = try XCTUnwrap(
+            UsageHistorySource.parse(.opencode, stdout: output, fetchedAt: fetchedAt))
+        XCTAssertTrue(live.days.isEmpty)
+        let totals = try XCTUnwrap(live.modelTotals[.opencode])
+        XCTAssertFalse(totals.isEmpty)
+        XCTAssertTrue(totals.values.reduce(0) { $0 + $1.input } > 0)
+    }
+
     // MARK: - Parse
 
     /// The normalized document the heredocs print decodes to a `UsageHistory`
@@ -158,10 +196,10 @@ final class UsageHistoryTests: XCTestCase {
 
     // MARK: - Commands
 
-    /// Claude and codex have history commands — heredoc streaming with the
-    /// 30-day mtime filter ahead of any file open; opencode (Task 4) and
-    /// gemini (no transcripts) have none yet.
-    func testHistoryCommandsExistForClaudeAndCodexOnly() throws {
+    /// Claude and codex stream heredocs with the 30-day mtime filter ahead
+    /// of any file open; opencode runs its guarded stats call; gemini (no
+    /// transcripts) has none.
+    func testHistoryCommandsExistForClaudeCodexAndOpencode() throws {
         for provider in [UsageProvider.claude, .codex] {
             let command = try XCTUnwrap(UsageHistorySource.command(for: provider))
             XCTAssertTrue(command.hasPrefix(SSHTunnel.remotePathExport))
@@ -177,7 +215,11 @@ final class UsageHistoryTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(UsageHistorySource.command(for: .claude)).contains("projects"))
         XCTAssertTrue(try XCTUnwrap(UsageHistorySource.command(for: .codex)).contains(".codex"))
         XCTAssertTrue(try XCTUnwrap(UsageHistorySource.command(for: .codex)).contains("sessions"))
-        XCTAssertNil(UsageHistorySource.command(for: .opencode))
+        let opencode = try XCTUnwrap(UsageHistorySource.command(for: .opencode))
+        XCTAssertTrue(opencode.hasPrefix(SSHTunnel.remotePathExport))
+        XCTAssertTrue(opencode.contains("if command -v opencode >/dev/null 2>&1; then"))
+        XCTAssertTrue(opencode.contains("opencode stats --json --days 30"))
+        XCTAssertTrue(opencode.contains(#"else echo '{"installed": false}'; fi"#))
         XCTAssertNil(UsageHistorySource.command(for: .gemini))
     }
 
