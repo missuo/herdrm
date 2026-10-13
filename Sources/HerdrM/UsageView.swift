@@ -1,16 +1,22 @@
+import Charts
 import HerdrKit
 import SwiftUI
 
 /// The usage sheet: one section per device, one card per provider, in the
 /// grazr Accounts sheet's visual language. Everything it shows comes
-/// precomputed from `UsageModel` — the view only arranges states, meters and
-/// the refresh affordance. Cards describe usage, never quota: providers
-/// without quota windows show token statistics captioned as usage.
+/// precomputed from `UsageModel` — the view only arranges states, meters,
+/// the history charts and the refresh affordance. Cards describe usage,
+/// never quota: providers without quota windows show token statistics
+/// captioned as usage.
 struct UsageView: View {
     /// Stands in for `UsageModel.refresh(force:)` in the sheet's UIUX tests,
     /// so pressing Refresh never runs the providers' real commands. nil
     /// refreshes for real.
     typealias Refresh = (UsageModel, Device, _ force: Bool) async -> Void
+
+    /// Stands in for `UsageModel.refreshHistory(_:)` the same way, so the
+    /// history reads stay as stubbed as the quota ones in tests.
+    typealias HistoryRefresh = (UsageModel, Device) async -> Void
 
     @ObservedObject var model: UsageModel
     let anchor: Device
@@ -18,6 +24,11 @@ struct UsageView: View {
     /// The sheet line passes only the anchor, so this is usually just it.
     var devices: [Device] = []
     var refresh: Refresh?
+    /// nil refreshes history for real. Injected together with `refresh`, it
+    /// replaces the history half of a refresh; without it an injected
+    /// `refresh` leaves history untouched, so quota-only test harnesses
+    /// never trigger real history commands.
+    var historyRefresh: HistoryRefresh?
 
     @Environment(\.dismiss) private var dismiss
     @State private var isRefreshing = false
@@ -27,11 +38,18 @@ struct UsageView: View {
     /// key from the other side.
     @AppStorage("usage.sidebarWatchedModel") private var watchedModel = ""
 
-    init(model: UsageModel, anchor: Device, devices: [Device] = [], refresh: Refresh? = nil) {
+    init(
+        model: UsageModel,
+        anchor: Device,
+        devices: [Device] = [],
+        refresh: Refresh? = nil,
+        historyRefresh: HistoryRefresh? = nil
+    ) {
         _model = ObservedObject(wrappedValue: model)
         self.anchor = anchor
         self.devices = devices
         self.refresh = refresh
+        self.historyRefresh = historyRefresh
     }
 
     var body: some View {
@@ -123,6 +141,11 @@ struct UsageView: View {
                         now: Date()
                     )
                 }
+                // One history per device once its first read lands; gemini
+                // keeps no transcripts and simply contributes nothing.
+                if let history = model.histories[device.id] {
+                    UsageHistoryBlock(history: history, now: Date())
+                }
             }
         }
     }
@@ -176,6 +199,301 @@ struct UsageView: View {
             await refresh(model, device, force)
         } else {
             await model.refresh(device, force: force)
+        }
+        // History rides along on every refresh path — appear and ⌘R. A
+        // quota-only test seam leaves history alone rather than running
+        // real commands behind the stub's back.
+        if let historyRefresh {
+            await historyRefresh(model, device)
+        } else if refresh == nil {
+            await model.refreshHistory(device)
+        }
+    }
+}
+
+/// The chart's span: seven days by default, the whole fetched month as the
+/// alternative.
+private enum HistoryWindow: Int, CaseIterable, Hashable {
+    case seven = 7
+    case thirty = 30
+
+    var label: String {
+        switch self {
+        case .seven: String(localized: "7d")
+        case .thirty: String(localized: "30d")
+        }
+    }
+}
+
+/// One device's history card: stacked daily token bars (claude and codex —
+/// the only providers whose transcripts carry a daily series), a 7d/30d
+/// toggle, the approximate dollar total over every model the history
+/// priced, and a per-model breakdown for all three providers. The chart
+/// stays dumb — data in, bars out; everything it reads is precomputed.
+private struct UsageHistoryBlock: View {
+    let history: UsageHistory
+    let now: Date
+
+    @State private var window: HistoryWindow = .seven
+
+    /// The providers charted, in stack order. OpenCode reports only 30-day
+    /// per-model totals (no daily series), gemini nothing at all.
+    private static let charted: [UsageProvider] = [.claude, .codex]
+
+    /// The providers with per-model rows.
+    private static let modeled: [UsageProvider] = [.claude, .codex, .opencode]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(String(localized: "Usage history"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Spacer()
+                Picker(String(localized: "History range"), selection: $window) {
+                    ForEach(HistoryWindow.allCases, id: \.self) { span in
+                        Text(span.label).tag(span)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            if isEmpty {
+                Text(String(localized: "No history yet"))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(String(localized: "No history yet"))
+            } else {
+                chart
+                legend
+                totalsRow
+                modelRows
+                ageRow
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.itemWash))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(String(localized: "Usage history"))
+    }
+
+    // MARK: - Chart
+
+    /// Stacked bars of each day's tokens per provider, one accessibility
+    /// child per day so VoiceOver reads "Oct 12 · 1.2M tokens" instead of
+    /// the chart's opaque marks.
+    private var chart: some View {
+        Chart {
+            ForEach(visibleDays) { day in
+                ForEach(Self.charted, id: \.self) { provider in
+                    if let tokens = day.tokens[provider], Self.total(tokens) > 0 {
+                        BarMark(
+                            x: .value(String(localized: "Day"), day.date, unit: .day),
+                            y: .value(String(localized: "Tokens"), Self.total(tokens)),
+                            stacking: .standard
+                        )
+                        .foregroundStyle(Self.color(provider))
+                    }
+                }
+            }
+        }
+        .chartLegend(.hidden)
+        .frame(height: 110)
+        .accessibilityChildren {
+            ForEach(visibleDays) { day in
+                Color.clear
+                    .frame(width: 8, height: 8)
+                    .accessibilityElement()
+                    .accessibilityLabel(dayLabel(day))
+            }
+        }
+    }
+
+    /// Dots and names for the stacked series — the chart's own legend is
+    /// hidden so the palette stays the sheet's. Decorative: VoiceOver
+    /// already meets the providers on their cards.
+    private var legend: some View {
+        HStack(spacing: 12) {
+            ForEach(Self.charted, id: \.self) { provider in
+                HStack(spacing: 4) {
+                    Circle().fill(Self.color(provider)).frame(width: 6, height: 6)
+                    Text(Self.name(provider))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            Spacer()
+        }
+        .accessibilityHidden(true)
+    }
+
+    // MARK: - Totals and models
+
+    /// The dollar figure over every model the history priced at its list
+    /// rate — approximate even when every model matched, because list
+    /// rates are themselves the estimate. The model totals span the
+    /// fetched 30-day range; days carry no per-model split.
+    private var totalsRow: some View {
+        let dollars = String(localized: "$\(String(format: "%.2f", totalDollars)) (approx.)")
+        return HStack(alignment: .firstTextBaseline) {
+            SheetSectionLabel("Total")
+            Spacer()
+            Text(dollars)
+                .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.text)
+                .help(String(localized: "Priced at API list rates; table fetched \(UsagePricing.tableUpdated)"))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Total") + ", " + dollars)
+    }
+
+    @ViewBuilder
+    private var modelRows: some View {
+        let rows = Self.modelRows(in: history)
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(rows, id: \.id) { row in
+                    let tokens = String(localized: "\(Self.count(Self.total(row.tokens))) tokens")
+                    HStack {
+                        Text(verbatim: row.model)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Text(tokens)
+                            .font(.system(size: 11.5).monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(row.model + ", " + tokens)
+                }
+            }
+        }
+    }
+
+    /// When the history was generated, so stale data reads as stale — the
+    /// cards' "Read X ago" discipline.
+    private var ageRow: some View {
+        Text(String(localized: "Updated \(Self.age(history.generatedAt, now: now))"))
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textGhost)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(String(localized: "Updated \(Self.age(history.generatedAt, now: now))"))
+    }
+
+    // MARK: - Derived data
+
+    /// Nothing chartable and no model rows: the device ran its history
+    /// commands but has no transcript usage to show.
+    private var isEmpty: Bool {
+        visibleDays.isEmpty && Self.modelRows(in: history).isEmpty
+    }
+
+    /// The days inside the window, oldest first — the chart's whole input.
+    private var visibleDays: [UsageDay] {
+        let cutoff = Self.utcStart(of: now).addingTimeInterval(-Double(window.rawValue - 1) * 86400)
+        return history.days
+            .filter { $0.date >= cutoff }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// "Oct 12 · 1.2M tokens" — the day's label in the transcript's own
+    /// zone (its midnight-UTC date), every charted provider summed.
+    private func dayLabel(_ day: UsageDay) -> String {
+        let tokens = Self.charted.reduce(0) { $0 + (day.tokens[$1].map(Self.total) ?? 0) }
+        return String(localized: "\(Self.dayText(day.date)) · \(Self.count(tokens)) tokens")
+    }
+
+    private var totalDollars: Double {
+        var dollars = 0.0
+        for provider in Self.modeled {
+            for (model, tokens) in history.modelTotals[provider] ?? [:] where Self.total(tokens) > 0 {
+                dollars += UsagePricing.cost(of: tokens, model: model).dollars
+            }
+        }
+        return dollars
+    }
+
+    // MARK: - Formatting
+
+    /// One model row: provider-scoped identity, the raw tokens, zero-token
+    /// entries omitted.
+    private static func modelRows(in history: UsageHistory) -> [ModelRow] {
+        var out: [ModelRow] = []
+        for provider in modeled {
+            for (model, tokens) in (history.modelTotals[provider] ?? [:]).sorted(by: { $0.key < $1.key })
+            where total(tokens) > 0 {
+                out.append(ModelRow(id: "\(provider.rawValue):\(model)", model: model, tokens: tokens))
+            }
+        }
+        return out
+    }
+
+    private struct ModelRow: Identifiable {
+        let id: String
+        let model: String
+        let tokens: UsageTokens
+    }
+
+    /// A reading's whole size. Reasoning is a subset of output (it prices
+    /// as output for the same reason), so it is not added again.
+    private static func total(_ tokens: UsageTokens) -> Int {
+        tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite
+    }
+
+    /// Midnight UTC of `date`'s UTC day — the window the day dates live in.
+    private static func utcStart(of date: Date) -> Date {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC") ?? .current
+        return calendar.startOfDay(for: date)
+    }
+
+    /// "Oct 12" — the day's own label, UTC like the underlying date.
+    private static func dayText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.timeZone = TimeZone(identifier: "UTC") ?? .current
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+        return formatter.string(from: date)
+    }
+
+    /// The K/M style the provider cards' token lines use.
+    private static func count(_ n: Int) -> String {
+        switch n {
+        case 0..<1_000: return "\(n)"
+        case 1_000..<1_000_000: return String(format: "%.1fK", Double(n) / 1_000)
+        default: return String(format: "%.1fM", Double(n) / 1_000_000)
+        }
+    }
+
+    private static func age(_ date: Date, now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
+
+    /// Each provider's series color, from the sheet's palette: claude the
+    /// rust accent, codex the palette's teal (the deliberately
+    /// non-semantic chip tints).
+    private static func color(_ provider: UsageProvider) -> Color {
+        switch provider {
+        case .claude: Theme.accent
+        case .codex: Theme.devicePalette[1]
+        default: Theme.textSecondary
+        }
+    }
+
+    private static func name(_ provider: UsageProvider) -> String {
+        switch provider {
+        case .claude: String(localized: "Claude")
+        case .codex: String(localized: "Codex")
+        case .opencode: String(localized: "OpenCode")
+        case .gemini: String(localized: "Gemini")
         }
     }
 }
