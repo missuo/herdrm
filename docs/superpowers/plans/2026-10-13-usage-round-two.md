@@ -111,9 +111,9 @@
 - Consumes: Task 3's `parse`; live shape (pinned by probe 2026-10-13): `opencode stats --json --days 30` → `models: [{model: {id, providerID, variant}, steps, tokens: {input, output, reasoning, cache: {read, write}}, cost}]`; `activity` is steps-only and is **not used**.
 - Produces: `UsageHistorySource.command(for: .opencode)` = remotePathExport + guarded `opencode stats --json --days 30`; parse maps `models[].model.id` → `modelTotals["opencode"]`, `days: []` (no daily series — spec refinement).
 
-- [ ] **Step 1: Failing test** — `testOpencodeHistoryMapsModelTotalsOnly` — fixture from the live output (glm-5.3 default + high variants; assert `days.isEmpty`, two model entries, cache read 406_215_424).
-- [ ] **Step 2: Verify fail.** **Step 3: Implement** (command guard pattern from Task 1; merge variant totals by bare `model.id`). **Step 4: Verify pass.**
-- [ ] **Step 5: Commit** — `feat(usage): opencode per-model history totals`.
+- [x] **Step 1: Failing test** — `testOpencodeHistoryMapsModelTotalsOnly` — fixture from the live output (glm-5.3 default + high variants; assert `days.isEmpty`, two model entries, cache read 406_215_424).
+- [x] **Step 2: Verify fail.** **Step 3: Implement** (command guard pattern from Task 1; merge variant totals by bare `model.id`). **Step 4: Verify pass.**
+- [x] **Step 5: Commit** — `feat(usage): opencode per-model history totals`.
 
 ### Task 5: Pricing
 
