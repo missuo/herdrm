@@ -149,10 +149,10 @@
 **Files:**
 - Modify: `Resources/Localizable.xcstrings` (retire "Needs grazr" + tooltip keys if unreferenced; add any missing en/zh-Hans), `CHANGELOG.md`
 
-- [ ] **Step 1:** Grep for unreferenced usage keys; remove only provably dead ones; verify en+zh-Hans parity for every live key (`python3` key-order + parity check).
-- [ ] **Step 2:** CHANGELOG entry under `[Unreleased]` → `### Added`/`### Changed` matching file convention (charts, USAGE column, claude via CLI, grazr removed from usage).
-- [ ] **Step 3: Full gates** — `make kit-test && make uiux-test && make build` → green.
-- [ ] **Step 4: Commit** — `chore(usage): round-two cleanup and changelog`.
+- [x] **Step 1:** Grep for unreferenced usage keys; remove only provably dead ones; verify en+zh-Hans parity for every live key (`python3` key-order + parity check).
+- [x] **Step 2:** CHANGELOG entry under `[Unreleased]` → `### Added`/`### Changed` matching file convention (charts, USAGE column, claude via CLI, grazr removed from usage).
+- [x] **Step 3: Full gates** — `make kit-test && make uiux-test && make build` → green.
+- [x] **Step 4: Commit** — `chore(usage): round-two cleanup and changelog`.
 
 ---
 
