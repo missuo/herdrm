@@ -11,16 +11,18 @@ import Foundation
 /// `@@vm` / `@@df` sections, then `@@hm-end` — see `MachineStatsParser`.
 /// Command lines are sent only where the executable name doesn't say enough:
 /// interpreters (node, bun, deno, python), whose script names the agent; Claude
-/// Code's versioned binary (`…/claude/versions/2.1.289`); and the tmux servers
-/// holding agent-team teammates (`tmux -L claude-swarm-<lead pid>`). Full `args`
-/// for every process would make each frame several times larger.
+/// Code's versioned binary (`…/claude/versions/2.1.289`); the tmux servers
+/// holding agent-team teammates (`tmux -L claude-swarm-<lead pid>`); and anything
+/// mentioning MCP, so `MCPServerMatcher` can name each server (`graft mcp`,
+/// `npm exec @playwright/mcp`). Full `args` for every process would make each
+/// frame several times larger.
 enum MachineStatsScript {
     static let source = #"""
 PATH=/usr/bin:/bin:/usr/sbin:/sbin; export PATH
 LC_ALL=C; export LC_ALL
 iv=${1:-2}; frames=${2:-0}
 os=$(uname -s); host=$(hostname 2>/dev/null); n=0
-want='$2 ~ /(^|\/)(node|bun|deno|python[0-9.]*)$/ || $2 ~ /\/claude\/versions\// || /claude-swarm-[0-9]/'
+want='$2 ~ /(^|\/)(node|bun|deno|python[0-9.]*)$/ || $2 ~ /\/claude\/versions\// || /claude-swarm-[0-9]/ || /[Mm][Cc][Pp]|modelcontextprotocol/'
 while :; do
   echo "@@hm-begin"
   echo "os $os"; echo "host $host"; echo "self $$"

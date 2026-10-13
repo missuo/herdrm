@@ -80,7 +80,19 @@ final class SidebarHarness {
         settle(seconds: 0.8) // a sheet slides in
     }
 
+    /// Select the first fake agent, the way clicking its row does.
+    func selectFirstAgent() {
+        guard let device = model.devices.first, let agent = model.sessions[device.id]?.agents.first else { return }
+        model.selectedPane = PaneRef(deviceID: device.id, paneID: agent.paneID)
+        settle()
+    }
+
     // MARK: - Observations
+
+    /// Whether the CPU / RAM / DISK meters are in the sidebar footer.
+    var showsMachineStats: Bool {
+        AccessibilityProbe.elements(in: window).contains { $0.identifier == "sidebar.machineStats" }
+    }
 
     /// Names VoiceOver reads for the buttons on a section header.
     func headerButtons(_ header: Header) -> [String] {

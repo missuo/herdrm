@@ -101,6 +101,20 @@ public struct ProcessGroup: Sendable, Equatable, Identifiable {
     public var id: String { usage.id }
 }
 
+/// Every running copy of one MCP server, summed: each copy is the server's
+/// outermost process (a launcher such as npx or mcp-proxy, or the server
+/// itself) plus every descendant.
+public struct MCPServerUsage: Sendable, Equatable, Identifiable {
+    /// The server (`graft`, `playwright`), or for a bridge, what it connects to.
+    public var name: String
+    /// Runs on its own (a systemd service, a shared HTTP server) rather than as
+    /// a child of an agent session.
+    public var isService: Bool
+    public var instances: Int
+    public var usage: ProcessUsage
+    public var id: String { usage.id }
+}
+
 public struct MachineSnapshot: Sendable, Equatable {
     public var os: String
     public var host: String
@@ -116,9 +130,20 @@ public struct MachineSnapshot: Sendable, Equatable {
     public var disks: [MachineDisk]
     /// herdr first, then agent kinds by CPU then RSS.
     public var groups: [ProcessGroup]
+    /// MCP servers by CPU then RSS; not counted in `groups` or `other`.
+    public var mcpServers: [MCPServerUsage]
     public var other: ProcessUsage
     /// Heaviest non-agent processes, merged by name.
     public var topOther: [ProcessUsage]
+
+    /// All MCP servers together.
+    public var mcpUsage: ProcessUsage {
+        mcpServers.reduce(into: ProcessUsage(id: "mcp", name: "mcp", cpuPercent: 0, rssBytes: 0, processCount: 0)) {
+            $0.cpuPercent += $1.usage.cpuPercent
+            $0.rssBytes += $1.usage.rssBytes
+            $0.processCount += $1.usage.processCount
+        }
+    }
 
     public var memFraction: Double {
         memTotalBytes == 0 ? 0 : min(1, Double(memUsedBytes) / Double(memTotalBytes))
@@ -428,6 +453,133 @@ public enum AgentProcessMatcher {
     }
 }
 
+// MARK: - MCP server detection
+
+/// Picks MCP servers out of the process table, so each server's cost shows on
+/// its own instead of inside the agent that started it (or, for a server run
+/// as a service, inside "Everything else"). Command lines are known only for
+/// what the sampler sends: interpreters and anything mentioning MCP.
+public enum MCPServerMatcher {
+    public struct Match: Sendable, Equatable {
+        public var name: String
+        /// The name came from a launcher's arguments (npx, uvx, mcp-proxy…);
+        /// a server process further down the tree names the row better.
+        public var isLauncher: Bool
+
+        public init(name: String, isLauncher: Bool) {
+            self.name = name
+            self.isLauncher = isLauncher
+        }
+    }
+
+    /// Programs that start or bridge a server; what they run names the row.
+    static let launchers: Set<String> = [
+        "npx", "npm", "pnpm", "bunx", "uvx", "uv", "pipx", "xcrun", "env",
+        "sh", "bash", "zsh", "dash", "mcp-proxy", "mcp-remote", "supergateway",
+    ]
+    /// Launcher subcommands, never the server itself.
+    static let launcherWords: Set<String> = ["exec", "run", "dlx", "x", "tool", "--"]
+    /// Launcher flags whose next argument is their value.
+    static let valueFlags: Set<String> = [
+        "--transport", "--log-level", "--host", "--port", "--cwd", "-e", "--env",
+        "-H", "--headers", "-p", "--package", "--from", "--with", "--python",
+    ]
+    /// Servers whose command line never says "mcp": program → serving subcommands.
+    static let knownServers: [String: Set<String>] = ["gitnexus": ["serve", "mcp"]]
+    /// Path components that name nothing: `…/@playwright/mcp/dist/cli.js` is playwright.
+    static let genericComponents: Set<String> = [
+        "cli", "index", "main", "server", "dist", "build", "bin", "lib", "src", "out", "mcp",
+    ]
+    static let codeExtensions = [".js", ".mjs", ".cjs", ".ts", ".py"]
+    /// `--mcp-config ~/.claude/mcp.json` points at a config, not a server.
+    static let configExtensions = [".json", ".jsonc", ".toml", ".yaml", ".yml", ".env", ".conf"]
+
+    /// The MCP server a process is, or nil. `arguments` is its full command line,
+    /// when the sampler sent one.
+    public static func match(name: String, arguments: String?) -> Match? {
+        let comm = AgentProcessMatcher.basename(name)
+        guard let arguments else {
+            return mentionsMCP(comm) ? Match(name: comm, isLauncher: false) : nil
+        }
+        var tokens = arguments.split(separator: " ").map(String.init)[...]
+        guard var programPath = tokens.popFirst() else { return nil }
+        if AgentProcessMatcher.isInterpreter(AgentProcessMatcher.basename(programPath)) {
+            // The script (or `-m module`) an interpreter runs is the program.
+            while let next = tokens.first, next.hasPrefix("-"), next != "-m" { tokens.removeFirst() }
+            if tokens.first == "-m" { tokens.removeFirst() }
+            guard let script = tokens.popFirst() else { return nil }
+            programPath = script
+        }
+        let program = displayName(programPath)
+        let positionals = positionalArguments(tokens)
+
+        if launchers.contains(program) {
+            let target = positionals.first { !$0.contains("://") }
+            let url = positionals.first { $0.contains("://") }.flatMap(URL.init(string:))
+            let servesMCP = mentionsMCP(program)
+                || target.map(mentionsMCP) == true
+                || url.map { ["mcp", "sse"].contains($0.lastPathComponent) } == true
+            guard servesMCP else { return nil }
+            if let target {
+                return Match(name: displayName(withoutVersion(target)), isLauncher: true)
+            }
+            if let url, let host = url.host {
+                return Match(name: "\(program) → \(host)\(url.port.map { ":\($0)" } ?? "")", isLauncher: true)
+            }
+            return Match(name: program, isLauncher: true)
+        }
+
+        let servesMCP = mentionsMCP(programPath)
+            || positionals.prefix(2).contains(where: mentionsMCP)
+            || positionals.first.map { knownServers[program]?.contains($0) == true } == true
+        return servesMCP ? Match(name: program, isLauncher: false) : nil
+    }
+
+    /// Whether a word, path or package names MCP: a component that is `mcp`,
+    /// starts with it (`mcp-proxy`, `mcp_server_fetch`, `mcpbridge`) or ends with
+    /// it (`unpeel-mcp`), or the protocol's own npm scope.
+    static func mentionsMCP(_ token: String) -> Bool {
+        let lowered = token.lowercased()
+        if configExtensions.contains(where: lowered.hasSuffix) { return false }
+        if lowered.contains("modelcontextprotocol") { return true }
+        return lowered.split(separator: "/").contains { component in
+            let words = component.split { "-_.@".contains($0) }
+            return words.contains { $0 == "mcp" } || component.hasPrefix("mcp") || component.hasSuffix("-mcp")
+        }
+    }
+
+    /// Arguments that are not flags, flag values or launcher subcommands.
+    static func positionalArguments(_ tokens: ArraySlice<String>) -> [String] {
+        var result: [String] = []
+        var skipNext = false
+        for token in tokens {
+            if skipNext { skipNext = false; continue }
+            if valueFlags.contains(token) { skipNext = true; continue }
+            if token.hasPrefix("-") || launcherWords.contains(token) { continue }
+            result.append(token)
+        }
+        return result
+    }
+
+    /// `@playwright/mcp@latest` → `@playwright/mcp`.
+    static func withoutVersion(_ package: String) -> String {
+        guard let at = package.dropFirst().lastIndex(of: "@") else { return package }
+        return String(package[..<at])
+    }
+
+    /// The meaningful name in a path: its last component that isn't generic,
+    /// without a code extension or an npm scope's `@`.
+    static func displayName(_ path: String) -> String {
+        var components = path.split(separator: "/").map(String.init)
+        guard var last = components.popLast() else { return path }
+        for ext in codeExtensions where last.hasSuffix(ext) {
+            last.removeLast(ext.count)
+        }
+        let name = ([last] + components.reversed()).first { !genericComponents.contains($0.lowercased()) } ?? last
+        return name.hasPrefix("@") ? String(name.dropFirst()) : name
+    }
+}
+
 // MARK: - Snapshot
 
 public enum MachineStatsComputer {
@@ -467,10 +619,20 @@ public enum MachineStatsComputer {
             }
         }
 
-        // Walk each process up its parents: the outermost agent above it owns it,
-        // and anything under the sampler's own shell is left out.
+        var mcpMatches: [Int32: MCPServerMatcher.Match] = [:]
+        for (pid, process) in processes where kinds[pid] == nil {
+            mcpMatches[pid] = MCPServerMatcher.match(name: process.name, arguments: current.arguments[pid])
+        }
+
+        // Walk each process up its parents: the outermost MCP server below its
+        // agent owns it, else the outermost agent above it does; anything under
+        // the sampler's own shell is left out.
         var instanceUsage: [Int32: ProcessUsage] = [:]
         var lineages: [Int32: [Int32]] = [:]
+        var mcpInstances: [Int32: (usage: ProcessUsage, isService: Bool)] = [:]
+        // The server process closest to each MCP root that names itself, rather
+        // than being named by a launcher's arguments: (distance, name).
+        var mcpNames: [Int32: (depth: Int, name: String)] = [:]
         var herdr = ProcessUsage(id: "herdr", name: "herdr", cpuPercent: 0, rssBytes: 0, processCount: 0)
         var other = ProcessUsage(id: "other", name: "other", cpuPercent: 0, rssBytes: 0, processCount: 0)
         var otherByName: [String: ProcessUsage] = [:]
@@ -480,18 +642,32 @@ public enum MachineStatsComputer {
             var visited: Set<Int32> = []
             var cursor: Int32? = pid
             var owner: Int32?
+            var mcpRoot: Int32?
             var isSampler = false
             while let id = cursor, let node = processes[id], visited.insert(id).inserted, chain.count < 256 {
                 chain.append(id)
                 if id == current.samplerPID { isSampler = true; break }
-                if kinds[id] != nil { owner = id }
+                if kinds[id] != nil {
+                    owner = id
+                } else if owner == nil, mcpMatches[id] != nil {
+                    mcpRoot = id
+                }
                 let parent = parents[id] ?? node.ppid
                 cursor = parent == id || parent <= 0 ? nil : parent
             }
             if isSampler { continue }
 
             let usageCPU = cpu[pid] ?? 0
-            if let owner {
+            if let root = mcpRoot {
+                mcpInstances[root, default: (
+                    ProcessUsage(id: "mcp-\(root)", name: "", cpuPercent: 0, rssBytes: 0, processCount: 0),
+                    owner == nil
+                )].usage.add(cpu: usageCPU, rss: process.rssBytes)
+                if let match = mcpMatches[pid], !match.isLauncher, let depth = chain.firstIndex(of: root),
+                   mcpNames[root].map({ depth < $0.depth }) ?? true {
+                    mcpNames[root] = (depth, match.name)
+                }
+            } else if let owner {
                 if lineages[owner] == nil, let index = chain.firstIndex(of: owner) {
                     lineages[owner] = chain[index...].filter { $0 > 1 }
                 }
@@ -533,6 +709,25 @@ public enum MachineStatsComputer {
         }
         groups += agentGroups
 
+        // One row per server name, services apart from the copies agents start.
+        var mcpByName: [String: MCPServerUsage] = [:]
+        for (root, instance) in mcpInstances {
+            let name = mcpNames[root]?.name ?? mcpMatches[root]?.name ?? "mcp"
+            let key = "\(name)|\(instance.isService)"
+            var server = mcpByName[key] ?? MCPServerUsage(
+                name: name, isService: instance.isService, instances: 0,
+                usage: ProcessUsage(
+                    id: "mcp-\(instance.isService ? "service" : "agent")-\(name)",
+                    name: name, cpuPercent: 0, rssBytes: 0, processCount: 0
+                )
+            )
+            server.instances += 1
+            server.usage.cpuPercent += instance.usage.cpuPercent
+            server.usage.rssBytes += instance.usage.rssBytes
+            server.usage.processCount += instance.usage.processCount
+            mcpByName[key] = server
+        }
+
         return MachineSnapshot(
             os: current.os,
             host: current.host,
@@ -546,6 +741,7 @@ public enum MachineStatsComputer {
             swapTotalBytes: current.swapTotalBytes,
             disks: current.disks,
             groups: groups,
+            mcpServers: mcpByName.values.sorted { heavier($0.usage, $1.usage) },
             other: other,
             topOther: Array(otherByName.values.sorted(by: heavier).prefix(topOtherLimit))
         )

@@ -15,6 +15,7 @@ struct GrazrAccountsSheet: View {
     @State private var refreshNote: String?
     @AppStorage("grazr.accounts.view") private var view = AccountsView.list
     @AppStorage("grazr.accounts.dialWindow") private var dialWindow = GrazrDialWindow.week
+    @AppStorage(AppModel.autoModelSwitchKey) private var autoModelSwitch = false
 
     enum AccountsView: String {
         case list, dial, clock
@@ -52,6 +53,10 @@ struct GrazrAccountsSheet: View {
 
             content
                 .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 520)
+
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+
+            modelSwitchToggle
 
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
@@ -93,6 +98,24 @@ struct GrazrAccountsSheet: View {
         }
         .frame(width: 520)
         .task { await load() }
+    }
+
+    /// grazr moves Claude between accounts but cannot see the Fable limit:
+    /// Claude asks before it sends anything. This answers that question.
+    private var modelSwitchToggle: some View {
+        Toggle(isOn: $autoModelSwitch) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("When Fable runs out, switch model and continue")
+                Text("Agents keep working on the fallback model. Never spends credits.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .toggleStyle(.switch)
+        .controlSize(.small)
+        .help("When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open.")
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
     }
 
     private var subtitle: String {

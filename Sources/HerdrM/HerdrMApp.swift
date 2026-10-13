@@ -99,6 +99,7 @@ struct HerdrMApp: App {
     /// Read here as well as in DetailView and Settings: an @AppStorage on the App
     /// invalidates the commands body, so the menu checkmark follows the setting.
     @AppStorage(TerminalDefaults.tabLayoutKey) private var tabLayoutEnabled = true
+    @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
     @FocusedValue(\.appModel) private var focusedModel
     @FocusedValue(\.splitAxis) private var focusedSplitAxis
     @FocusedValue(\.tabLayoutActive) private var focusedTabLayoutActive
@@ -143,6 +144,11 @@ struct HerdrMApp: App {
                 Button("New Space") { focusedModel?.showNewSpace = true }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                     .disabled(focusedModel == nil)
+            }
+
+            // Off removes the sidebar meters and stops their sampler (one ssh per remote host).
+            CommandGroup(after: .sidebar) {
+                Toggle("Show Machine Stats", isOn: $showsMachineStats)
             }
 
             CommandGroup(after: .appInfo) {

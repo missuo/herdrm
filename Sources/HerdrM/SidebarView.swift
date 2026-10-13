@@ -33,6 +33,7 @@ struct SidebarView: View {
     @State private var spacesExpanded = true
     @State private var agentsExpanded = true
     @State private var terminalsExpanded = true
+    @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
 
     var body: some View {
         VStack(spacing: 0) {
@@ -170,7 +171,7 @@ struct SidebarView: View {
             .clipped()
 
             Spacer(minLength: 0)
-            if let device = model.statsDevice {
+            if showsMachineStats, let device = model.statsDevice {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 SidebarMachineStats(
                     stats: model.machineStats,
@@ -183,6 +184,10 @@ struct SidebarView: View {
                 .frame(height: SidebarFooterMetrics.statsHeight)
             }
             footer
+        }
+        // The details panel opens from the meters; with them gone it has no anchor.
+        .onChange(of: showsMachineStats) { _, shown in
+            if !shown { model.showMachineStats = false }
         }
         .frame(width: width)
         .background(VisualEffectView(material: .sidebar).ignoresSafeArea())

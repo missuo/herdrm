@@ -403,6 +403,30 @@ final class LineBreakTerminalView: AppTerminalView {
     /// kitty report-events applications otherwise receive a release-only key.
     private var locallyConsumedCopyKeyCode: UInt16?
 
+    // MARK: Pane history scroll
+
+    /// The herdr pane an agent attach shows. `herdr agent attach` draws in the
+    /// alternate screen, so unless the pane app asks for the mouse, Ghostty
+    /// turns the wheel into ↑/↓ keys (alternate scroll) and Claude's prompt
+    /// walks its input history while the transcript stays put. With a pane id
+    /// the wheel scrolls herdr's pane history instead (`pane.scroll`), as
+    /// herdr's own client does; typing into the pane snaps it back.
+    var historyScrollPaneID: String?
+    /// HerdrM's connected service for the pane's device. Not
+    /// `attachmentService`: that one only stages uploads and never connects,
+    /// so every RPC through it fails with "not connected".
+    var historyService: HerdrService?
+    /// Points per terminal row, to turn trackpad deltas into rows.
+    var scrollRowHeight: CGFloat = 17
+    private var historyTarget = 0
+    private var historySent = 0
+    private var historyMax: Int?
+    private var historyRemainder: CGFloat = 0
+    private var historyTask: Task<Void, Never>?
+    /// While the pane sits up its history, Claude's prompt and status bar are
+    /// below the view, as in any scrollback; this offers the way back.
+    private var jumpPill: JumpToBottomPill?
+
     // MARK: Keyboard
 
     override func keyDown(with event: NSEvent) {
@@ -413,13 +437,22 @@ final class LineBreakTerminalView: AppTerminalView {
             // ends; other keys still reach Ghostty so preedit can update.
             let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             if modifiers.contains(.command) || modifiers.contains(.control) { return }
+            forgetHistoryScroll()
             super.keyDown(with: event)
             return
         }
         if let payload = Self.ptyBytes(forMacEditingKey: event) {
+            // ⌘-editing keys send ^U/^A/^E/^K to the pane, so herdr snaps it back.
+            forgetHistoryScroll()
             processHost?.session.sendInput(Data(payload.utf8))
             return
         }
+        // herdr returns a scrolled pane to the bottom only when it gets input.
+        // Command chords are app/menu shortcuts (⌘C copy, ⌘± font size, ⌥⌘ split
+        // focus) that never reach the pane, so they must not reset the local
+        // scroll state and strand the viewport; text, control chords, arrows and
+        // Return all feed the pane and snap it back to the live end.
+        if !event.modifierFlags.contains(.command) { forgetHistoryScroll() }
         super.keyDown(with: event)
     }
 
@@ -684,12 +717,111 @@ final class LineBreakTerminalView: AppTerminalView {
 
     override func scrollWheel(with event: NSEvent) {
         hideLinkPopup()
+        if scrollPaneHistory(event) { return }
         super.scrollWheel(with: event)
+    }
+
+    /// True when the wheel went to herdr's pane history: an agent attach whose
+    /// pane app has not asked for the mouse (with mouse reporting the app gets
+    /// the wheel itself, e.g. Claude's fullscreen renderer).
+    private func scrollPaneHistory(_ event: NSEvent) -> Bool {
+        guard historyScrollPaneID != nil, historyService != nil, !isMouseCaptured else { return false }
+        let rows = event.hasPreciseScrollingDeltas
+            ? event.scrollingDeltaY / max(scrollRowHeight, 1)
+            : event.scrollingDeltaY * 3
+        historyRemainder += rows
+        let whole = historyRemainder.rounded(.towardZero)
+        guard whole != 0 else { return true }
+        historyRemainder -= whole
+        let ceiling: Int
+        if let historyMax {
+            ceiling = historyMax
+        } else {
+            // Until the first pane.scroll reply reports the real top, bound the
+            // over-scroll to one page past the last confirmed offset, so a fast
+            // flick before the reply lands can't shoot far past the top and
+            // leave the user scrolling back down a phantom distance.
+            let pageRows = max(1, Int((bounds.height / max(scrollRowHeight, 1)).rounded()))
+            ceiling = historySent + pageRows
+        }
+        let target = max(0, min(historyTarget + Int(whole), ceiling))
+        guard target != historyTarget else { return true }
+        historyTarget = target
+        flushHistoryScroll()
+        updateJumpPill()
+        return true
+    }
+
+    /// Back to the live bottom: the pill's click.
+    func jumpHistoryToBottom() {
+        historyRemainder = 0
+        guard historyTarget > 0 else { return updateJumpPill() }
+        historyTarget = 0
+        flushHistoryScroll()
+        updateJumpPill()
+    }
+
+    private func updateJumpPill() {
+        guard historyTarget > 0 else {
+            jumpPill?.removeFromSuperview()
+            jumpPill = nil
+            return
+        }
+        let pill = jumpPill ?? JumpToBottomPill { [weak self] in self?.jumpHistoryToBottom() }
+        if pill.superview == nil { addSubview(pill) }
+        jumpPill = pill
+        placeJumpPill()
+    }
+
+    private func placeJumpPill() {
+        guard let pill = jumpPill else { return }
+        let size = pill.fittingSize
+        let margin: CGFloat = 12
+        pill.frame = NSRect(
+            x: ((bounds.width - size.width) / 2).rounded(),
+            y: isFlipped ? bounds.height - size.height - margin : margin,
+            width: size.width,
+            height: size.height
+        )
+    }
+
+    /// One `pane.scroll` in flight at a time; a gesture's later deltas fold
+    /// into the next request instead of queueing one per event.
+    private func flushHistoryScroll() {
+        guard historyTask == nil, let paneID = historyScrollPaneID, let service = historyService else { return }
+        historyTask = Task { @MainActor [weak self] in
+            while let self, self.historySent != self.historyTarget {
+                let offset = self.historyTarget
+                let landed = try? await service.scrollPane(paneID: paneID, offsetFromBottom: offset)
+                self.historySent = offset
+                if let landed {
+                    self.historyMax = landed.max
+                    if self.historyTarget == offset, landed.offset != offset {
+                        self.historyTarget = landed.offset
+                        self.historySent = landed.offset
+                        self.updateJumpPill()
+                    }
+                }
+            }
+            self?.historyTask = nil
+        }
+    }
+
+    private func forgetHistoryScroll() {
+        historyTarget = 0
+        historySent = 0
+        historyRemainder = 0
+        updateJumpPill()
     }
 
     override func setSurfaceVisible(_ visible: Bool) {
         super.setSurfaceVisible(visible)
-        if !visible { hideLinkPopup() }
+        if !visible {
+            hideLinkPopup()
+            // Leaving a pane scrolled up would freeze its sidebar stats:
+            // status-line plugins skip updates while herdr's viewport is up.
+            if historyTarget > 0 { jumpHistoryToBottom() }
+        }
         guard visible != acceptsDrops else { return }
         acceptsDrops = visible
         updateDragRegistration()
@@ -698,6 +830,7 @@ final class LineBreakTerminalView: AppTerminalView {
     override func setFrameSize(_ newSize: NSSize) {
         if newSize != frame.size { hideLinkPopup() }
         super.setFrameSize(newSize)
+        placeJumpPill()
     }
 
     private func updateLinkPopup() {
@@ -1013,7 +1146,7 @@ final class LineBreakTerminalView: AppTerminalView {
             return false
         }
         window?.makeFirstResponder(self)
-        paste(text: text)
+        sendPastedText(text)
         return true
     }
 
@@ -1082,6 +1215,9 @@ final class LineBreakTerminalView: AppTerminalView {
                 locallyConsumedCopyKeyCode = event.keyCode
                 copyLocalSelection()
             } else {
+                // No selection: the physical ⌘C goes to the TUI as input, so
+                // herdr snaps the pane back — drop our scroll state to match.
+                forgetHistoryScroll()
                 keyDown(with: event)
             }
             return true
@@ -1154,6 +1290,7 @@ final class LineBreakTerminalView: AppTerminalView {
 
     private func pastePasteboardText() {
         guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        forgetHistoryScroll()
         paste(text: text)
     }
 
@@ -1183,6 +1320,7 @@ final class LineBreakTerminalView: AppTerminalView {
     /// Ask the remote program to paste from its own clipboard with a literal
     /// ^V byte — the "native clipboard" delivery path.
     private func forwardNativeClipboardPaste() {
+        forgetHistoryScroll()
         processHost?.session.sendInput(Data([0x16]))
     }
 
@@ -1244,6 +1382,7 @@ final class LineBreakTerminalView: AppTerminalView {
     /// Ghostty's text path wraps the payload in bracketed-paste markers when
     /// the program asked for them.
     private func sendPastedText(_ text: String) {
+        forgetHistoryScroll()
         paste(text: text)
     }
 
@@ -1428,6 +1567,9 @@ struct AttachTerminalView: NSViewRepresentable {
     /// frames for it (output is still parsed), so busy background agents do
     /// not cost full-window Metal renders.
     var isVisible: Bool = true
+    /// HerdrM's connected service for `device`: the wheel scrolls the agent
+    /// pane's history through it when the pane app leaves the mouse alone.
+    var historyService: HerdrService? = nil
     var onAttachmentError: (String) -> Void = { _ in }
     var onAttachmentUploadingChanged: (Bool) -> Void = { _ in }
     /// Called on the main queue when the attach process exits: the pane was taken
@@ -1461,6 +1603,8 @@ struct AttachTerminalView: NSViewRepresentable {
 
         let service = HerdrService(device: device)
         view.attachmentService = service
+        if case .agent(let paneID) = target { view.historyScrollPaneID = paneID }
+        view.historyService = historyService
         let command = service.attachCommand(target: target, serverVersion: serverVersion)
         context.coordinator.authorizationID = command.authorizationID
         context.coordinator.scheduleAuthorizationCleanup()
@@ -1482,6 +1626,7 @@ struct AttachTerminalView: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: LineBreakTerminalView, context: Context) {
+        nsView.historyService = historyService
         configurePasteHandling(nsView)
         context.coordinator.onExit = onExit
         configureAppearance(nsView)
@@ -1587,6 +1732,7 @@ func applyTerminalAppearance(
         copyOnSelect: copyOnSelect
     )
     view.mouseReportingEnabled = mouseReporting
+    view.scrollRowHeight = CGFloat(fontSize * lineSpacing * 1.3)
     // Colors are theme-only; keep the rest above this early return.
     guard view.appliedDarkAppearance != dark else { return }
     view.appliedDarkAppearance = dark
@@ -1838,6 +1984,58 @@ struct TerminalLink: Equatable {
 }
 
 /// The small Copy button shown over a link the pointer rests on.
+/// "Jump to bottom", shown while an agent pane is scrolled up its history.
+final class JumpToBottomPill: NSVisualEffectView {
+    private let onJump: () -> Void
+
+    init(onJump: @escaping () -> Void) {
+        self.onJump = onJump
+        super.init(frame: .zero)
+        material = .popover
+        blendingMode = .withinWindow
+        state = .active
+        wantsLayer = true
+        layer?.cornerRadius = 11
+        layer?.borderWidth = 0.5
+        layer?.borderColor = NSColor.separatorColor.cgColor
+
+        let button = NSButton(title: String(localized: "Jump to bottom"), target: nil, action: nil)
+        button.isBordered = false
+        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        button.image = NSImage(systemSymbolName: "arrow.down", accessibilityDescription: nil)
+        button.imagePosition = .imageTrailing
+        button.imageHugsTitle = true
+        button.contentTintColor = .labelColor
+        button.toolTip = String(localized: "Back to the live end; typing also returns there")
+        button.target = self
+        button.action = #selector(jumpClicked)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(button)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            button.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            button.topAnchor.constraint(equalTo: topAnchor, constant: 3),
+            button.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -3),
+        ])
+        setAccessibilityLabel(String(localized: "Jump to bottom"))
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    // The terminal under the button must not see the click.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateLayer() {
+        super.updateLayer()
+        layer?.borderColor = NSColor.separatorColor.cgColor
+    }
+
+    @objc private func jumpClicked() {
+        onJump()
+    }
+}
+
 final class LinkCopyPopup: NSVisualEffectView {
     let link: TerminalLink
     private let onCopy: (TerminalLink) -> Void

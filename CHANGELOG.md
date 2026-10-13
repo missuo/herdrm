@@ -18,6 +18,32 @@ the Sparkle update description — a release without a section here fails CI.
   running Claude. Requires a matching herdr daemon with the history capability;
   older servers keep normal terminal access. History browsing preserves the
   running terminal and never resends a message.
+## [0.6.16] - 2026-10-13
+
+### Added
+- **Name new agents after their project.** A new agent's default name now comes
+  from its space / project folder instead of a generic label, and New Agent
+  shows a **Recent** list of recent launches — one click starts the same kind of
+  agent in the same folder again. The list is also seeded from the agents already
+  running. (#129, thanks @senadaruc!)
+- **Switch model automatically when Fable runs low.** When grazr is managing
+  Claude and Fable's allowance runs out with usage credits off, herdrm answers
+  Claude's "switch model and continue" prompt for you — matched by the dialog's
+  whole shape, so it never confirms the wrong option — and the agent keeps
+  working on the fallback model instead of stalling. A toggle in the Claude
+  Accounts window turns it off. (#128, thanks @senadaruc!)
+- **MCP servers in the machine stats.** The machine-stats details panel now
+  lists each MCP server running on the host with its own CPU and RAM, so a
+  runaway server process is easy to spot. (#131, thanks @senadaruc!)
+- **Scroll an agent pane's history with the wheel.** Scrolling up in an attached
+  agent pane now walks herdr's pane scrollback (`pane.scroll`), the way herdr's
+  own client does, instead of sending the wheel to the agent's prompt. A "Jump
+  to bottom" pill returns to the live end, and any input — typing, Return, a
+  paste or a drop — snaps back there too. (#130, thanks @senadaruc!)
+- **Hide the machine stats.** View › Show Machine Stats turns the CPU / RAM /
+  DISK meters in the sidebar footer off and on. While they are hidden their
+  sampler stops too, so a remote host no longer runs the stats loop over ssh.
+  (#132, thanks @jt-wang!)
 
 ## [0.6.15] - 2026-10-10
 

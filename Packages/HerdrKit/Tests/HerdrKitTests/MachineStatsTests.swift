@@ -178,6 +178,102 @@ final class MachineStatsTests: XCTestCase {
         XCTAssertNil(AgentProcessMatcher.kind(name: "pythonista", arguments: "pythonista /x/claude"))
     }
 
+    // MARK: MCP server detection
+
+    /// Command lines recorded on cloud-dev (Ubuntu, Claude Code 2.1.296).
+    func testMCPMatcherNamesServers() {
+        func match(_ name: String, _ arguments: String?) -> MCPServerMatcher.Match? {
+            MCPServerMatcher.match(name: name, arguments: arguments)
+        }
+        XCTAssertEqual(match("node", "node /usr/bin/graft mcp"), .init(name: "graft", isLauncher: false))
+        XCTAssertEqual(match("node", "node /usr/bin/gitnexus serve --host 127.0.0.1 --port 4747")?.name, "gitnexus")
+        XCTAssertEqual(match("node", "node /usr/bin/gitnexus mcp")?.name, "gitnexus")
+        XCTAssertEqual(match("unpeel-mcp", "/home/u/.unpeel/bin/unpeel-mcp")?.name, "unpeel-mcp")
+        XCTAssertEqual(
+            match("node", "node /home/u/.npm/_npx/9a1b/node_modules/@playwright/mcp/cli.js"),
+            .init(name: "playwright", isLauncher: false)
+        )
+        XCTAssertEqual(match("npm exec @playw", "npm exec @playwright/mcp@latest"), .init(name: "playwright", isLauncher: true))
+        XCTAssertEqual(match("node", "node /opt/homebrew/bin/npx -y @modelcontextprotocol/server-filesystem /tmp")?.name, "server-filesystem")
+        XCTAssertEqual(match("python3", "/usr/bin/python3 -m mcp_server_fetch")?.name, "mcp_server_fetch")
+        XCTAssertEqual(match("xcrun", "xcrun mcpbridge")?.name, "mcpbridge")
+        // npx's chain for kapture: npm exec → sh -c → node; shells are launchers too.
+        XCTAssertEqual(match("npm exec kaptur", "npm exec kapture-mcp@latest bridge"), .init(name: "kapture-mcp", isLauncher: true))
+        XCTAssertEqual(match("sh", "sh -c kapture-mcp bridge"), .init(name: "kapture-mcp", isLauncher: true))
+        XCTAssertEqual(
+            match("node", "node /h/.npm/_npx/937d/node_modules/.bin/kapture-mcp bridge"),
+            .init(name: "kapture-mcp", isLauncher: false)
+        )
+        XCTAssertEqual(match("unpeel-host", "/h/.local/bin/unpeel-host __mcp_gate__ unified")?.name, "unpeel-host")
+        // mcp-proxy as a stdio bridge to a shared HTTP server: named after its target.
+        XCTAssertEqual(
+            match("mcp-proxy", "/h/.local/share/uv/tools/mcp-proxy/bin/python /h/.local/bin/mcp-proxy --transport streamablehttp --log-level WARNING http://127.0.0.1:4748/mcp"),
+            .init(name: "mcp-proxy → 127.0.0.1:4748", isLauncher: true)
+        )
+    }
+
+    func testMCPMatcherIgnoresNonServers() {
+        XCTAssertNil(MCPServerMatcher.match(name: "node", arguments: "node /usr/bin/graft build ."))
+        XCTAssertNil(MCPServerMatcher.match(name: "node", arguments: "node /usr/bin/gitnexus analyze"))
+        XCTAssertNil(MCPServerMatcher.match(name: "claude", arguments: "claude --mcp-config /h/.claude/mcp.json"))
+        XCTAssertNil(MCPServerMatcher.match(name: "node", arguments: "node /x/vite.js --config mcp.json"))
+        XCTAssertNil(MCPServerMatcher.match(name: "node", arguments: nil))
+        XCTAssertNil(MCPServerMatcher.match(name: "vim", arguments: nil))
+    }
+
+    /// herdr (100) → bash (200) → claude (300) → graft mcp (310), mcp-proxy bridge (320);
+    /// bash → claude (400) → graft mcp (410). Services under pid 1: mcp-proxy (800) →
+    /// graft mcp (810), and gitnexus serve (900).
+    func testMCPServersLeaveTheirAgentAndOther() throws {
+        func processes(_ graftCPU: Double) -> [MachineProcess] {
+            [
+                proc(1, 0, "systemd", cpu: 0),
+                proc(100, 1, "herdr", cpu: 0),
+                proc(200, 100, "bash", cpu: 0),
+                proc(300, 200, "claude", cpu: 0, rss: 500),
+                proc(310, 300, "node", cpu: graftCPU, rss: 9_000),
+                proc(320, 300, "mcp-proxy", cpu: 0, rss: 50),
+                proc(400, 200, "claude", cpu: 0, rss: 400),
+                proc(410, 400, "node", cpu: 0, rss: 3_000),
+                proc(800, 1, "mcp-proxy", cpu: 0, rss: 60),
+                proc(810, 800, "node", cpu: 0, rss: 1_100),
+                proc(900, 1, "node", cpu: 0, rss: 500),
+            ]
+        }
+        let arguments: [Int32: String] = [
+            310: "node /usr/bin/graft mcp",
+            320: "/h/.local/share/uv/tools/mcp-proxy/bin/python /h/.local/bin/mcp-proxy --transport streamablehttp http://127.0.0.1:4748/mcp",
+            410: "node /usr/bin/graft mcp",
+            800: "/h/.local/share/uv/tools/mcp-proxy/bin/python /h/.local/bin/mcp-proxy --host 127.0.0.1 --port 4748 --stateless --cwd /h/dev/repo /usr/bin/graft mcp",
+            810: "/usr/bin/graft mcp",
+            900: "node /usr/bin/gitnexus serve --host 127.0.0.1 --port 4747",
+        ]
+        let snapshot = MachineStatsComputer.snapshot(
+            previous: sample(clock: 10, processes(0), arguments: arguments),
+            current: sample(clock: 12, processes(1), arguments: arguments)
+        )
+
+        let claude = try XCTUnwrap(snapshot.groups.first { $0.kind == .agent("claude") })
+        XCTAssertEqual(claude.usage.rssBytes, 500 + 400, "an agent's MCP servers are listed on their own")
+        XCTAssertEqual(Set(claude.instances.map(\.rootPID)), [300, 400])
+        XCTAssertEqual(snapshot.other.processCount, 2) // systemd, bash
+
+        let servers = Dictionary(uniqueKeysWithValues: snapshot.mcpServers.map { ("\($0.name)|\($0.isService)", $0) })
+        XCTAssertEqual(servers.count, 4)
+        let perAgent = try XCTUnwrap(servers["graft|false"])
+        XCTAssertEqual(perAgent.instances, 2)
+        XCTAssertEqual(perAgent.usage.rssBytes, 9_000 + 3_000)
+        XCTAssertEqual(perAgent.usage.cpuPercent, 50, accuracy: 0.001) // 1 s over 2 s
+        let shared = try XCTUnwrap(servers["graft|true"], "the proxy service is named after the graft it runs")
+        XCTAssertEqual(shared.instances, 1)
+        XCTAssertEqual(shared.usage.rssBytes, 60 + 1_100)
+        XCTAssertEqual(shared.usage.processCount, 2)
+        XCTAssertEqual(servers["gitnexus|true"]?.usage.rssBytes, 500)
+        XCTAssertEqual(servers["mcp-proxy → 127.0.0.1:4748|false"]?.usage.rssBytes, 50)
+        XCTAssertEqual(snapshot.mcpServers.first?.name, "graft", "heaviest first")
+        XCTAssertEqual(snapshot.mcpUsage.rssBytes, 9_000 + 3_000 + 60 + 1_100 + 500 + 50)
+    }
+
     // MARK: Snapshot
 
     private func sample(

@@ -59,6 +59,9 @@ struct DeviceSessionState {
     /// grazr's accounts, for the menu's Switch to Account list. Nil until
     /// read, or when the device runs no grazr.
     var grazrReport: GrazrReport?
+    /// The device runs grazr (its plugin is installed), read with the plugin
+    /// actions. Gates the automatic model switch.
+    var usesGrazr = false
 }
 
 struct SSHAuthenticationRequest: Identifiable {
@@ -268,6 +271,8 @@ final class AppModel: ObservableObject {
     private var tabLayoutFetchGen: [TabRef: Int] = [:]
     /// Finished agents the user has not opened since they flipped to `done`.
     @Published private(set) var unreadAgents: Set<AgentUnreadKey> = []
+    /// New Agent's Recent list: the last launches, newest first.
+    @Published private(set) var recentLaunches: [RecentAgentLaunch] = RecentAgentLaunches.load()
 
     @Published var showAddDevice = false
     @Published var showNewAgent = false
@@ -346,6 +351,10 @@ final class AppModel: ObservableObject {
     private var refreshRequested: Set<UUID> = []
     private var statusGenerations: [UUID: UInt64] = [:]
     private var previousStatuses: [UUID: [String: AgentStatus]] = [:]
+    /// Claude panes already checked for the usage-credits dialog during their
+    /// current blocked spell, per device. A pane leaves when it stops being
+    /// blocked, so a later spell is checked again.
+    private var modelSwitchChecked: [UUID: Set<String>] = [:]
 
     init() {
         let loaded = DeviceStore().load()
@@ -1278,6 +1287,12 @@ final class AppModel: ObservableObject {
         // An older server without plugin RPCs keeps an empty menu section.
         guard let actions = try? await service.pluginActions() else { return }
         sessions[deviceID]?.pluginActions = PluginActionGroup.menu(actions)
+        sessions[deviceID]?.usesGrazr = actions.contains(where: { $0.pluginID == Grazr.pluginID })
+        // The first snapshot came before this, so a pane already waiting on
+        // the usage-credits dialog when herdrm connected is checked now.
+        if let device = device(deviceID) {
+            autoSwitchModels(device: device, agents: session(deviceID).agents)
+        }
         if actions.contains(where: { $0.pluginID == Grazr.pluginID }) {
             // Not awaited: an SSH round trip must not hold up the connect.
             Task { await loadGrazrReport(deviceID: deviceID) }
@@ -1775,6 +1790,7 @@ final class AppModel: ObservableObject {
                 workspaces: snapshot.workspaces,
                 tabs: snapshot.tabs ?? []
             )
+            autoSwitchModels(device: device, agents: snapshot.agents)
             previousStatuses[deviceID] = Dictionary(
                 uniqueKeysWithValues: snapshot.agents.map { ($0.paneID, $0.status) }
             )
@@ -1785,6 +1801,7 @@ final class AppModel: ObservableObject {
                 workspaces: snapshot.workspaces
             )
             sessions[deviceID]?.panes = snapshot.ordinaryTerminalPanes
+            seedRecentLaunches(deviceID: deviceID)
             let paneIDs = Set((snapshot.panes ?? []).map(\.paneID))
                 .union(snapshot.agents.map(\.paneID))
             // Drop kept-alive attaches whose pane is gone (closed). A pane only taken
@@ -1894,6 +1911,7 @@ final class AppModel: ObservableObject {
             workspaces: state.workspaces,
             tabs: state.tabs
         )
+        autoSwitchModels(device: device, agents: state.agents)
         var nextStatuses = previous
         nextStatuses[paneID] = status
         previousStatuses[deviceID] = nextStatuses
@@ -1939,6 +1957,81 @@ final class AppModel: ObservableObject {
                 spaceName: workspaces.first { $0.workspaceID == agent.workspaceID }?.label ?? agent.workspaceID
             )
         }
+    }
+
+    // MARK: - Automatic model switch (grazr)
+
+    /// Settings › Agents: answer Claude's usage-credits dialog by switching model.
+    static let autoModelSwitchKey = "grazr.autoModelSwitch"
+
+    /// When the week's Fable allowance is spent, Claude Code stops before its
+    /// next request and asks whether to switch to its fallback model or pay
+    /// for Fable with usage credits. No request fails, so grazr never hears of
+    /// it, and an unattended agent waits on the dialog. herdr reports the pane
+    /// as blocked; with the setting on, on a device that runs grazr, each
+    /// Claude pane that turns blocked is read once and answered with the
+    /// switch, so the agent keeps working.
+    private func autoSwitchModels(device: Device, agents: [AgentInfo]) {
+        let blocked = Set(agents.filter { $0.status == .blocked && $0.agent == "claude" }.map(\.paneID))
+        let checked = modelSwitchChecked[device.id, default: []].intersection(blocked)
+        modelSwitchChecked[device.id] = checked
+        guard UserDefaults.standard.bool(forKey: Self.autoModelSwitchKey),
+              session(device.id).usesGrazr
+        else { return }
+        for paneID in blocked.subtracting(checked) {
+            modelSwitchChecked[device.id, default: []].insert(paneID)
+            Task { await self.answerModelSwitchPrompt(paneID: paneID, device: device) }
+        }
+    }
+
+    /// Presses Enter on the dialog, only while its focused option is the switch
+    /// to another model, the one choice that spends nothing. The dialog first
+    /// checks the credit balance and ignores keys for a moment after each step
+    /// appears, so the option must read the same on two looks a second apart
+    /// before a key goes in, and a key it swallowed is sent again.
+    private func answerModelSwitchPrompt(paneID: String, device: Device) async {
+        var lastSeen: String?
+        var presses = 0
+        var target: String?
+        for _ in 0..<12 {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard let service = services[device.id],
+                  let screen = try? await service.readPaneText(paneID: paneID)
+            else { return }
+            guard ModelSwitchPrompt.isShowing(in: screen) else {
+                if let target { reportModelSwitch(to: target, paneID: paneID, device: device) }
+                return
+            }
+            guard let seen = ModelSwitchPrompt.switchTarget(in: screen) else {
+                lastSeen = nil
+                continue
+            }
+            guard seen == lastSeen, presses < 3 else {
+                lastSeen = seen
+                continue
+            }
+            do {
+                try await service.sendKeys(paneID: paneID, keys: ["enter"])
+            } catch {
+                return
+            }
+            presses += 1
+            target = seen
+            // A key the dialog swallowed is sent again, after two more looks.
+            lastSeen = nil
+        }
+    }
+
+    private func reportModelSwitch(to model: String, paneID: String, device: Device) {
+        let state = session(device.id)
+        let agent = state.agents.first { $0.paneID == paneID }
+        let tabLabel = agent.flatMap { agent in state.tabs.first { $0.tabID == agent.tabID }?.customLabel }
+        let name = agent?.title(tabLabel: tabLabel) ?? paneID
+        NotificationManager.shared.postPluginResult(
+            title: String(localized: "grazr: \(name) switched to \(model)"),
+            body: String(localized: "Its Fable allowance ran out and usage credits are off, so it continues on \(model)."),
+            deviceName: device.name
+        )
     }
 
     /// Sniffs the device OS once (for the OS brand icon) and persists it.
@@ -2008,8 +2101,9 @@ final class AppModel: ObservableObject {
         workspaceID: String?,
         kind: String
     ) async throws -> String {
+        let label = newAgentLabel(device: device, workspaceID: workspaceID, kind: kind)
         do {
-            return try await service.createTab(workspaceID: workspaceID, cwd: nil, label: kind)
+            return try await service.createTab(workspaceID: workspaceID, cwd: nil, label: label)
         } catch HerdrError.rpc(let code, _) where code == "workspace_not_found" && workspaceID == nil {
             let created = try await service.createWorkspace(
                 label: nil,
@@ -2018,6 +2112,18 @@ final class AppModel: ObservableObject {
             if let rootPaneID = created.rootPaneID { return rootPaneID }
             return try await service.createTab(workspaceID: created.workspaceID, cwd: nil, label: kind)
         }
+    }
+
+    /// The new agent is named after its space (the project), numbered when
+    /// the space already has an agent of that name.
+    private func newAgentLabel(device: Device, workspaceID: String?, kind: String) -> String {
+        let state = session(device.id)
+        let space = workspaceID.map { id in state.workspaces.first { $0.workspaceID == id } }
+            ?? state.workspaces.first { $0.focused == true }
+        let taken = Set(state.agents.map { agent in
+            agent.title(tabLabel: state.tabs.first { $0.tabID == agent.tabID }?.customLabel)
+        })
+        return NewAgentLabel.make(spaceLabel: space?.label, kind: kind, taken: taken)
     }
 
     // MARK: - Closing
@@ -2359,7 +2465,9 @@ final class AppModel: ObservableObject {
         kind: String,
         workspaceID: String?,
         args: [String],
-        grazrAccount: GrazrAccount? = nil
+        grazrAccount: GrazrAccount? = nil,
+        recordedArguments: [String]? = nil,
+        closingPane: String? = nil
     ) {
         Task {
             // An account not signed in for pinned agents yet is signed in
@@ -2404,13 +2512,105 @@ final class AppModel: ObservableObject {
                         waitForShell: true
                     )
                 }
+                if let closingPane {
+                    try? await service.closePane(paneID: closingPane)
+                }
                 await refresh(device.id)
+                recordLaunch(
+                    device: device, kind: kind, paneID: pane,
+                    arguments: recordedArguments ?? args, grazrAccount: grazrAccount
+                )
                 isFileManagerActive = false
                 selectedPane = PaneRef(deviceID: device.id, paneID: pane)
             } catch {
                 if let createdPane {
                     try? await service.closePane(paneID: createdPane)
                 }
+                actionError = actionErrorMessage(error, device: device)
+            }
+        }
+    }
+
+    // MARK: - Recent launches
+
+    /// Remembers a launch for New Agent's Recent list, by its space's name
+    /// and folder, read once the new pane shows up in the snapshot.
+    private func recordLaunch(
+        device: Device, kind: String, paneID: String, arguments: [String], grazrAccount: GrazrAccount?
+    ) {
+        let state = session(device.id)
+        guard let agent = state.agents.first(where: { $0.paneID == paneID }),
+              let space = state.workspaces.first(where: { $0.workspaceID == agent.workspaceID })
+        else { return }
+        let launch = RecentAgentLaunch(
+            deviceID: device.id, kind: kind, spaceLabel: space.label, directory: agent.cwd,
+            arguments: arguments, grazrAccountID: grazrAccount?.id, date: Date()
+        )
+        recentLaunches = RecentAgentLaunches.recording(launch, into: recentLaunches)
+        RecentAgentLaunches.save(recentLaunches)
+    }
+
+    /// Devices whose running agents were offered to the Recent list this run.
+    private var recentSeededDevices: Set<UUID> = []
+
+    /// Once per device and run: agents already running there join the Recent
+    /// list (behind recorded launches), with the kind's default arguments.
+    private func seedRecentLaunches(deviceID: UUID) {
+        guard !recentSeededDevices.contains(deviceID) else { return }
+        recentSeededDevices.insert(deviceID)
+        let state = session(deviceID)
+        let running = state.agents.compactMap { agent -> RecentAgentLaunch? in
+            guard let kind = agent.agentKindRaw,
+                  let space = state.workspaces.first(where: { $0.workspaceID == agent.workspaceID })
+            else { return nil }
+            return RecentAgentLaunch(
+                deviceID: deviceID, kind: kind, spaceLabel: space.label, directory: agent.cwd,
+                arguments: (try? AgentLaunchArguments.tokenize(AgentLaunchArgsStore.resolved(for: kind))) ?? [],
+                grazrAccountID: nil, date: Date()
+            )
+        }
+        let seeded = RecentAgentLaunches.seeding(running, into: recentLaunches)
+        guard seeded != recentLaunches else { return }
+        recentLaunches = seeded
+        RecentAgentLaunches.save(recentLaunches)
+    }
+
+    func forgetRecentLaunch(_ launch: RecentAgentLaunch) {
+        recentLaunches.removeAll { $0.id == launch.id }
+        RecentAgentLaunches.save(recentLaunches)
+    }
+
+    /// Starts a remembered launch again: same device, agent, arguments and
+    /// account, in the space of that name. A space that was closed since is
+    /// opened again in the agent's folder. `continueConversation` adds
+    /// Claude's `--continue`, which resumes the folder's last conversation.
+    func startRecentLaunch(_ launch: RecentAgentLaunch, continueConversation: Bool = false) {
+        guard let device = device(launch.deviceID) else { return }
+        let state = session(device.id)
+        let account = launch.grazrAccountID.flatMap { id in state.grazrReport?.accounts.first { $0.id == id } }
+        let args = launch.arguments + (continueConversation ? ["--continue"] : [])
+        if let space = state.workspaces.first(where: { $0.label == launch.spaceLabel }) {
+            startNewAgent(
+                device: device, kind: launch.kind, workspaceID: space.workspaceID, args: args,
+                grazrAccount: account, recordedArguments: launch.arguments
+            )
+            return
+        }
+        guard let directory = launch.directory else {
+            actionError = String(localized: "The space \(launch.spaceLabel) is gone and its folder is unknown.")
+            return
+        }
+        Task {
+            do {
+                let created = try await service(for: device).createWorkspace(label: launch.spaceLabel, cwd: directory)
+                await refresh(device.id)
+                // The new space's first pane is a plain shell; the agent gets
+                // its own tab, and that shell is closed once it runs.
+                startNewAgent(
+                    device: device, kind: launch.kind, workspaceID: created.workspaceID, args: args,
+                    grazrAccount: account, recordedArguments: launch.arguments, closingPane: created.rootPaneID
+                )
+            } catch {
                 actionError = actionErrorMessage(error, device: device)
             }
         }

@@ -571,6 +571,23 @@ public actor HerdrService {
         return (text, revision)
     }
 
+    /// Reads the pane's visible screen as plain text, without ANSI, for matching
+    /// what a pane shows.
+    public func readPaneText(paneID: String) async throws -> String {
+        let result = try await client().request(
+            method: "pane.read",
+            params: .object([
+                "pane_id": .string(paneID),
+                "source": .string("visible"),
+                "format": .string("text"),
+            ])
+        )
+        guard let text = result["read"]?["text"]?.stringValue else {
+            throw HerdrError.malformedResponse("pane.read returned no text")
+        }
+        return text
+    }
+
     /// Sends literal text (herdr wraps it in bracketed paste when the app enables it —
     /// right for pastes, wrong for keystrokes; use sendKeys for those).
     public func sendInput(paneID: String, text: String) async throws {
@@ -605,6 +622,25 @@ public actor HerdrService {
             method: "pane.scroll",
             params: .object(["pane_id": .string(paneID), "offset_from_bottom": .number(Double(offsetFromBottom))])
         )
+    }
+
+    /// Moves the pane's server-side viewport `offsetFromBottom` rows up its
+    /// history (0 = live). herdr clamps it and redraws attached clients;
+    /// typing into the pane snaps it back. Returns where it landed.
+    @discardableResult
+    public func scrollPane(paneID: String, offsetFromBottom: Int) async throws -> (offset: Int, max: Int)? {
+        let result = try await client().request(
+            method: "pane.scroll",
+            params: .object([
+                "pane_id": .string(paneID),
+                "offset_from_bottom": .number(Double(max(0, offsetFromBottom))),
+            ])
+        )
+        let scroll = result["pane"]?["scroll"]
+        guard let offset = Self.integer(scroll?["offset_from_bottom"]),
+              let maxOffset = Self.integer(scroll?["max_offset_from_bottom"])
+        else { return nil }
+        return (Int(offset), Int(maxOffset))
     }
 
     /// Rows the pane's server-side viewport sits above the bottom (0 = at bottom).

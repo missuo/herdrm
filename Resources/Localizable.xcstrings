@@ -5439,6 +5439,278 @@
           }
         }
       }
+    },
+    "MCP servers": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MCP servers"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "MCP 服务器"
+          }
+        }
+      }
+    },
+    "%@ · service": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · service"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · 服务"
+          }
+        }
+      }
+    },
+    "Runs on its own; one copy serves every client": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Runs on its own; one copy serves every client"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "独立运行；一个实例服务所有客户端"
+          }
+        }
+      }
+    },
+    "Started by agent sessions; one copy per session": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Started by agent sessions; one copy per session"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "由 Agent 会话启动；每个会话一个实例"
+          }
+        }
+      }
+    },
+    "Jump to bottom": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Jump to bottom"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跳到底部"
+          }
+        }
+      }
+    },
+    "Back to the live end; typing also returns there": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Back to the live end; typing also returns there"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "回到最新内容；输入任意内容也会返回"
+          }
+        }
+      }
+    },
+    "Show Machine Stats": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show Machine Stats"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示机器状态"
+          }
+        }
+      }
+    },
+    "RECENT": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "RECENT"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "最近"
+          }
+        }
+      }
+    },
+    "Start %@ in %@ again": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Start %1$@ in %2$@ again"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在 %2$@ 中再次启动 %1$@"
+          }
+        }
+      }
+    },
+    "Continue the last conversation in this folder (claude --continue)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Continue the last conversation in this folder (claude --continue)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "继续此文件夹中的上一次对话（claude --continue）"
+          }
+        }
+      }
+    },
+    "Remove from Recent": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove from Recent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从最近中移除"
+          }
+        }
+      }
+    },
+    "The space %@ is gone and its folder is unknown.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The space %@ is gone and its folder is unknown."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "空间 %@ 已不存在，且其文件夹未知。"
+          }
+        }
+      }
+    },
+    "grazr: %@ switched to %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "grazr: %1$@ switched to %2$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "grazr：%1$@ 已切换到 %2$@"
+          }
+        }
+      }
+    },
+    "Its Fable allowance ran out and usage credits are off, so it continues on %@.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Its Fable allowance ran out and usage credits are off, so it continues on %@."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "它的 Fable 额度已用完且未开启使用额度，因此改用 %@ 继续工作。"
+          }
+        }
+      }
+    },
+    "When Fable runs out, switch model and continue": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When Fable runs out, switch model and continue"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Fable 用完时切换模型并继续"
+          }
+        }
+      }
+    },
+    "Agents keep working on the fallback model. Never spends credits.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents keep working on the fallback model. Never spends credits."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agent 在备用模型上继续工作。绝不花费额度。"
+          }
+        }
+      }
+    },
+    "When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "当某个账号本周的 Fable 额度用完且未开启使用额度时，Claude 会停下来询问。herdrm 会选择“Switch to … and continue”。对所有运行 grazr 的设备生效，前提是 herdrm 处于打开状态。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

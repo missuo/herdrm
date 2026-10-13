@@ -11,6 +11,12 @@ private func levelColor(_ percent: Double) -> Color {
 
 // MARK: - Sidebar indicator
 
+/// Whether the sidebar shows the meters (View ▸ Show Machine Stats). Off also
+/// stops the sampler, since the sampler only runs while the meters are on screen.
+enum MachineStatsDefaults {
+    static let showKey = "sidebar.showMachineStats"
+}
+
 /// CPU / RAM / DISK meters for the selected pane's host, in the sidebar footer
 /// just above the device switcher. Clicking opens `MachineStatsPanel`. Runs the
 /// sampler while it is on screen and the window is visible.
@@ -54,6 +60,7 @@ struct SidebarMachineStats: View {
         .onHover { hovered = $0 }
         .help(String(localized: "\(device.name) health — click for details"))
         .accessibilityLabel(accessibilityText)
+        .accessibilityIdentifier("sidebar.machineStats")
         .background(WindowVisibilityReader(isVisible: $windowVisible))
         .task(id: WatchKey(device: device, visible: windowVisible)) {
             guard windowVisible else { return }
@@ -162,7 +169,7 @@ private struct WindowVisibilityReader: NSViewRepresentable {
 // MARK: - Dropdown panel
 
 /// In-window panel above the meters (NSPopover crashes in ViewBridge on
-/// macOS 26+): machine totals, then CPU/RAM by herdr, agent, and the rest.
+/// macOS 26+): machine totals, then CPU/RAM by herdr, agent, MCP server, and the rest.
 struct MachineStatsPanel: View {
     @ObservedObject var model: AppModel
     @ObservedObject var stats: MachineStatsModel
@@ -338,7 +345,40 @@ struct MachineStatsPanel: View {
                     .padding(.horizontal, 9)
                     .frame(height: 24)
             }
+            mcpRows(snapshot)
             otherRows(snapshot)
+        }
+    }
+
+    /// MCP servers apart from the agents that start them: one row per server,
+    /// with services (one copy for every client) apart from per-session copies.
+    @ViewBuilder
+    private func mcpRows(_ snapshot: MachineSnapshot) -> some View {
+        if !snapshot.mcpServers.isEmpty {
+            let expanded = !collapsedGroups.contains("mcp")
+            UsageRow(
+                icon: .symbol("puzzlepiece.extension"),
+                title: String(localized: "MCP servers"),
+                count: snapshot.mcpServers.reduce(0) { $0 + $1.instances },
+                usage: snapshot.mcpUsage,
+                expanded: expanded
+            ) {
+                if expanded { collapsedGroups.insert("mcp") } else { collapsedGroups.remove("mcp") }
+            }
+            if expanded {
+                ForEach(snapshot.mcpServers) { server in
+                    UsageRow(
+                        icon: nil,
+                        title: server.isService ? String(localized: "\(server.name) · service") : server.name,
+                        count: server.instances > 1 ? server.instances : nil,
+                        usage: server.usage,
+                        indent: true
+                    )
+                    .help(server.isService
+                        ? String(localized: "Runs on its own; one copy serves every client")
+                        : String(localized: "Started by agent sessions; one copy per session"))
+                }
+            }
         }
     }
 

@@ -792,6 +792,7 @@ struct DetailView: View {
                 copyOnSelect: terminalCopyOnSelect,
                 // A selected shell or the file manager covers the attach side.
                 isVisible: isVisible && model.selectedShellID == nil && !model.isFileManagerActive,
+                historyService: model.service(for: session.device),
                 onAttachmentError: { model.actionError = $0 },
                 onAttachmentUploadingChanged: { uploadingAttachment = $0 },
                 onExit: { code in endedAttach[session.id] = code }
@@ -1663,6 +1664,21 @@ struct NewAgentSheet: View {
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
             VStack(alignment: .leading, spacing: 8) {
+                if !recentLaunches.isEmpty {
+                    SheetSectionLabel("RECENT")
+                    ScrollView {
+                        VStack(spacing: 2) {
+                            ForEach(recentLaunches) { launch in
+                                recentRow(launch)
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 176)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                    Spacer().frame(height: 8)
+                }
+
                 if model.showsDeviceBadges {
                     SheetSectionLabel("DEVICE")
                     Picker("", selection: $deviceID) {
@@ -1832,6 +1848,66 @@ struct NewAgentSheet: View {
         }
         .onChange(of: kind) { _, newKind in
             arguments = AgentLaunchArgsStore.resolved(for: newKind)
+        }
+    }
+
+    /// Launches whose device still exists, newest first.
+    private var recentLaunches: [RecentAgentLaunch] {
+        model.recentLaunches.filter { model.device($0.deviceID) != nil }
+    }
+
+    /// One click starts the agent again in that project; Claude rows also
+    /// offer to continue the folder's last conversation.
+    private func recentRow(_ launch: RecentAgentLaunch) -> some View {
+        let deviceName = model.device(launch.deviceID)?.name ?? ""
+        return HStack(spacing: 8) {
+            Button {
+                model.startRecentLaunch(launch)
+                dismiss()
+            } label: {
+                HStack(spacing: 8) {
+                    Group {
+                        if let resource = BrandIconLoader.agentIcon(for: launch.kind) {
+                            BrandIcon(resource: resource, size: 14)
+                        } else {
+                            Image(systemName: "terminal").font(.system(size: 12))
+                        }
+                    }
+                    .frame(width: 16)
+                    .foregroundStyle(Theme.textSecondary)
+                    Text(launch.spaceLabel)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Text(model.showsDeviceBadges ? "\(launch.kind) · \(deviceName)" : launch.kind)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(String(localized: "Start \(launch.kind) in \(launch.spaceLabel) again"))
+
+            if launch.kind == "claude" {
+                Button {
+                    model.startRecentLaunch(launch, continueConversation: true)
+                    dismiss()
+                } label: {
+                    Image(systemName: "arrow.uturn.forward")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Continue the last conversation in this folder (claude --continue)")
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(height: 28)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Theme.itemWash))
+        .contextMenu {
+            Button("Remove from Recent") { model.forgetRecentLaunch(launch) }
         }
     }
 
