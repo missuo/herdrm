@@ -101,6 +101,65 @@ final class UsageSourcesTests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(result.readings.first?.tokens?.input), 0)
     }
 
+    // MARK: - Claude
+
+    /// The command wraps `claude -p /usage` behind the remote PATH export
+    /// with a `command -v` guard: a missing CLI prints the installed-false
+    /// envelope the parser reads. Never run here — `claude -p` talks to the
+    /// provider, and herdrm makes no network calls of its own.
+    func testClaudeUsageCommandWrapsCLI() {
+        XCTAssertTrue(UsageSource.claudeUsageCommand.hasPrefix(SSHTunnel.remotePathExport))
+        XCTAssertTrue(UsageSource.claudeUsageCommand.contains("command -v claude"))
+        XCTAssertTrue(UsageSource.claudeUsageCommand.contains("claude -p /usage"))
+        XCTAssertTrue(
+            UsageSource.claudeUsageCommand.contains(#"echo '{"installed": false}'"#))
+    }
+
+    /// The spike's `claude -p /usage` stdout parses to one reading with
+    /// three windows: the 5-hour session, the all-models week (scope nil)
+    /// and the per-model week, each `remaining` = 100 − used with the
+    /// en-US-formatter-parsed reset time.
+    func testClaudeUsageTextParsesWindows() throws {
+        let result = try XCTUnwrap(
+            UsageSource.parseClaudeUsage(Self.claudeSpikeOutput, fetchedAt: Self.fetchedOct13))
+        XCTAssertEqual(result.installed, true)
+        XCTAssertEqual(result.readings.count, 1)
+        let windows = try XCTUnwrap(result.readings.first?.windows)
+        XCTAssertEqual(windows.count, 3)
+        XCTAssertEqual(windows[0].group, "session")
+        XCTAssertEqual(windows[0].remaining, 85)
+        XCTAssertEqual(
+            windows[0].resetsAt,
+            Self.resetDate("Oct 13 at 3:09pm (Europe/Warsaw)", fetchedAt: Self.fetchedOct13))
+        XCTAssertEqual(windows[1].group, "weekly")
+        XCTAssertNil(windows[1].scope)
+        XCTAssertEqual(windows[1].remaining, 87)
+        XCTAssertEqual(
+            windows[1].resetsAt,
+            Self.resetDate("Oct 17 at 3:59pm (Europe/Warsaw)", fetchedAt: Self.fetchedOct13))
+        XCTAssertEqual(windows[2].scope, "Fable")
+        XCTAssertEqual(windows[2].remaining, 87)
+    }
+
+    /// Output that is neither the not-installed envelope nor `Current …`
+    /// lines is an installed CLI with nothing usable: unknown, never a
+    /// thrown failure — codex's shape.
+    func testUnrecognizedUsageOutputYieldsUnknown() throws {
+        let result = try XCTUnwrap(
+            UsageSource.parseClaudeUsage("error: something", fetchedAt: fetchedAt))
+        XCTAssertEqual(result, UsageParseResult(installed: true, readings: []))
+    }
+
+    /// The CLI prints no year: a January window read on New Year's Eve is
+    /// next year's reset, not a year-stale one.
+    func testResetDateRollesOverYearBoundary() throws {
+        let result = try XCTUnwrap(UsageSource.parseClaudeUsage(
+            "Current session: 59% used · resets Jan 3 at 1:00pm (Europe/Warsaw)",
+            fetchedAt: Self.date(2026, 12, 31)))
+        let resetsAt = try XCTUnwrap(result.readings.first?.windows.first?.resetsAt)
+        XCTAssertEqual(Calendar(identifier: .gregorian).component(.year, from: resetsAt), 2027)
+    }
+
     // MARK: - Helpers
 
     /// The newest `token_count` record of the 2026-10-08 spike, as codex
@@ -129,6 +188,46 @@ final class UsageSourcesTests: XCTestCase {
     /// exported on its own instead.
     private func withHome(_ home: URL, _ command: String) -> String {
         "HOME='\(home.path)'; export HOME; " + command
+    }
+
+    // MARK: - Claude helpers
+
+    /// The 2026-10-13 spike's `claude -p /usage` stdout, verbatim.
+    private static let claudeSpikeOutput = """
+        Current session: 15% used · resets Oct 13 at 3:09pm (Europe/Warsaw)
+        Current week (all models): 13% used · resets Oct 17 at 3:59pm (Europe/Warsaw)
+        Current week (Fable): 13% used · resets Oct 17 at 3:59pm (Europe/Warsaw)
+        """
+
+    /// Noon in Warsaw on the day the spike ran.
+    private static let fetchedOct13 = date(2026, 10, 13)
+
+    private static func date(_ year: Int, _ month: Int, _ day: Int) -> Date {
+        var components = DateComponents()
+        components.year = year
+        components.month = month
+        components.day = day
+        components.hour = 12
+        components.timeZone = TimeZone(identifier: "Europe/Warsaw")
+        return Calendar(identifier: .gregorian).date(from: components)!
+    }
+
+    /// The reset text as the parser reads it: the en-US formatter's parse
+    /// of the CLI's `MMM d 'at' h:mma (zone)` stamp, pinned to `fetchedAt`'s
+    /// year and rolled +1 when that lands nearly a year before the fetch.
+    private static func resetDate(_ text: String, fetchedAt: Date) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d 'at' h:mma (VV)"
+        guard let parsed = formatter.date(from: text) else { return nil }
+        let calendar = Calendar(identifier: .gregorian)
+        let shifted = calendar.date(
+            byAdding: .year,
+            value: calendar.component(.year, from: fetchedAt) - calendar.component(.year, from: parsed),
+            to: parsed)!
+        return shifted.timeIntervalSince(fetchedAt) < -330 * 86400
+            ? calendar.date(byAdding: .year, value: 1, to: shifted)
+            : shifted
     }
 
     /// Whether `tool` answers `command -v`, the same probe the device does.

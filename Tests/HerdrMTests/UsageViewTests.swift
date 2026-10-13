@@ -186,7 +186,7 @@ final class UsageViewTests: XCTestCase {
         XCTAssertTrue(harness.labels.contains(String(localized: "Checking usage…")), "\(harness.labels)")
     }
 
-    func testNotInstalledStateNamesWhatIsMissing() throws {
+    func testNotInstalledStateReadsPlainlyForEveryProvider() throws {
         let model = UsageModel()
         model.preload(.local, [
             .claude: .notInstalled, .codex: .notInstalled,
@@ -194,14 +194,14 @@ final class UsageViewTests: XCTestCase {
         ])
         let harness = try UsageSheetHarness(model: model)
 
-        // Claude's quota source is grazr, not the Claude CLI: its card must
-        // name the plugin, not imply Claude itself is missing. The other
-        // three providers keep the plain "Not installed".
-        XCTAssertTrue(harness.labels.contains(String(localized: "Needs grazr")), "\(harness.labels)")
+        // Claude's quota now comes from the Claude CLI itself, so every
+        // provider reads the same plain "Not installed".
         XCTAssertEqual(
-            harness.labels.filter { $0 == String(localized: "Not installed") }.count, 3,
+            harness.labels.filter { $0 == String(localized: "Not installed") }.count, 4,
             "\(harness.labels)"
         )
+        XCTAssertFalse(
+            harness.labels.contains(String(localized: "Needs grazr")), "\(harness.labels)")
     }
 
     func testUnknownStateReadsNoUsageYet() throws {

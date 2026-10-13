@@ -35,8 +35,8 @@ public actor UsageStore {
     }
 
     /// `provider`'s readings on `device`: from the cache while fresh, one
-    /// shared run otherwise. `force` re-runs even when fresh, and on Claude
-    /// has grazr re-read its accounts before the reader runs.
+    /// shared run otherwise. `force` re-runs the command even when fresh
+    /// (the sheet's refresh button).
     public func reading(
         _ provider: UsageProvider, on device: Device, force: Bool = false
     ) async throws -> UsageParseResult {
@@ -63,7 +63,7 @@ public actor UsageStore {
         let commands: [String]
         switch provider {
         case .claude:
-            commands = force ? [Grazr.refreshCommand, Grazr.readerCommand] : [Grazr.readerCommand]
+            commands = [UsageSource.claudeUsageCommand]
         default:
             guard let command = UsageSource.command(for: provider) else {
                 throw HerdrError.malformedResponse("\(provider.rawValue) has no usage command")
