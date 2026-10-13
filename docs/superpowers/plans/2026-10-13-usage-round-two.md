@@ -124,9 +124,9 @@
 **Interfaces:**
 - Produces: `struct UsagePricing { static let tableUpdated = "2026-10-13"; static func cost(of tokens: UsageTokens, model: String) -> (dollars: Double, approximate: Bool) }` — per-1M rates, longest-prefix model match, unknown model → cheapest known rate + `approximate = true`.
 
-- [ ] **Step 1: Failing tests** — prefix match (`claude-opus-5-5-20261001` → `claude-opus-5-5` rate), cache multipliers (cache read ≤ input rate × 0.1, cache write × 1.25 — asserted against the seeded table), unknown → cheapest + approximate, math exactness (`tokens/1e6 × rate`).
-- [ ] **Step 2: Verify fail.** **Step 3: Implement** — seed the table with current list rates for the models in this repo's fixtures, sourced at implementation time from the official pages (anthropic.com/pricing, openai.com/api-pricing, z.ai pricing) with source comments; rates are data, structure is the interface. **Step 4: Verify pass.**
-- [ ] **Step 5: Commit** — `feat(usage): dated pricing table with approximate fallback`.
+- [x] **Step 1: Failing tests** — prefix match (`claude-opus-5-5-20261001` → `claude-opus-5-5` rate), cache multipliers (cache read ≤ input rate × 0.1, cache write × 1.25 — asserted against the seeded table), unknown → cheapest + approximate, math exactness (`tokens/1e6 × rate`).
+- [x] **Step 2: Verify fail.** **Step 3: Implement** — seed the table with current list rates for the models in this repo's fixtures, sourced at implementation time from the official pages (anthropic.com/pricing, openai.com/api-pricing, z.ai pricing) with source comments; rates are data, structure is the interface. **Step 4: Verify pass.**
+- [x] **Step 5: Commit** — `feat(usage): dated pricing table with approximate fallback`.
 
 ### Task 6: History charts in the sheet
 
