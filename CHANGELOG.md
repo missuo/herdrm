@@ -8,16 +8,38 @@ the Sparkle update description — a release without a section here fails CI.
 ## [Unreleased]
 
 ### Added
-- **Usage meters with a sidebar hint.** A new Usage sheet shows one card per
-  provider — Claude (via grazr), Codex, OpenCode and Gemini — for each device,
-  with quota meters where a provider reports windows (what is left, when it
-  resets) and token statistics where it only publishes those. Every card
-  stands alone, so one stuck provider never blanks the sheet, and ⌘R re-reads
-  every visible device. All readings come from commands run on the device
-  itself — herdrm never authenticates anywhere — cached for five minutes. The
-  sidebar footer gains a one-line hint with the tightest open window across
-  devices, tinted red under 15 % left and amber under 25 %, which opens the
-  sheet on click.
+- **Usage meters.** A new Usage sheet shows one card per provider — Claude,
+  Codex, OpenCode and Gemini — for each device, with quota meters where a
+  provider reports windows (what is left, when it resets) and token
+  statistics where it only publishes those. Every card stands alone, so one
+  stuck provider never blanks the sheet, and ⌘R re-reads every visible
+  device. All readings come from commands run on the device itself — herdrm
+  never authenticates anywhere — cached for five minutes.
+- **Usage history charts with approximate dollar totals.** Each device's
+  section in the Usage sheet gains a history card: stacked daily token bars
+  for Claude and Codex with a 7d / 30d range toggle, per-model token rows
+  for Claude, Codex and OpenCode, and a totals row that prices every model
+  at API list rates — always labelled "(approx.)", since the rates are a
+  dated snapshot of public list prices, not the account's bill. Providers
+  contribute what they publish, so OpenCode shows rows and totals without
+  daily bars and Gemini shows neither; a device with nothing read yet shows
+  "No history yet".
+- **A USAGE column in the sidebar.** The sidebar's stats block gains a USAGE
+  meter beside CPU / RAM / Disk: percent used of the watched Claude model's
+  tightest open window across every device, dimmed until a reading lands
+  and opening the Usage sheet on that window's device when clicked. The
+  watched model is chosen with a picker in the Usage sheet; with none
+  picked, the meter falls back to the all-models windows.
+
+### Changed
+- **Claude's quota is read by the Claude CLI itself.** The Usage sheet and
+  the sidebar's USAGE column get their Claude windows from running `claude`
+  on the device, so the usage feature no longer needs grazr. grazr itself is
+  untouched — account rotation, pins and the Accounts sheet work as before.
+- **History dollar totals state their span.** The Usage sheet's totals row
+  reads "Total (30d)" and its tooltip spells out that the approximate
+  figures cover the fetched 30 days, so they cannot be mistaken for a
+  billing period.
 
 D
 
