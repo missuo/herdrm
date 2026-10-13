@@ -7,12 +7,12 @@ import Foundation
 public enum UsageHistorySource {
     /// The shell command that prints `provider`'s normalized history JSON on
     /// the device, nil where no transcript source exists (gemini keeps no
-    /// transcripts; opencode's source arrives in a later task).
+    /// transcripts).
     public static func command(for provider: UsageProvider) -> String? {
         switch provider {
         case .claude: claudeCommand
         case .codex: codexCommand
-        case .opencode: nil
+        case .opencode: opencodeCommand
         case .gemini: nil
         }
     }
@@ -22,6 +22,9 @@ public enum UsageHistorySource {
     /// keyed under `provider`. Nil when the output is not the history shape
     /// at all.
     public static func parse(_ provider: UsageProvider, stdout: Data, fetchedAt: Date) -> UsageHistory? {
+        if provider == .opencode {
+            return parseOpencode(stdout: stdout, fetchedAt: fetchedAt)
+        }
         guard let document = try? JSONDecoder().decode(NormalizedDocument.self, from: stdout) else {
             return nil
         }
@@ -161,6 +164,70 @@ public enum UsageHistorySource {
             "models": dict(sorted(models.items()))}))
         USAGE_EOF
         """#
+
+    // MARK: - OpenCode
+
+    /// Runs `opencode stats` for the last 30 days behind the `command -v`
+    /// guard that prints the installed-false envelope when the CLI is
+    /// missing. opencode prints its own JSON — no heredoc normalization —
+    /// so `parseOpencode` reads the stats shape directly.
+    private static let opencodeCommand = SSHTunnel.remotePathExport + "\n"
+        + #"if command -v opencode >/dev/null 2>&1; then opencode stats --json --days 30; else echo '{"installed": false}'; fi"#
+
+    /// opencode reports tokens only as per-model 30-day range totals (the
+    /// pinned 2026-10-13 `stats --json` shape; `activity` is steps-only),
+    /// so there is no daily series: every variant of one bare `model.id`
+    /// merges into a single entry and `days` stays empty. The
+    /// installed-false envelope and any non-stats output are nil, matching
+    /// the normalized parse's semantics.
+    private static func parseOpencode(stdout: Data, fetchedAt: Date) -> UsageHistory? {
+        guard let document = try? JSONDecoder().decode(OpencodeStatsDocument.self, from: stdout) else {
+            return nil
+        }
+        var totals: [String: UsageTokens] = [:]
+        for entry in document.models {
+            let row = totals[entry.model.id]
+                ?? UsageTokens(input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0)
+            totals[entry.model.id] = UsageTokens(
+                input: row.input + entry.tokens.input,
+                output: row.output + entry.tokens.output,
+                reasoning: row.reasoning + entry.tokens.reasoning,
+                cacheRead: row.cacheRead + entry.tokens.cache.read,
+                cacheWrite: row.cacheWrite + entry.tokens.cache.write)
+        }
+        return UsageHistory(days: [], modelTotals: [.opencode: totals], generatedAt: fetchedAt)
+    }
+
+    /// opencode's `stats --json` document: only the `models` array carries
+    /// tokens — `range`, `sessions`, and `activity` are unused.
+    private struct OpencodeStatsDocument: Decodable {
+        let models: [OpencodeModelUsage]
+    }
+
+    /// One model row: the model ref plus its range token totals.
+    private struct OpencodeModelUsage: Decodable {
+        let model: OpencodeModelID
+        let tokens: OpencodeModelTokens
+    }
+
+    /// The bare model id; `providerID` and `variant` distinguish rows that
+    /// merge into the same entry.
+    private struct OpencodeModelID: Decodable {
+        let id: String
+    }
+
+    /// One row's range totals; cache splits into read and write.
+    private struct OpencodeModelTokens: Decodable {
+        let input: Int
+        let output: Int
+        let reasoning: Int
+        let cache: OpencodeCache
+    }
+
+    private struct OpencodeCache: Decodable {
+        let read: Int
+        let write: Int
+    }
 
     // MARK: - Normalized schema
 
