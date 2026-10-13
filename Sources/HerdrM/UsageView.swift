@@ -21,6 +21,11 @@ struct UsageView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isRefreshing = false
+    /// The model whose weekly window the sidebar's USAGE column watches;
+    /// empty means all models. `@AppStorage` in a view publishes and
+    /// persists in one move, and matches `AppModel.sidebarWatchedModel`'s
+    /// key from the other side.
+    @AppStorage("usage.sidebarWatchedModel") private var watchedModel = ""
 
     init(model: UsageModel, anchor: Device, devices: [Device] = [], refresh: Refresh? = nil) {
         _model = ObservedObject(wrappedValue: model)
@@ -31,11 +36,26 @@ struct UsageView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SheetHeader(
-                systemImage: "chart.bar",
-                title: String(localized: "Usage"),
-                subtitle: sectionDevices.map(\.name).joined(separator: " · ")
-            )
+            HStack(spacing: 0) {
+                SheetHeader(
+                    systemImage: "chart.bar",
+                    title: String(localized: "Usage"),
+                    subtitle: sectionDevices.map(\.name).joined(separator: " · ")
+                )
+                if !scopes.isEmpty {
+                    Picker(String(localized: "Watched model"), selection: $watchedModel) {
+                        Text(String(localized: "All models")).tag("")
+                        ForEach(scopes, id: \.self) { scope in
+                            Text(verbatim: scope).tag(scope)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help(String(localized: "The sidebar's USAGE meter follows this model's weekly window"))
+                    .padding(.trailing, 16)
+                }
+            }
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
             ScrollView {
@@ -63,6 +83,28 @@ struct UsageView: View {
         var list = devices
         if !list.contains(anchor) { list.insert(anchor, at: 0) }
         return list.filter(\.isLocal) + list.filter { !$0.isLocal }
+    }
+
+    /// Every distinct window scope in the current readings ("Fable"), in
+    /// first-seen order — the watched-model picker's options. Hidden while
+    /// no provider reports a per-model window.
+    private var scopes: [String] {
+        var seen: Set<String> = []
+        var out: [String] = []
+        for device in sectionDevices {
+            guard let perProvider = model.states[device.id] else { continue }
+            for provider in UsageProvider.allCases {
+                guard case .readings(let readings) = perProvider[provider] else { continue }
+                for reading in readings {
+                    for window in reading.windows {
+                        if let scope = window.scope, seen.insert(scope).inserted {
+                            out.append(scope)
+                        }
+                    }
+                }
+            }
+        }
+        return out
     }
 
     private func deviceSection(_ device: Device) -> some View {

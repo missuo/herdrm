@@ -17,15 +17,22 @@ enum MachineStatsDefaults {
     static let showKey = "sidebar.showMachineStats"
 }
 
-/// CPU / RAM / DISK meters for the selected pane's host, in the sidebar footer
-/// just above the device switcher, plus AGENTS (herdr's panes against herdr's
-/// memory cap) on a Linux host that caps herdr, and a warning when that host has
-/// no room for another agent. Clicking opens `MachineStatsPanel`. Runs the
-/// sampler while it is on screen and the window is visible.
+/// CPU / RAM / DISK / USAGE meters for the selected pane's host, in the
+/// sidebar footer just above the device switcher, plus AGENTS (herdr's
+/// panes against herdr's memory cap) on a Linux host that caps herdr, and
+/// a warning when that host has no room for another agent. Clicking the
+/// row opens `MachineStatsPanel`; the USAGE column opens the Usage sheet
+/// instead. Runs the sampler while it is on screen and the window is
+/// visible.
 struct SidebarMachineStats: View {
     @ObservedObject var stats: MachineStatsModel
     let device: Device
     let isOpen: Bool
+    /// Percent used of the watched model's tightest open window, across
+    /// every device; nil while nothing has been read (the column dims).
+    var usagePercent: Double?
+    /// The USAGE column's tap: the Usage sheet, not the machine panel.
+    var onUsageTap: () -> Void = {}
     let toggle: () -> Void
     @State private var hovered = false
     @State private var windowVisible = true
@@ -41,6 +48,7 @@ struct SidebarMachineStats: View {
                 SidebarMeter(label: "CPU", percent: snapshot?.cpuPercent)
                 SidebarMeter(label: "RAM", percent: snapshot.map { $0.memFraction * 100 })
                 SidebarMeter(label: "DISK", percent: snapshot?.fullestDisk.map { $0.fraction * 100 })
+                SidebarMeter(label: "USAGE", percent: usagePercent, action: onUsageTap)
                 if let agents = snapshot?.agentsMemFraction {
                     SidebarMeter(label: "AGENTS", percent: agents * 100)
                 }
@@ -72,6 +80,14 @@ struct SidebarMachineStats: View {
         .help(String(localized: "\(device.name) health — click for details"))
         .accessibilityLabel(accessibilityText)
         .accessibilityIdentifier("sidebar.machineStats")
+        // A labeled Button is a leaf in the accessibility tree, which hides
+        // the nested USAGE column button; this exposes it alongside the
+        // row's reading (the views below never render).
+        .accessibilityChildren {
+            Button(action: onUsageTap) {
+                Text("USAGE \(usagePercent.map(MachineStatsFormat.percent) ?? "—")")
+            }
+        }
         .background(WindowVisibilityReader(isVisible: $windowVisible))
         .task(id: WatchKey(device: device, visible: windowVisible)) {
             guard windowVisible else { return }
@@ -94,14 +110,28 @@ struct SidebarMachineStats: View {
 
 /// One compact meter column: `CPU … 34%` over a level-tinted bar that fills its
 /// share of the row. Equal-width columns so the block adapts to the sidebar width.
+/// With `action` the column becomes its own button — the inner tap wins over
+/// the row's, the way USAGE opens the Usage sheet.
 private struct SidebarMeter: View {
     let label: String
     let percent: Double?
+    var action: (() -> Void)? = nil
 
     var body: some View {
+        if let action {
+            Button(action: action) { meter }
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
+                .help(String(localized: "Usage across your devices — click for details"))
+        } else {
+            meter
+        }
+    }
+
+    private var meter: some View {
         let value = percent.map { min(100, max(0, $0)) }
         let tint = value.map(levelColor) ?? Theme.textGhost
-        VStack(alignment: .leading, spacing: 3) {
+        return VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 Text(label)
                     .font(.system(size: 9, weight: .semibold))

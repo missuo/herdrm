@@ -401,6 +401,22 @@
         }
       }
     },
+    "Watched model": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Watched model"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关注的模型"
+          }
+        }
+      }
+    },
     "Usage across your devices — click for details": {
       "localizations": {
         "en": {
@@ -429,6 +445,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "用量"
+          }
+        }
+      }
+    },
+    "The sidebar's USAGE meter follows this model's weekly window": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The sidebar's USAGE meter follows this model's weekly window"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "侧边栏的 USAGE 用量表跟随此模型的每周额度窗口"
           }
         }
       }
@@ -621,6 +653,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在检查用量…"
+          }
+        }
+      }
+    },
+    "All models": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All models"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有模型"
           }
         }
       }

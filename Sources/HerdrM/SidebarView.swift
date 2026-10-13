@@ -27,9 +27,9 @@ struct SidebarView: View {
     @ObservedObject var model: AppModel
     @Binding var collapsed: Bool
     var width: CGFloat = SidebarWidth.defaultWidth
-    /// Usage readings behind the footer hint. Its own model — the sheet's
-    /// per-presentation instance is gone by dismiss — so the hint keeps the
-    /// states it read, and the store's cache keeps re-reads cheap.
+    /// Usage readings behind the footer's USAGE column. Its own model — the
+    /// sheet's per-presentation instance is gone by dismiss — so the column
+    /// keeps the states it read, and the store's cache keeps re-reads cheap.
     @StateObject private var usageHint = UsageModel()
     @State private var deviceButtonHovered = false
     @State private var draggingSpaceID: String?
@@ -192,21 +192,27 @@ struct SidebarView: View {
             Spacer(minLength: 0)
             if showsMachineStats, let device = model.statsDevice {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                UsageHintLine(
-                    usage: usageHint,
-                    devices: model.devices,
-                    onSelect: { model.usageDevice = $0 }
-                )
-                .padding(.horizontal, 6)
                 SidebarMachineStats(
                     stats: model.machineStats,
                     device: device,
-                    isOpen: model.showMachineStats
+                    isOpen: model.showMachineStats,
+                    usagePercent: usagePercent,
+                    onUsageTap: openUsage
                 ) {
                     model.showMachineStats.toggle()
                 }
                 .padding(.horizontal, 6)
                 .frame(height: SidebarFooterMetrics.statsHeight)
+                // Round one's refresh discipline (the `600ce7d` lesson):
+                // anchored to the stats block — a real view that renders
+                // whenever a pane is selected — never to a conditional row.
+                .task(id: model.devices.map(\.id)) {
+                    await Self.refreshUsageReads(
+                        states: usageHint.states, devices: model.devices
+                    ) { device, force in
+                        await usageHint.refresh(device, force: force)
+                    }
+                }
             }
             footer
         }
@@ -216,6 +222,61 @@ struct SidebarView: View {
         }
         .frame(width: width)
         .background(VisualEffectView(material: .sidebar).ignoresSafeArea())
+    }
+
+    /// The USAGE column's reading: percent used of the watched model's
+    /// tightest open window across every device, nil while nothing has
+    /// been read — the column stays, dimmed.
+    private var usagePercent: Double? {
+        watchedWindow.map { 100 - Double($0.window.left(now: Date())) }
+    }
+
+    /// The window the USAGE column watches: the watched model's own, with
+    /// the all-models windows as fallback.
+    private var watchedWindow: (device: Device, window: GrazrWindow)? {
+        let watched = model.sidebarWatchedModel
+        return UsageSelection.tightestWindow(
+            states: usageHint.states,
+            devices: model.devices,
+            scope: watched.isEmpty ? nil : watched,
+            now: Date()
+        )
+    }
+
+    /// The USAGE column's tap: the Usage sheet on the watched window's
+    /// device — the local device (else the first) while nothing is open.
+    private func openUsage() {
+        model.usageDevice = watchedWindow?.device
+            ?? model.devices.first(where: \.isLocal)
+            ?? model.devices.first
+    }
+
+    /// First read for devices with no states yet, and — when the stats
+    /// block's `.task` refires on a device-set change — a retry for
+    /// devices where any provider stands `.failed` or `.unknown`. Plain
+    /// non-forced refreshes: the store's five-minute cache and
+    /// single-flight fold bound the cost.
+    static func refreshUsageReads(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        refresh: (Device, Bool) async -> Void
+    ) async {
+        for device in devices where needsUsageRead(states[device.id]) {
+            await refresh(device, false)
+        }
+    }
+
+    /// Whether `device`'s states call for a read: never read, or any
+    /// provider standing `.failed` or `.unknown` — every window reset, say
+    /// — so the USAGE column keeps a real picture behind it.
+    static func needsUsageRead(_ states: [UsageProvider: UsageProviderState]?) -> Bool {
+        guard let states else { return true }
+        return states.contains { _, state in
+            switch state {
+            case .failed, .unknown: return true
+            default: return false
+            }
+        }
     }
 
     private var terminalsSectionVisible: Bool {
@@ -761,181 +822,6 @@ struct SidebarView: View {
         case .failed: return Theme.danger
         case .idle: return Theme.textGhost
         }
-    }
-}
-
-/// The sidebar footer's usage hint: the tightest open window across every
-/// device and provider with fresh readings — the one with the least left —
-/// rendered `5h 12% · 20:27` in the severity colour (danger under 15 % left,
-/// warning under 25 %, the footer's quiet gray otherwise) and opening the
-/// Usage sheet on the window's device when tapped. When states stand but no
-/// window is open, a neutral `Usage` row keeps the sheet one tap away; both
-/// vanish only while no listed device has ever been read. The first read
-/// runs for devices with no states yet, and a `.task` refire re-reads
-/// devices standing `.failed` or `.unknown` — non-forced, so the sheet's
-/// (or the store's cached) readings stand within the store's window.
-struct UsageHintLine: View {
-    /// Stands in for `UsageModel.refresh` in the hint's UIUX tests, so
-    /// appearing never runs the providers' real commands. nil refreshes
-    /// for real.
-    typealias Refresh = (UsageModel, Device, _ force: Bool) async -> Void
-
-    @ObservedObject var usage: UsageModel
-    /// Devices the readings may belong to, in sidebar order; the tap names one.
-    var devices: [Device] = []
-    var now: Date = Date()
-    /// Called with the device of the window the user tapped; the sidebar
-    /// presents the Usage sheet on it.
-    var onSelect: (Device) -> Void = { _ in }
-    var refresh: Refresh? = nil
-
-    var body: some View {
-        // A `Group` is transparent: while no row renders (nothing read yet)
-        // it forwards no view at all, so a `.task` on it never starts — no
-        // states without a task, no row without states. A `VStack` is a real
-        // container: it always appears (the task always runs) and still
-        // sizes to the row it carries.
-        VStack(spacing: 0) {
-            if let tightest = Self.tightestOpenWindow(states: usage.states, devices: devices, now: now) {
-                Button {
-                    onSelect(tightest.device)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chart.bar")
-                            .font(.system(size: 9.5))
-                            .foregroundStyle(Theme.textGhost)
-                        Text(verbatim: hintText(tightest.window))
-                            .font(.system(size: 10.5).monospacedDigit())
-                            .foregroundStyle(Self.severityColor(left: tightest.window.left(now: now)))
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .help(String(localized: "Usage across your devices — click for details"))
-                .accessibilityLabel(hintText(tightest.window))
-            } else if Self.hasAnyReadState(states: usage.states, devices: devices),
-                      let fallback = Self.neutralEntryDevice(devices: devices) {
-                Button {
-                    onSelect(fallback)
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "chart.bar")
-                            .font(.system(size: 9.5))
-                            .foregroundStyle(Theme.textGhost)
-                        Text("Usage")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .focusEffectDisabled()
-                .help(String(localized: "Usage across your devices — click for details"))
-                .accessibilityLabel(String(localized: "Usage"))
-            }
-        }
-        .task(id: devices.map(\.id)) { await refreshUnknownDevices() }
-    }
-
-    /// The line the hint shows: `5h 12% · 20:27`, or without the time when
-    /// the window reports no reset.
-    private func hintText(_ window: GrazrWindow) -> String {
-        let left = window.left(now: now)
-        guard let resetsAt = window.resetsAt else {
-            return String(localized: "\(window.label) \(left)%")
-        }
-        return String(localized: "\(window.label) \(left)% · \(GrazrStyle.time(resetsAt, now: now))")
-    }
-
-    /// The open window with the least left, across every provider on every
-    /// device with fresh readings. A window past its reset has refilled and
-    /// never shows; a device without a name in `devices` is skipped — the tap
-    /// could not open a sheet on it. Ties keep the first in device and
-    /// provider order.
-    static func tightestOpenWindow(
-        states: [UUID: [UsageProvider: UsageProviderState]],
-        devices: [Device],
-        now: Date
-    ) -> (device: Device, window: GrazrWindow)? {
-        var best: (device: Device, window: GrazrWindow)?
-        for device in devices {
-            guard let perProvider = states[device.id] else { continue }
-            for provider in UsageProvider.allCases {
-                guard case .readings(let readings) = perProvider[provider] else { continue }
-                for reading in readings {
-                    for window in reading.windows where window.isOpen(now: now) {
-                        if window.left(now: now) < best?.window.left(now: now) ?? .max {
-                            best = (device, window)
-                        }
-                    }
-                }
-            }
-        }
-        return best
-    }
-
-    /// The hint's severity colour: danger under 15 % left, warning under 25 %,
-    /// the footer's quiet gray otherwise — SidebarMachineStats' levelColor
-    /// line, with the usage thresholds the sheet's meters tint at.
-    static func severityColor(left: Int) -> Color {
-        if left < 15 { return Theme.danger }
-        if left < 25 { return Theme.warning }
-        return Theme.textSecondary
-    }
-
-    /// First read for devices with no states yet, and — when `.task` refires
-    /// on a device-set change — a retry for devices where any provider stands
-    /// `.failed` or `.unknown`. Plain non-forced refreshes: the store's
-    /// five-minute cache and single-flight fold bound the cost.
-    private func refreshUnknownDevices() async {
-        for device in devices where Self.needsRead(usage.states[device.id]) {
-            if let refresh {
-                await refresh(usage, device, false)
-            } else {
-                await usage.refresh(device, force: false)
-            }
-        }
-    }
-
-    /// Whether `device`'s states call for a read: never read, or any
-    /// provider standing `.failed` or `.unknown` — every window reset, say —
-    /// so the sheet's one entry point keeps a real picture to open onto.
-    static func needsRead(_ states: [UsageProvider: UsageProviderState]?) -> Bool {
-        guard let states else { return true }
-        return states.contains { _, state in
-            switch state {
-            case .failed, .unknown: return true
-            default: return false
-            }
-        }
-    }
-
-    /// Whether any listed device has ever been read — the neutral entry's
-    /// condition: states stand as soon as a read ran, even when nothing
-    /// open came of it. Devices outside `devices` never count: the tap
-    /// could not open a sheet on them.
-    static func hasAnyReadState(
-        states: [UUID: [UsageProvider: UsageProviderState]],
-        devices: [Device]
-    ) -> Bool {
-        devices.contains { states[$0.id] != nil }
-    }
-
-    /// The device a neutral entry opens the sheet on: the local device when
-    /// listed, else the first.
-    static func neutralEntryDevice(devices: [Device]) -> Device? {
-        devices.first { $0 == Device.local } ?? devices.first
     }
 }
 
