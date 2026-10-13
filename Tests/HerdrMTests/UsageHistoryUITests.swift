@@ -174,8 +174,10 @@ final class UsageHistoryUITests: XCTestCase {
 
     // MARK: - Totals
 
-    /// The totals row prices every model total and always says approx. —
-    /// even when every model matched a listed rate.
+    /// The totals row prices every model total, always says approx. — even
+    /// when every model matched a listed rate — and discloses its 30-day
+    /// span outright, since the 7d/30d toggle above it changes only the
+    /// chart.
     func testTotalsRowShowsApproximateDollarsEvenForKnownModels() throws {
         let opus = tokens(1_000_000, 200_000) // claude-opus-5-5 is a listed rate
         let model = UsageModel()
@@ -189,9 +191,13 @@ final class UsageHistoryUITests: XCTestCase {
         let expected = String(
             format: String(localized: "$%@ (approx.)"),
             String(format: "%.2f", dollars))
-        XCTAssertTrue(
-            harness.labels.contains { $0.contains("$") && $0.contains(expected) },
+        let row = try XCTUnwrap(
+            harness.labels.first { $0.contains("$") && $0.contains(expected) },
             "no totals row reading \(expected): \(harness.labels)"
+        )
+        XCTAssertTrue(
+            row.hasPrefix(String(localized: "Total (30d)") + ","),
+            "the row must disclose its 30-day span: \(row)"
         )
     }
 
