@@ -68,11 +68,11 @@
   - App: `SidebarMeter` gains `var action: (() -> Void)? = nil` (rendered as a nested `Button` when set — inner tap wins over the row's `toggle`); `AppModel` gains `@AppStorage("usage.sidebarWatchedModel") var sidebarWatchedModel: String = ""`.
   - `SidebarMachineStats` gains `usagePercent: Double?` and `onUsageTap: () -> Void` parameters; SidebarView passes `100 − tightestWindow(...).window.left(now:)`.
 
-- [ ] **Step 1: Write failing tests** — Kit: `testWatchedModelFallsBackToAllModelsWindow` (readings with only scope-nil weekly + a "Fable" scope on another device; scope "Fable" picks the Fable window; scope "Missing" falls back to scope-nil). UIUX (`UsageColumnTests`): stats row renders a "USAGE" meter column; tapping it sets `model.usageDevice` (NOT `model.showMachineStats`); with no readings the column shows "—" dimmed; watched-model picker in the sheet header lists "All models" + scopes from readings and persists to the AppStorage key.
-- [ ] **Step 2: Run, verify fail** — `make uiux-test` filtered → FAIL.
-- [ ] **Step 3: Implement** — per interfaces; move the hint's `.task(id:)` refresh anchor onto the stats block itself in `SidebarView` (anchored to a real view — the `600ce7d` lesson); delete the `UsageHintLine` struct and its standalone row; production test from round one re-anchors onto "USAGE".
-- [ ] **Step 4: Run** — `make kit-test && make uiux-test && make build` → green.
-- [ ] **Step 5: Commit** — `feat(usage): USAGE meter column with watched-model selector`.
+- [x] **Step 1: Write failing tests** — Kit: `testWatchedModelFallsBackToAllModelsWindow` (readings with only scope-nil weekly + a "Fable" scope on another device; scope "Fable" picks the Fable window; scope "Missing" falls back to scope-nil). UIUX (`UsageColumnTests`): stats row renders a "USAGE" meter column; tapping it sets `model.usageDevice` (NOT `model.showMachineStats`); with no readings the column shows "—" dimmed; watched-model picker in the sheet header lists "All models" + scopes from readings and persists to the AppStorage key.
+- [x] **Step 2: Run, verify fail** — `make uiux-test` filtered → FAIL.
+- [x] **Step 3: Implement** — per interfaces; move the hint's `.task(id:)` refresh anchor onto the stats block itself in `SidebarView` (anchored to a real view — the `600ce7d` lesson); delete the `UsageHintLine` struct and its standalone row; production test from round one re-anchors onto "USAGE".
+- [x] **Step 4: Run** — `make kit-test && make uiux-test && make build` → green.
+- [x] **Step 5: Commit** — `feat(usage): USAGE meter column with watched-model selector`.
 
 ### Task 3: History model + Claude/Codex aggregators
 
