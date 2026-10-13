@@ -336,19 +336,21 @@ private struct UsageHistoryBlock: View {
     /// The dollar figure over every model the history priced at its list
     /// rate — approximate even when every model matched, because list
     /// rates are themselves the estimate. The model totals span the
-    /// fetched 30-day range; days carry no per-model split.
+    /// fetched 30-day range however far the chart's toggle reaches back
+    /// (days carry no per-model split), so the row says "(30d)" outright
+    /// and the tooltip spells the span out.
     private var totalsRow: some View {
         let dollars = String(localized: "$\(String(format: "%.2f", totalDollars)) (approx.)")
         return HStack(alignment: .firstTextBaseline) {
-            SheetSectionLabel("Total")
+            SheetSectionLabel("Total (30d)")
             Spacer()
             Text(dollars)
                 .font(.system(size: 11.5, weight: .medium).monospacedDigit())
                 .foregroundStyle(Theme.text)
-                .help(String(localized: "Priced at API list rates; table fetched \(UsagePricing.tableUpdated)"))
+                .help(String(localized: "Totals span the fetched 30 days; priced at API list rates; table fetched \(UsagePricing.tableUpdated)"))
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(String(localized: "Total") + ", " + dollars)
+        .accessibilityLabel(String(localized: "Total (30d)") + ", " + dollars)
     }
 
     @ViewBuilder

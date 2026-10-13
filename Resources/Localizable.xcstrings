@@ -481,18 +481,34 @@
         }
       }
     },
-    "Total": {
+    "Totals span the fetched 30 days; priced at API list rates; table fetched %@": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Total"
+            "value": "Totals span the fetched 30 days; priced at API list rates; table fetched %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "总计"
+            "value": "总计覆盖获取的 30 天；按 API 牌价估算；价格表获取于 %@"
+          }
+        }
+      }
+    },
+    "Total (30d)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total (30d)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "总计（30天）"
           }
         }
       }
@@ -557,22 +573,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "读取于 %@"
-          }
-        }
-      }
-    },
-    "Priced at API list rates; table fetched %@": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Priced at API list rates; table fetched %@"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "按 API 牌价估算；价格表获取于 %@"
           }
         }
       }
