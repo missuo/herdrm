@@ -85,7 +85,9 @@ struct SidebarMachineStats: View {
         // row's reading (the views below never render).
         .accessibilityChildren {
             Button(action: onUsageTap) {
-                Text("USAGE \(usagePercent.map(MachineStatsFormat.percent) ?? "—")")
+                // verbatim: "USAGE %@" is not a strings-catalog key, and
+                // the interpolating Text would look one up.
+                Text(verbatim: "USAGE \(usagePercent.map(MachineStatsFormat.percent) ?? "—")")
             }
         }
         .background(WindowVisibilityReader(isVisible: $windowVisible))

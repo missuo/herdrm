@@ -96,11 +96,11 @@ final class UsageHistoryUITests: XCTestCase {
         return calendar.startOfDay(for: Date()).addingTimeInterval(Double(offset) * 86400)
     }
 
-    /// "Oct 12" — the chart's day label, UTC like the underlying dates.
+    /// "Oct 12" — the chart's day label, in the device's calendar the way
+    /// the block now renders every day.
     private func dayText(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = .current
-        formatter.timeZone = TimeZone(identifier: "UTC")
         formatter.setLocalizedDateFormatFromTemplate("MMMd")
         return formatter.string(from: date)
     }
@@ -170,6 +170,43 @@ final class UsageHistoryUITests: XCTestCase {
         let thirtyDay = harness.labels
         XCTAssertTrue(thirtyDay.contains(dayLabel(day10, 800_000)), "\(thirtyDay)")
         XCTAssertTrue(thirtyDay.contains(dayLabel(day29, 700_000)), "\(thirtyDay)")
+    }
+
+    /// West of UTC, the store's day encoding (each transcript day as its
+    /// UTC midnight) falls on the previous local day: a day encoded as
+    /// UTC-midnight Oct 12 reads "Oct 11" in New York. The label must
+    /// follow that device-calendar date — the same calendar the chart's
+    /// axis buckets bars by — rather than the UTC date, or every bar
+    /// lands one bucket away from its own accessibility label.
+    func testDayLabelsFollowTheDeviceCalendarWestOfUTC() throws {
+        let inherited = ProcessInfo.processInfo.environment["TZ"]
+        setenv("TZ", "America/New_York", 1)
+        tzset()
+        NSTimeZone.resetSystemTimeZone()
+        defer {
+            if let inherited {
+                setenv("TZ", inherited, 1)
+            } else {
+                unsetenv("TZ")
+            }
+            tzset()
+            NSTimeZone.resetSystemTimeZone()
+        }
+
+        // UTC midnight yesterday: always inside the 7-day window, and in
+        // New York always the local day before its UTC date.
+        let day = utcDay(-1)
+        let model = UsageModel()
+        model.preload(.local, Self.allLoading)
+        model.preloadHistory(.local, history(days: [
+            UsageDay(date: day, tokens: [.claude: tokens(1_200_000)]),
+        ]))
+        let harness = try UsageHistoryHarness(model: model)
+
+        // `dayText` formats in the device's (now New York's) calendar, so
+        // this expectation is the local date — one day before the UTC
+        // date the day is encoded as.
+        XCTAssertTrue(harness.labels.contains(dayLabel(day, 1_200_000)), "\(harness.labels)")
     }
 
     // MARK: - Totals

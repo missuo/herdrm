@@ -201,7 +201,7 @@ final class UsageViewTests: XCTestCase {
             "\(harness.labels)"
         )
         XCTAssertFalse(
-            harness.labels.contains(String(localized: "Needs grazr")), "\(harness.labels)")
+            harness.labels.contains("Needs grazr"), "\(harness.labels)")
     }
 
     func testUnknownStateReadsNoUsageYet() throws {
