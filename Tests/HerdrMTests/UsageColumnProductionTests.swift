@@ -4,15 +4,17 @@ import SwiftUI
 import XCTest
 @testable import herdrm
 
-/// Pins the production wiring of the sidebar's usage hint: the REAL
+/// Pins the production wiring of the sidebar's USAGE column: the REAL
 /// SidebarView, a real AppModel with a selected shell (so the stats block
-/// renders), and the hint's real `.task` → `UsageModel.refresh` →
+/// renders), and the column's real `.task` → `UsageModel.refresh` →
 /// `UsageStore.shared` → device commands — no spies, no preloads. Guards
-/// the regression where the task anchored to a transparent empty Group and
-/// never fired, so the hint rendered nothing forever.
+/// the round-one lesson (`600ce7d`): the refresh task anchors to the stats
+/// block, a view that always renders while a pane is selected — a task on
+/// a view that never renders never fires, and the column would read
+/// nothing forever.
 @MainActor
-final class UsageHintProductionTests: XCTestCase {
-    func testRealSidebarMountsTheUsageRow() throws {
+final class UsageColumnProductionTests: XCTestCase {
+    func testRealSidebarMountsTheUsageColumn() throws {
         // Real model: DeviceStore.load() + the local device.
         let model = AppModel()
         if !model.devices.contains(where: \.isLocal) {
@@ -21,7 +23,7 @@ final class UsageHintProductionTests: XCTestCase {
         let local = try XCTUnwrap(model.devices.first(where: \.isLocal), "no local device")
 
         // A selected shell makes statsDevice non-nil so the stats block
-        // (hint + machine stats) renders — the user's situation.
+        // (machine meters + the USAGE column) renders — the user's situation.
         model.newShellSession(on: local)
         let shell = try XCTUnwrap(model.shellSessions.last, "no shell session")
         model.selectShell(shell.id)
@@ -34,14 +36,14 @@ final class UsageHintProductionTests: XCTestCase {
             contentRect: NSRect(x: 0, y: 0, width: 260, height: 600),
             styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
-        window.title = "UsageHintProductionTests \(UUID().uuidString)"
+        window.title = "UsageColumnProductionTests \(UUID().uuidString)"
         window.contentView = root
         window.orderFrontRegardless()
         root.layoutSubtreeIfNeeded()
         defer { window.close() }
 
-        // Pump while the real device commands run; the row appears as soon
-        // as the first read seeds, long before the commands finish.
+        // Pump while the real sampler starts; the USAGE column rides the
+        // stats block, so it appears alongside CPU/RAM.
         let deadline = Date().addingTimeInterval(20)
         var labels: [String] = []
         while Date() < deadline {
@@ -50,17 +52,13 @@ final class UsageHintProductionTests: XCTestCase {
                 .filter { $0.role != "AXWindow" }
                 .compactMap(\.name)
             let machineStatsVisible = labels.contains { $0.contains("CPU") || $0.contains("RAM") }
-            let usageRow = labels.contains {
-                $0 == "Usage" || $0.contains("Usage across your devices") || $0.contains("% · ")
-            }
-            if machineStatsVisible, usageRow { break }
+            let usageColumn = labels.contains { $0.contains("USAGE") }
+            if machineStatsVisible, usageColumn { break }
         }
 
         XCTAssertTrue(
-            labels.contains {
-                $0 == "Usage" || $0.contains("Usage across your devices") || $0.contains("% · ")
-            },
-            "usage row never appeared in the real sidebar (statsDevice=\(String(describing: model.statsDevice?.name)), devices=\(model.devices.map(\.name)))"
+            labels.contains { $0.contains("USAGE") },
+            "usage column never appeared in the real sidebar (statsDevice=\(String(describing: model.statsDevice?.name)), devices=\(model.devices.map(\.name)))"
         )
     }
 }

@@ -146,6 +146,80 @@ final class AgentUsageTests: XCTestCase {
         }
     }
 
+    // MARK: - Sidebar selection
+
+    /// The sidebar's USAGE column watches a model: that scope's window wins,
+    /// and a watched model with no window falls back to the all-models one
+    /// so the column never blanks.
+    func testWatchedModelFallsBackToAllModelsWindow() throws {
+        let now = Date()
+        let studio = Device(id: UUID(), name: "Studio", kind: .ssh(target: "studio.example"))
+        let allModels = GrazrWindow(kind: "quota", group: "weekly", remaining: 40, resetsAt: now.addingTimeInterval(3 * 86400))
+        let fable = GrazrWindow(
+            kind: "quota", scope: "Fable", group: "weekly",
+            remaining: 25, resetsAt: now.addingTimeInterval(3 * 86400))
+        let states: [UUID: [UsageProvider: UsageProviderState]] = [
+            Device.local.id: [
+                .claude: .readings([AgentUsageReading(id: "claude", provider: .claude, windows: [allModels], fetchedAt: now)])
+            ],
+            studio.id: [
+                .claude: .readings([AgentUsageReading(id: "claude-studio", provider: .claude, windows: [fable], fetchedAt: now)])
+            ],
+        ]
+        let devices = [Device.local, studio]
+
+        // The watched model's own window wins, wherever it runs.
+        let watched = UsageSelection.tightestWindow(states: states, devices: devices, scope: "Fable", now: now)
+        XCTAssertEqual(watched?.device, studio, "the Fable window is on Studio")
+        XCTAssertEqual(watched?.window, fable)
+
+        // A watched model yielding no window falls back to the all-models one.
+        let missing = UsageSelection.tightestWindow(states: states, devices: devices, scope: "Missing", now: now)
+        XCTAssertEqual(missing?.device, Device.local)
+        XCTAssertEqual(missing?.window, allModels)
+
+        // "All models" watches the scope-nil windows only — a tighter scoped
+        // window never intrudes on it.
+        let all = UsageSelection.tightestWindow(states: states, devices: devices, scope: nil, now: now)
+        XCTAssertEqual(all?.window, allModels, "scope nil never picks the tighter Fable window")
+    }
+
+    /// Only open windows over listed devices with readings can win — a closed
+    /// window has refilled, a failed provider is not a fresh reading, and an
+    /// unlisted device could not be opened on.
+    func testTightestWindowSkipsClosedUnknownDevicesAndNonReadings() throws {
+        let now = Date()
+        let studio = Device(id: UUID(), name: "Studio", kind: .ssh(target: "studio.example"))
+        let ghost = Device(id: UUID(), name: "Ghost", kind: .ssh(target: "ghost.example"))
+        let tightest = GrazrWindow(kind: "quota", group: "session", remaining: 3, resetsAt: now.addingTimeInterval(60))
+        let closed = GrazrWindow(kind: "quota", group: "30d", remaining: 5, resetsAt: now.addingTimeInterval(-60))
+        let scoped = GrazrWindow(
+            kind: "quota", scope: "Fable", group: "weekly",
+            remaining: 1, resetsAt: now.addingTimeInterval(60))
+        let states: [UUID: [UsageProvider: UsageProviderState]] = [
+            Device.local.id: [
+                .claude: .failed("offline"), // not a fresh reading
+                .codex: .readings([AgentUsageReading(id: "codex", provider: .codex, windows: [closed], fetchedAt: now)]), // closed: refilled
+                .gemini: .readings([AgentUsageReading(id: "gemini", provider: .gemini, windows: [tightest], fetchedAt: now)]),
+            ],
+            studio.id: [
+                .opencode: .readings([AgentUsageReading(id: "opencode", provider: .opencode, windows: [], fetchedAt: now)]), // tokens only
+            ],
+            ghost.id: [
+                .gemini: .readings([AgentUsageReading(id: "gemini-ghost", provider: .gemini, windows: [scoped], fetchedAt: now)]),
+            ],
+        ]
+
+        let pick = UsageSelection.tightestWindow(states: states, devices: [Device.local, studio], scope: nil, now: now)
+        XCTAssertEqual(pick?.device, Device.local, "the ghost device cannot be opened on, so it is skipped")
+        XCTAssertEqual(pick?.window, tightest, "the open scope-nil window with the least left wins")
+
+        // The scoped window counts once its scope is watched — even from a
+        // device the nil-scope pass skipped only for lack of a match.
+        let scopedPick = UsageSelection.tightestWindow(states: states, devices: [Device.local, ghost], scope: "Fable", now: now)
+        XCTAssertEqual(scopedPick?.window, scoped)
+    }
+
     private func parse(_ provider: UsageProvider, _ json: String) -> UsageParseResult? {
         UsageSource.parse(provider, stdout: Data(json.utf8), fetchedAt: fetchedAt)
     }

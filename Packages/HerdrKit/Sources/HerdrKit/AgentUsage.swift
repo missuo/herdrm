@@ -69,6 +69,54 @@ public struct UsageParseResult: Equatable, Sendable {
     }
 }
 
+/// Which window the sidebar's USAGE column watches.
+public enum UsageSelection {
+    /// The open window with the least left among those matching `scope`,
+    /// across every provider on every listed device with readings. `scope`
+    /// nil matches scope-nil windows only (the all-models week, sessions);
+    /// a non-nil scope matches that scope's windows first, falling back to
+    /// the scope-nil ones when the model yields none — the meter never
+    /// blanks. A window past its reset has refilled and never wins; a
+    /// device missing from `devices` is skipped, the tap could not open a
+    /// sheet on it. Ties keep the first in device and provider order.
+    public static func tightestWindow(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        scope: String?,
+        now: Date
+    ) -> (device: Device, window: GrazrWindow)? {
+        pick(states: states, devices: devices, scope: scope, now: now)
+            ?? scope.flatMap { _ in
+                pick(states: states, devices: devices, scope: nil, now: now)
+            }
+    }
+
+    /// The tightest open window whose scope is exactly `scope`.
+    private static func pick(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        scope: String?,
+        now: Date
+    ) -> (device: Device, window: GrazrWindow)? {
+        var best: (device: Device, window: GrazrWindow)?
+        for device in devices {
+            guard let perProvider = states[device.id] else { continue }
+            for provider in UsageProvider.allCases {
+                guard case .readings(let readings) = perProvider[provider] else { continue }
+                for reading in readings {
+                    for window in reading.windows
+                    where window.scope == scope && window.isOpen(now: now) {
+                        if window.left(now: now) < best?.window.left(now: now) ?? .max {
+                            best = (device, window)
+                        }
+                    }
+                }
+            }
+        }
+        return best
+    }
+}
+
 /// Where a provider's usage card stands, as the sidebar shows it.
 public enum UsageProviderState: Equatable, Sendable {
     case loading
