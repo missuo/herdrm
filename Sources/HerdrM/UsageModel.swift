@@ -19,8 +19,8 @@ final class UsageModel: ObservableObject {
 
     /// Reads every provider on `device`, in parallel. `force` re-runs the
     /// commands even when the store's cache is fresh (the sheet's refresh
-    /// button, which on Claude also has grazr re-read its accounts). Never
-    /// throws: a failed run becomes that provider's `.failed` state.
+    /// button). Never throws: a failed run becomes that provider's `.failed`
+    /// state.
     func refresh(_ device: Device, force: Bool = false) async {
         states[device.id] = Dictionary(
             uniqueKeysWithValues: UsageProvider.allCases.map { ($0, UsageProviderState.loading) }
@@ -69,25 +69,15 @@ extension UsageStore {
 }
 
 extension UsageProviderState {
-    /// Whether this is the `.notInstalled` state — the claude card keys its
-    /// grazr tooltip off it.
-    var isNotInstalled: Bool {
-        if case .notInstalled = self { return true }
-        return false
-    }
-
     /// The line the sheet shows for every state besides readings; `nil`
     /// when there are readings to render instead. A `.failed` state already
-    /// carries its localized reason. Claude's `.notInstalled` names grazr —
-    /// its quota source — so it never reads as "Claude is missing".
-    func statusText(for provider: UsageProvider) -> String? {
+    /// carries its localized reason.
+    var statusText: String? {
         switch self {
         case .loading:
             return String(localized: "Checking usage…")
         case .notInstalled:
-            return provider == .claude
-                ? String(localized: "Needs grazr")
-                : String(localized: "Not installed")
+            return String(localized: "Not installed")
         case .unknown:
             return String(localized: "No usage yet")
         case .failed(let message):

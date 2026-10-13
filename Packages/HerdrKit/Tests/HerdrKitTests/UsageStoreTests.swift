@@ -82,23 +82,25 @@ final class UsageStoreTests: XCTestCase {
         XCTAssertEqual(retried.readings.first?.windows.first?.remaining, 80)
     }
 
-    // MARK: - Claude's refresh
+    // MARK: - Claude's rerun
 
-    /// `force` on Claude has grazr re-read its accounts (refresh) before the
-    /// reader; a plain read runs the reader alone.
-    func testClaudeForceRunsRefreshThenReader() async throws {
+    /// `force` re-runs claude's single CLI command, and so does an expired
+    /// cache entry: one command for both paths, where grazr needed a
+    /// refresh before the reader.
+    func testClaudeForceRerunsSingleCommand() async throws {
         let clock = MutableClock(fetchedAt)
-        let runner = StubRunner(stdout: Data(Self.claudeReport.utf8))
+        let runner = StubRunner(stdout: Data(Self.claudeUsage.utf8))
         let store = UsageStore(runner: runner.run, now: { clock.date })
 
         let forced = try await store.reading(.claude, on: .local, force: true)
-        XCTAssertEqual(runner.commands, [Grazr.refreshCommand, Grazr.readerCommand])
-        XCTAssertEqual(forced.readings.first?.account, "a")
+        XCTAssertEqual(runner.commands, [UsageSource.claudeUsageCommand])
+        XCTAssertEqual(forced.readings.first?.windows.first?.remaining, 85)
 
         runner.reset()
         clock.advance(301)
-        _ = try await store.reading(.claude, on: .local)
-        XCTAssertEqual(runner.commands, [Grazr.readerCommand])
+        let plain = try await store.reading(.claude, on: .local)
+        XCTAssertEqual(runner.commands, [UsageSource.claudeUsageCommand])
+        XCTAssertEqual(plain.readings.first?.windows.first?.remaining, 85)
     }
 
     // MARK: - Fixtures
@@ -108,10 +110,10 @@ final class UsageStoreTests: XCTestCase {
     {"installed": true, "windows": [{"used_percent": 20, "window_minutes": 300}], "tokens": null}
     """#
 
-    /// grazr's reader report with one enrolled account.
-    private static let claudeReport = #"""
-    {"installed": true, "active": "a", "accounts": [{"id": "a", "name": "a", "windows": [{"kind": "usage", "group": "session", "remaining": 80}]}], "order": ["a"], "settings": {}, "blocked": {}}
-    """#
+    /// `claude -p /usage`'s stdout: the session window at 15% used.
+    private static let claudeUsage = """
+        Current session: 15% used · resets Oct 13 at 3:09pm (Europe/Warsaw)
+        """
 }
 
 /// A mutable clock the store reads through, advanced by tests instead of

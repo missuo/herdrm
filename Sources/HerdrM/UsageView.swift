@@ -195,7 +195,7 @@ private struct UsageProviderCard: View {
                 }
             }
         default:
-            if let text = state.statusText(for: provider) {
+            if let text = state.statusText {
                 HStack(spacing: 6) {
                     if case .loading = state {
                         ProgressView().controlSize(.small)
@@ -205,11 +205,7 @@ private struct UsageProviderCard: View {
                         .foregroundStyle(statusColor)
                         .lineLimit(3)
                 }
-                .help(
-                    provider == .claude && state.isNotInstalled
-                        ? String(localized: "Claude's quota readings come from grazr, a herdr plugin")
-                        : text
-                )
+                .help(text)
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel(text)
             }

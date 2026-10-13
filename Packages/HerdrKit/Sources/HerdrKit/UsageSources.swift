@@ -4,18 +4,20 @@ import Foundation
 /// The device-side command builders are `UsageSource.command(for:)`.
 public enum UsageSource {
     /// Decodes the `stdout` that `provider`'s command printed at `fetchedAt`.
-    /// Nil when the output is not the provider's JSON shape at all.
+    /// Nil when the output is not the provider's shape at all.
     public static func parse(_ provider: UsageProvider, stdout: Data, fetchedAt: Date) -> UsageParseResult? {
         switch provider {
-        case .claude: parseClaude(stdout: stdout, fetchedAt: fetchedAt)
-        case .codex: parseCodex(stdout: stdout, fetchedAt: fetchedAt)
-        case .opencode: parseOpencode(stdout: stdout, fetchedAt: fetchedAt)
-        case .gemini: parseGemini(stdout: stdout, fetchedAt: fetchedAt)
+        case .claude:
+            guard let text = String(data: stdout, encoding: .utf8) else { return nil }
+            return parseClaudeUsage(text, fetchedAt: fetchedAt)
+        case .codex: return parseCodex(stdout: stdout, fetchedAt: fetchedAt)
+        case .opencode: return parseOpencode(stdout: stdout, fetchedAt: fetchedAt)
+        case .gemini: return parseGemini(stdout: stdout, fetchedAt: fetchedAt)
         }
     }
 
     /// The shell command that prints `provider`'s normalized JSON on the
-    /// device, nil for Claude (the store runs grazr's own commands there).
+    /// device, nil for Claude (the store runs `claudeUsageCommand` there).
     /// Each prepends the remote PATH export so the tools resolve over SSH;
     /// locally that export is a harmless no-op.
     public static func command(for provider: UsageProvider) -> String? {
@@ -100,18 +102,87 @@ public enum UsageSource {
 
     // MARK: - Claude
 
-    /// The grazr reader's report: one reading per enrolled account, quota
-    /// windows as grazr read them, no token counts.
-    private static func parseClaude(stdout: Data, fetchedAt: Date) -> UsageParseResult? {
-        guard let report = try? JSONDecoder().decode(GrazrReport.self, from: stdout) else { return nil }
-        guard report.installed else { return UsageParseResult(installed: false, readings: []) }
-        return UsageParseResult(
-            installed: true,
-            readings: report.accounts.map { account in
-                AgentUsageReading(
-                    id: account.id, provider: .claude, account: account.name,
-                    windows: account.windows, fetchedAt: fetchedAt)
-            })
+    /// Runs `claude -p /usage` for the CLI session's own quota, behind the
+    /// `command -v` guard that prints the installed-false envelope when the
+    /// CLI is missing. The CLI's own session is the only auth — herdrm
+    /// never reads credential files or calls the provider itself.
+    static let claudeUsageCommand = SSHTunnel.remotePathExport + "\n"
+        + #"if command -v claude >/dev/null 2>&1; then claude -p /usage; else echo '{"installed": false}'; fi"#
+
+    /// The not-installed envelope `claudeUsageCommand` prints without the CLI.
+    private struct ClaudeEnvelope: Decodable {
+        let installed: Bool?
+    }
+
+    /// Recognizes one `Current …` line: the scope (`session`, `week`, or
+    /// `week (Model)`), the used percent, and the optional reset stamp.
+    private static let claudeLinePattern =
+        "^Current (session|week(?: \\((.+)\\))?): (\\d+)% used(?: · resets (.*))?$"
+
+    /// Decodes `claude -p /usage`'s stdout: one `Current …` line per quota
+    /// window, the same reading shape codex's record parses to (no token
+    /// counts). The not-installed envelope maps to a not-installed result;
+    /// anything else an installed CLI prints without window lines is
+    /// unknown, never a thrown failure.
+    public static func parseClaudeUsage(_ text: String, fetchedAt: Date) -> UsageParseResult? {
+        if let envelope = try? JSONDecoder().decode(ClaudeEnvelope.self, from: Data(text.utf8)),
+           envelope.installed == false
+        {
+            return UsageParseResult(installed: false, readings: [])
+        }
+        guard let lineRegex = try? NSRegularExpression(pattern: claudeLinePattern) else { return nil }
+        let windows = text.split(separator: "\n", omittingEmptySubsequences: true).compactMap { line in
+            claudeWindow(String(line), regex: lineRegex, fetchedAt: fetchedAt)
+        }
+        guard !windows.isEmpty else { return UsageParseResult(installed: true, readings: []) }
+        let reading = AgentUsageReading(
+            id: UsageProvider.claude.rawValue, provider: .claude,
+            windows: windows, fetchedAt: fetchedAt)
+        return UsageParseResult(installed: true, readings: [reading])
+    }
+
+    /// One line's window: `session` keeps its group, `week (all models)` is
+    /// the scope-less weekly and `week (Model)` a per-model one; `remaining`
+    /// is what is left of 100.
+    private static func claudeWindow(
+        _ line: String, regex: NSRegularExpression, fetchedAt: Date
+    ) -> GrazrWindow? {
+        let range = NSRange(line.startIndex..<line.endIndex, in: line)
+        guard let match = regex.firstMatch(in: line, range: range),
+              let head = Range(match.range(at: 1), in: line),
+              let used = Range(match.range(at: 3), in: line),
+              let usedPercent = Int(line[used])
+        else { return nil }
+        let scope = Range(match.range(at: 2), in: line).map { String(line[$0]) }
+        let resetText = Range(match.range(at: 4), in: line).map { String(line[$0]) }
+        return GrazrWindow(
+            kind: "usage",
+            scope: scope == "all models" ? nil : scope,
+            group: line[head] == "session" ? "session" : "weekly",
+            remaining: max(0, 100 - usedPercent),
+            resetsAt: resetText.flatMap { claudeResetDate($0, fetchedAt: fetchedAt) })
+    }
+
+    /// The CLI stamps resets without a year: pin them to `fetchedAt`'s
+    /// calendar year, rolling +1 when that lands nearly a year before the
+    /// fetch (a January window seen from December). The stamp carries its
+    /// own zone, which the `VV` (long zone ID) section parses — `zzz` reads
+    /// only localized zone names and fails on `(Europe/Warsaw)`.
+    private static func claudeResetDate(_ text: String, fetchedAt: Date) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "MMM d 'at' h:mma (VV)"
+        guard let parsed = formatter.date(from: text) else { return nil }
+        let calendar = Calendar(identifier: .gregorian)
+        let shifted = calendar.date(
+            byAdding: .year,
+            value: calendar.component(.year, from: fetchedAt) - calendar.component(.year, from: parsed),
+            to: parsed) ?? parsed
+        // Eleven months: anything further back than that is next year's
+        // window, not a stale one.
+        return shifted.timeIntervalSince(fetchedAt) < -330 * 86400
+            ? calendar.date(byAdding: .year, value: 1, to: shifted)
+            : shifted
     }
 
     // MARK: - Codex

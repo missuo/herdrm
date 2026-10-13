@@ -2,37 +2,32 @@ import Foundation
 import XCTest
 @testable import HerdrKit
 
-/// Provider usage parsing: grazr's report for Claude and the normalized
-/// codex, opencode and gemini command output into `AgentUsageReading`s.
+/// Provider usage parsing: the Claude CLI's `/usage` text and the
+/// normalized codex, opencode and gemini command output into
+/// `AgentUsageReading`s.
 final class AgentUsageTests: XCTestCase {
     private let fetchedAt = Date(timeIntervalSince1970: 1_760_000_000)
 
-    func testGrazrReportYieldsOneReadingPerAccount() throws {
+    /// The CLI's report is one reading (its own session's account), the
+    /// session and weekly windows with `remaining` = 100 − used.
+    func testClaudeUsageTextYieldsOneReading() throws {
         let result = try XCTUnwrap(parse(.claude, """
-            {
-              "installed": true, "active": "a1", "accounts": [
-                {"id": "a1", "name": "senad@example.com", "windows": [
-                  {"kind": "usage", "scope": null, "group": "session", "remaining": 12, "resets_at": null}]},
-                {"id": "a2", "name": "work@example.com", "windows": [
-                  {"kind": "usage", "scope": null, "group": "weekly", "remaining": 64, "resets_at": 1794000000}]}
-              ],
-              "order": [], "settings": {}, "blocked": {}
-            }
+            Current session: 15% used · resets Oct 13 at 3:09pm (Europe/Warsaw)
+            Current week (all models): 13% used · resets Oct 17 at 3:59pm (Europe/Warsaw)
             """))
         XCTAssertEqual(result.installed, true)
-        XCTAssertEqual(result.readings.count, 2)
-        XCTAssertEqual(result.readings.first?.account, "senad@example.com")
+        XCTAssertEqual(result.readings.count, 1)
+        XCTAssertEqual(result.readings.first?.provider, .claude)
+        XCTAssertEqual(result.readings.first?.windows.count, 2)
         XCTAssertEqual(result.readings.first?.windows.first?.group, "session")
-        XCTAssertEqual(result.readings.first?.windows.first?.remaining, 12)
+        XCTAssertEqual(result.readings.first?.windows.first?.remaining, 85)
+        XCTAssertEqual(UsageProviderState(parse: result, fetchedAt: fetchedAt), .readings(result.readings))
     }
 
-    func testGrazrAbsentMeansNotInstalled() throws {
-        let result = try XCTUnwrap(parse(.claude, """
-            {
-              "installed": false, "active": null, "accounts": [],
-              "order": [], "settings": {}, "blocked": {}
-            }
-            """))
+    /// A missing CLI prints the installed-false envelope: `.notInstalled`,
+    /// the plain state every provider shares.
+    func testClaudeMissingCLIMeansNotInstalled() throws {
+        let result = try XCTUnwrap(parse(.claude, #"{"installed": false}"#))
         XCTAssertEqual(result.installed, false)
         XCTAssertEqual(result.readings, [])
         XCTAssertEqual(UsageProviderState(parse: result, fetchedAt: fetchedAt), .notInstalled)
