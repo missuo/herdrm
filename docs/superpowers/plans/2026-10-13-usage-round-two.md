@@ -41,7 +41,7 @@
 - Consumes: round-one `UsageSource.command(for:)`/`parse`, `UsageStore.reading(_:on:force:)`.
 - Produces: `enum UsageSource { static let claudeUsageCommand: String; static func parseClaudeUsage(_ text: String, fetchedAt: Date) -> UsageParseResult? }` — same normalized schema as codex (`{installed, windows: [{used_percent, window_minutes, resets_at}], tokens: nil}`); other tasks unaffected.
 
-- [ ] **Step 1: Write failing tests** in `UsageSourcesTests.swift`:
+- [x] **Step 1: Write failing tests** in `UsageSourcesTests.swift`:
   - `testClaudeUsageCommandWrapsCLI` — `UsageSource.claudeUsageCommand` starts with `SSHTunnel.remotePathExport`, contains `command -v claude` guard (missing CLI → prints `{"installed": false}`) and `claude -p /usage`.
   - `testClaudeUsageTextParsesWindows` — feed the spike output verbatim (three lines: `Current session: 15% used · resets Oct 13 at 3:09pm (Europe/Warsaw)`, `Current week (all models): 13% used · resets Oct 17 at 3:59pm (Europe/Warsaw)`, `Current week (Fable): 13% used · resets Oct 17 at 3:59pm (Europe/Warsaw)`); with `fetchedAt` fixed at 2026-10-13 assert: session window `group == "session"`, `remaining == 85`; weekly `scope == nil`, `remaining == 87`; model weekly `scope == "Fable"`; `resetsAt` == date parsed with en-US formatter.
   - `testUnrecognizedUsageOutputYieldsUnknown` — `"error: something"` → `UsageParseResult(installed: true, readings: [])`.
@@ -49,10 +49,10 @@
   - Update `UsageStoreTests.testClaudeForceRunsRefreshThenReader` → `testClaudeForceRerunsSingleCommand`: claude now issues exactly `[claudeUsageCommand]` for both plain and force paths.
   - Update `AgentUsageTests` claude `.notInstalled` expectations: plain "Not installed" (drop the "Needs grazr" special case + its tooltip in `UsageModel.swift`/`UsageView.swift` and the two xcstrings keys retire in Task 7's sweep — safe to leave keys until then).
 
-- [ ] **Step 2: Run, verify fail** — `cd Packages/HerdrKit && swift test --filter UsageSourcesTests` → FAIL (no `claudeUsageCommand`).
-- [ ] **Step 3: Implement** — command: `remotePathExport + "if command -v claude >/dev/null 2>&1; then claude -p /usage; else echo '{\"installed\": false}'; fi"`. Parser: en-US `DateFormatter` pattern `"MMM d 'at' h:mma (zzz)"`, year = calendar year of `fetchedAt`, `+1 year` if parsed > 11 months before `fetchedAt`; line regex `^Current (session|week(?: \((.+)\))?): (\d+)% used`; `week (all models)` → scope nil. Store: claude branch returns the single command for both paths; delete the grazr compose.
-- [ ] **Step 4: Run, verify pass** — full `swift test --filter Usage` filters.
-- [ ] **Step 5: Commit** — `feat(usage): claude quota via claude -p /usage, grazr removed`.
+- [x] **Step 2: Run, verify fail** — `cd Packages/HerdrKit && swift test --filter UsageSourcesTests` → FAIL (no `claudeUsageCommand`).
+- [x] **Step 3: Implement** — command: `remotePathExport + "if command -v claude >/dev/null 2>&1; then claude -p /usage; else echo '{\"installed\": false}'; fi"`. Parser: en-US `DateFormatter` pattern `"MMM d 'at' h:mma (zzz)"`, year = calendar year of `fetchedAt`, `+1 year` if parsed > 11 months before `fetchedAt`; line regex `^Current (session|week(?: \((.+)\))?): (\d+)% used`; `week (all models)` → scope nil. Store: claude branch returns the single command for both paths; delete the grazr compose.
+- [x] **Step 4: Run, verify pass** — full `swift test --filter Usage` filters.
+- [x] **Step 5: Commit** — `feat(usage): claude quota via claude -p /usage, grazr removed`.
 
 ### Task 2: USAGE column + watched-model selector
 
