@@ -16,6 +16,12 @@ public actor UsageStore {
         "\(device.id):\(provider.rawValue)"
     }
 
+    /// The history cache and in-flight share: one device's merged history,
+    /// namespaced apart from the per-provider reading keys.
+    private static func historyKey(on device: Device) -> Key {
+        "history:\(device.id)"
+    }
+
     private let runner: @Sendable (String, Device) async throws -> Data
     private let now: @Sendable () -> Date
 
@@ -23,6 +29,10 @@ public actor UsageStore {
     private var cache: [Key: (at: Date, result: UsageParseResult)] = [:]
     /// Reads under way by key, whose result concurrent readers share.
     private var inFlight: [Key: Task<UsageParseResult, Error>] = [:]
+    /// Fresh histories by key, stamped with when they were generated.
+    private var historyCache: [Key: (at: Date, result: UsageHistory)] = [:]
+    /// History reads under way by key, shared like the reading ones.
+    private var historyInFlight: [Key: Task<UsageHistory, Error>] = [:]
 
     public init(
         runner: @escaping (String, Device) async throws -> Data = {
@@ -85,6 +95,102 @@ public actor UsageStore {
             cache[key] = nil
             throw error
         }
+    }
+
+    // MARK: - History
+
+    /// `device`'s 30-day usage history: every provider that keeps
+    /// transcripts runs its own aggregation command (gemini has none) and
+    /// the parsed histories merge — days by date, per-model totals side by
+    /// side. Cached for the same five minutes and shared while under way
+    /// like a reading; there is no forced variant, plain TTL semantics
+    /// only. Throws when every command failed; a partial failure caches
+    /// what succeeded.
+    public func history(on device: Device) async throws -> UsageHistory {
+        let key = Self.historyKey(on: device)
+        if let entry = historyCache[key], now().timeIntervalSince(entry.at) < Self.ttl {
+            return entry.result
+        }
+        if let running = historyInFlight[key] {
+            return try await running.value
+        }
+        let task = Task<UsageHistory, Error> {
+            try await self.readFreshHistory(on: device, key: key)
+        }
+        historyInFlight[key] = task
+        return try await task.value
+    }
+
+    /// Runs every provider's history command now, in parallel, and merges
+    /// the parses into one history under the key.
+    private func readFreshHistory(on device: Device, key: Key) async throws -> UsageHistory {
+        defer { historyInFlight[key] = nil }
+        let stamp = now()
+        let members = await withTaskGroup(of: Member.self) { group in
+            for provider in UsageProvider.allCases {
+                // Gemini keeps no transcripts; there is no command to run.
+                guard let command = UsageHistorySource.command(for: provider) else { continue }
+                group.addTask {
+                    do {
+                        let stdout = try await self.runner(command, device)
+                        return Member(
+                            provider: provider,
+                            outcome: .success(UsageHistorySource.parse(provider, stdout: stdout, fetchedAt: stamp)))
+                    } catch {
+                        return Member(provider: provider, outcome: .failure(Failure(reason: error.localizedDescription)))
+                    }
+                }
+            }
+            var out: [Member] = []
+            for await member in group { out.append(member) }
+            return out
+        }
+
+        var dayTokens: [Date: [UsageProvider: UsageTokens]] = [:]
+        var modelTotals: [UsageProvider: [String: UsageTokens]] = [:]
+        var failures: [String] = []
+        var ran = false
+        for member in members {
+            switch member.outcome {
+            case .failure(let failure):
+                failures.append(failure.reason)
+            case .success(let history?):
+                ran = true
+                for day in history.days {
+                    dayTokens[day.date, default: [:]].merge(day.tokens) { _, new in new }
+                }
+                modelTotals[member.provider] = history.modelTotals[member.provider] ?? [:]
+            case .success(nil):
+                // The command ran but printed nothing usable (an absent
+                // CLI's envelope, say): a valid empty contribution.
+                ran = true
+            }
+        }
+        guard ran || failures.isEmpty else {
+            historyCache[key] = nil
+            throw HerdrError.malformedResponse("no history source on \(device.name) succeeded: \(failures.joined(separator: "; "))")
+        }
+        let history = UsageHistory(
+            days: dayTokens
+                .map { UsageDay(date: $0.key, tokens: $0.value) }
+                .sorted { $0.date < $1.date },
+            modelTotals: modelTotals,
+            generatedAt: stamp)
+        historyCache[key] = (stamp, history)
+        return history
+    }
+
+    /// One provider's contribution to a merged history: a parse (nil when
+    /// the output was nothing usable) or the reason its command failed.
+    private struct Member: Sendable {
+        let provider: UsageProvider
+        let outcome: Result<UsageHistory?, Failure>
+    }
+
+    /// Why one provider's history command failed — Sendable, so the
+    /// parallel aggregation can carry it out of the task group.
+    private struct Failure: Error, Sendable {
+        let reason: String
     }
 }
 #endif

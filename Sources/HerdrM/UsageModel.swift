@@ -12,6 +12,10 @@ final class UsageModel: ObservableObject {
     /// Where each provider's last reading on each device stands.
     @Published private(set) var states: [UUID: [UsageProvider: UsageProviderState]] = [:]
 
+    /// The last history chart per device, nil until its first read lands
+    /// (and after a first read that failed outright).
+    @Published private(set) var histories: [UUID: UsageHistory] = [:]
+
     /// The process-wide store: its five-minute cache and single-flight runs
     /// survive sheet reopenings, so re-presenting a device inside the window
     /// re-runs nothing.
@@ -59,6 +63,23 @@ final class UsageModel: ObservableObject {
     /// through `refresh`.
     func preload(_ device: Device, _ states: [UsageProvider: UsageProviderState]) {
         self.states[device.id] = states
+    }
+
+    /// Reads `device`'s merged 30-day history through the store's
+    /// `"history:{device}"` key (five-minute TTL, single-flight, no forced
+    /// variant). Never throws: a failed run — device offline, every command
+    /// short — leaves the last history standing, stale but honest about its
+    /// age.
+    func refreshHistory(_ device: Device) async {
+        guard let history = try? await store.history(on: device) else { return }
+        histories[device.id] = history
+    }
+
+    /// Test seam for the sheet's history UIUX tests, mirroring `preload`:
+    /// parks a history as a finished `refreshHistory` would leave it.
+    /// Production code never calls this.
+    func preloadHistory(_ device: Device, _ history: UsageHistory) {
+        histories[device.id] = history
     }
 }
 

@@ -417,6 +417,22 @@
         }
       }
     },
+    "Usage history": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage history"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用量历史"
+          }
+        }
+      }
+    },
     "Usage across your devices — click for details": {
       "localizations": {
         "en": {
@@ -445,6 +461,54 @@
           "stringUnit": {
             "state": "translated",
             "value": "用量"
+          }
+        }
+      }
+    },
+    "Updated %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Updated %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已更新 %@"
+          }
+        }
+      }
+    },
+    "Total": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Total"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "总计"
+          }
+        }
+      }
+    },
+    "Tokens": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Tokens"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "令牌"
           }
         }
       }
@@ -497,6 +561,22 @@
         }
       }
     },
+    "Priced at API list rates; table fetched %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Priced at API list rates; table fetched %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按 API 牌价估算；价格表获取于 %@"
+          }
+        }
+      }
+    },
     "OpenCode": {
       "localizations": {
         "en": {
@@ -545,6 +625,22 @@
         }
       }
     },
+    "No history yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No history yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "暂无历史"
+          }
+        }
+      }
+    },
     "Needs grazr": {
       "localizations": {
         "en": {
@@ -561,6 +657,22 @@
         }
       }
     },
+    "History range": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "History range"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "历史范围"
+          }
+        }
+      }
+    },
     "Gemini": {
       "localizations": {
         "en": {
@@ -573,6 +685,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Gemini"
+          }
+        }
+      }
+    },
+    "Day": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Day"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "日期"
           }
         }
       }
@@ -673,6 +801,38 @@
         }
       }
     },
+    "7d": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "7d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "7天"
+          }
+        }
+      }
+    },
+    "30d": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30d"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "30天"
+          }
+        }
+      }
+    },
     "%lld% left": {
       "localizations": {
         "en": {
@@ -685,6 +845,38 @@
           "stringUnit": {
             "state": "translated",
             "value": "剩余 %lld%%"
+          }
+        }
+      }
+    },
+    "%@ · %@ tokens": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@ tokens"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ · %@ 令牌"
+          }
+        }
+      }
+    },
+    "%@ tokens": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ tokens"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 令牌"
           }
         }
       }
@@ -733,6 +925,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "%@ 剩余 %lld%%"
+          }
+        }
+      }
+    },
+    "$%@ (approx.)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "$%@ (approx.)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "$%@（约）"
           }
         }
       }
