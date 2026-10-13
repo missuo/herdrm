@@ -138,11 +138,11 @@
 - Consumes: Tasks 3–5 (`UsageHistory`, `UsageHistorySource`, `UsagePricing`).
 - Produces: `UsageModel.histories: [UUID: UsageHistory]` + `refreshHistory(_ device: Device) async` (store key `"history:\(device.id)"`, 30-day range, TTL/single-flight inherited); `UsageHistoryBlock` (private, in UsageView) — stacked `BarMark` daily tokens (claude + codex), 7d/30d segmented toggle, totals row with `UsagePricing` dollars rendered "(approx.)", per-model rows for all three providers.
 
-- [ ] **Step 1: Failing UIUX tests** — with preloaded `histories`: chart bars expose per-day totals via accessibility labels ("Oct 12 · 1.2M tokens" style), toggle switches 7↔30, totals row contains "$" and "approx.", per-model row lists model + tokens; empty history reads "No history yet"; stale shows age.
-- [ ] **Step 2: Verify fail** — `make uiux-test` filtered.
-- [ ] **Step 3: Implement** — Swift Charts (`import Charts`), Theme palette per provider (round-one colors), sheet refresh (open + ⌘R) refreshes quota and history together.
-- [ ] **Step 4: Run** — `make kit-test && make uiux-test && make build`.
-- [ ] **Step 5: Commit** — `feat(usage): per-device history charts with approximate costs`.
+- [x] **Step 1: Failing UIUX tests** — with preloaded `histories`: chart bars expose per-day totals via accessibility labels ("Oct 12 · 1.2M tokens" style), toggle switches 7↔30, totals row contains "$" and "approx.", per-model row lists model + tokens; empty history reads "No history yet"; stale shows age.
+- [x] **Step 2: Verify fail** — `make uiux-test` filtered.
+- [x] **Step 3: Implement** — Swift Charts (`import Charts`), Theme palette per provider (round-one colors), sheet refresh (open + ⌘R) refreshes quota and history together.
+- [x] **Step 4: Run** — `make kit-test && make uiux-test && make build`.
+- [x] **Step 5: Commit** — `feat(usage): per-device history charts with approximate costs`.
 
 ### Task 7: Cleanup, localization sweep, changelog
 
