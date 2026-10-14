@@ -323,6 +323,16 @@ private struct UsageHistoryBlock: View {
             }
         }
         .chartLegend(.hidden)
+        .chartYAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let tokens = value.as(Int.self) {
+                        Text(verbatim: UsageFormat.compact(tokens))
+                    }
+                }
+            }
+        }
         .frame(height: 110)
         .accessibilityChildren {
             ForEach(visibleDays) { day in
@@ -491,11 +501,7 @@ private struct UsageHistoryBlock: View {
 
     /// The K/M style the provider cards' token lines use.
     private static func count(_ n: Int) -> String {
-        switch n {
-        case 0..<1_000: return "\(n)"
-        case 1_000..<1_000_000: return String(format: "%.1fK", Double(n) / 1_000)
-        default: return String(format: "%.1fM", Double(n) / 1_000_000)
-        }
+        UsageFormat.compact(n)
     }
 
     private static func age(_ date: Date, now: Date) -> String {
@@ -650,11 +656,7 @@ private struct UsageProviderCard: View {
     }
 
     private static func count(_ n: Int) -> String {
-        switch n {
-        case 0..<1_000: return "\(n)"
-        case 1_000..<1_000_000: return String(format: "%.1fK", Double(n) / 1_000)
-        default: return String(format: "%.1fM", Double(n) / 1_000_000)
-        }
+        UsageFormat.compact(n)
     }
 
     private static func age(_ date: Date, now: Date) -> String {

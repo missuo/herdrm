@@ -287,17 +287,7 @@ struct SidebarView: View {
             }
         }
         guard total > 0 else { return nil }
-        return Self.compact(total)
-    }
-
-    /// `1.2K` / `3.4M` / `1.2B` — the compact form the meters and cards use.
-    static func compact(_ value: Int) -> String {
-        switch value {
-        case 1_000..<1_000_000: return String(format: "%.1fK", Double(value) / 1_000)
-        case 1_000_000..<1_000_000_000: return String(format: "%.1fM", Double(value) / 1_000_000)
-        case 1_000_000_000...: return String(format: "%.1fB", Double(value) / 1_000_000_000)
-        default: return "\(value)"
-        }
+        return UsageFormat.compact(total)
     }
 
     /// The usage row's tap: the Usage sheet, on the watched window's

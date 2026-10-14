@@ -89,6 +89,30 @@ extension UsageStore {
     static let shared = UsageStore()
 }
 
+/// The compact token form everywhere usage shows a number: `943`, `12k`,
+/// `1.2M`, `3.4G`, `5.6T`, `7.8P` — never scientific notation, trailing
+/// `.0` trimmed, lowercase `k` per the user's convention.
+enum UsageFormat {
+    private static let tiers: [(Double, String)] = [
+        (1_000_000_000_000_000, "P"),
+        (1_000_000_000_000, "T"),
+        (1_000_000_000, "G"),
+        (1_000_000, "M"),
+        (1_000, "k"),
+    ]
+
+    static func compact(_ n: Int) -> String {
+        let value = Double(n)
+        for (factor, suffix) in tiers where value >= factor {
+            let scaled = value / factor
+            var text = String(format: scaled >= 100 ? "%.0f" : "%.1f", scaled)
+            if text.hasSuffix(".0") { text.removeLast(2) }
+            return text + suffix
+        }
+        return "\(n)"
+    }
+}
+
 extension UsageProviderState {
     /// The line the sheet shows for every state besides readings; `nil`
     /// when there are readings to render instead. A `.failed` state already
