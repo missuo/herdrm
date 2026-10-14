@@ -113,6 +113,16 @@ final class SidebarHarness {
     }
 
 
+    /// Every system-material surface drawn in the sidebar (the body and each
+    /// section header's background), and whether it blends what is behind the window.
+    var materialSurfaces: [(blending: NSVisualEffectView.BlendingMode, state: NSVisualEffectView.State)] {
+        func walk(_ view: NSView) -> [NSVisualEffectView] {
+            let own = (view as? NSVisualEffectView).map { [$0] } ?? []
+            return own + view.subviews.flatMap(walk)
+        }
+        return walk(root).map { ($0.blendingMode, $0.state) }
+    }
+
     /// The header currently pinned at the top of the list, by its rendered title.
     var pinnedHeader: Header? {
         guard let band = try? headerBand() else { return nil }

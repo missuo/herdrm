@@ -10,7 +10,11 @@ struct VisualEffectView: NSViewRepresentable {
         let view = NSVisualEffectView()
         view.material = material
         view.blendingMode = .behindWindow
-        view.state = .active
+        // Drawn without blending, the sidebar material is the system's opaque
+        // sidebar color (the one Finder shows in a background window). Blending
+        // let a white window behind HerdrM lift the dark sidebar from gray ~42
+        // to ~81, where the section text and header buttons wash out.
+        view.state = .inactive
         return view
     }
 

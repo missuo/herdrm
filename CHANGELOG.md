@@ -5,6 +5,14 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- **The sidebar no longer shows what is behind the window.** It used to blur
+  the desktop or window behind HerdrM, so a bright window there washed the
+  dark sidebar out to a mid gray and its labels, counts and header buttons
+  faded. It is now the system's solid sidebar color in both light and dark.
+
 ## [0.6.17] - 2026-10-13
 
 ### Changed
