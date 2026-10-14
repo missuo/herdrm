@@ -111,11 +111,7 @@ final class UsageHistoryUITests: XCTestCase {
 
     /// The K/M style the card rows already use.
     private func count(_ n: Int) -> String {
-        switch n {
-        case 0..<1_000: return "\(n)"
-        case 1_000..<1_000_000: return String(format: "%.1fK", Double(n) / 1_000)
-        default: return String(format: "%.1fM", Double(n) / 1_000_000)
-        }
+        UsageFormat.compact(n)
     }
 
     private func history(
