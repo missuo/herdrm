@@ -116,6 +116,18 @@ final class UsageRowTests: XCTestCase {
         XCTAssertEqual(opens, 1, "the dimmed row still opens the sheet")
     }
 
+    /// The compact token tiers everywhere usage shows a number: k, M, G,
+    /// T, P — never scientific.
+    func testCompactTokenTiers() {
+        XCTAssertEqual(UsageFormat.compact(943), "943")
+        XCTAssertEqual(UsageFormat.compact(12_000), "12k")
+        XCTAssertEqual(UsageFormat.compact(1_234_500), "1.2M")
+        XCTAssertEqual(UsageFormat.compact(12_000_000), "12M")
+        XCTAssertEqual(UsageFormat.compact(1_500_000_000), "1.5G")
+        XCTAssertEqual(UsageFormat.compact(3_400_000_000_000), "3.4T")
+        XCTAssertEqual(UsageFormat.compact(7_800_000_000_000_000), "7.8P")
+    }
+
     /// `45m`, `2h51m`, `1d2h` — the countdown lines carry; nil without a
     /// reset time.
     func testUntilResetFormatting() {
