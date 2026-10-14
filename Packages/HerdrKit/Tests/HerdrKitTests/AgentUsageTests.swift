@@ -235,4 +235,45 @@ final class AgentUsageTests: XCTestCase {
 
     /// What `DeviceFileService.run` throws for commands over a tailcat tunnel.
     private static let tailcatRefusal = "commands are not supported over a tailcat tunnel"
+
+    /// The row's two lines: the ~5h session window and the longer limit —
+    /// weekly for Claude (the watched scope's own window first, the
+    /// all-models one as fallback), whatever span the agent reports
+    /// otherwise (30d).
+    func testSessionAndLimitSelectionSplitWindows() {
+        let now = Date()
+        func window(_ group: String, scope: String? = nil, remaining: Int) -> GrazrWindow {
+            GrazrWindow(kind: "quota", scope: scope, group: group, remaining: remaining,
+                        resetsAt: now.addingTimeInterval(3 * 86400))
+        }
+        let readings: [UsageProvider: UsageProviderState] = [
+            .claude: .readings([AgentUsageReading(id: "claude", provider: .claude, windows: [
+                window("session", remaining: 20),
+                window("weekly", remaining: 60),
+                window("weekly", scope: "Fable", remaining: 42),
+            ], fetchedAt: now)]),
+            .codex: .readings([AgentUsageReading(id: "codex", provider: .codex, windows: [
+                window("30d", remaining: 98),
+            ], fetchedAt: now)]),
+        ]
+        let states = [Device.local.id: readings]
+
+        let session = UsageSelection.tightestSession(states: states, devices: [.local], provider: .claude, now: now)
+        XCTAssertEqual(session?.window.group, "session", "the 5h line picks the session window")
+
+        let plain = UsageSelection.tightestLimit(states: states, devices: [.local], provider: .claude, scope: nil, now: now)
+        XCTAssertEqual(plain?.window.scope, nil, "all-models scope picks the scope-nil week")
+
+        let fable = UsageSelection.tightestLimit(states: states, devices: [.local], provider: .claude, scope: "Fable", now: now)
+        XCTAssertEqual(fable?.window.scope, "Fable", "the watched scope's window wins first")
+
+        let missing = UsageSelection.tightestLimit(states: states, devices: [.local], provider: .claude, scope: "Missing", now: now)
+        XCTAssertEqual(missing?.window.scope, nil, "a scope the readings lack falls back to all-models")
+
+        let codex = UsageSelection.tightestLimit(states: states, devices: [.local], provider: .codex, scope: nil, now: now)
+        XCTAssertEqual(codex?.window.group, "30d", "a 30d limit is a limit line, not session")
+        XCTAssertNil(UsageSelection.tightestSession(states: states, devices: [.local], provider: .codex, now: now),
+                     "codex without a session window has no 5h line")
+    }
+
 }

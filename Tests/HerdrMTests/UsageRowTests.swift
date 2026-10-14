@@ -65,22 +65,28 @@ private final class UsageRowHarness {
 /// Usage sheet.
 @MainActor
 final class UsageRowTests: XCTestCase {
-    func testRowShowsOneMeterPerPickedAgent() throws {
+    func testRowShowsBothWindowsPerAgent() throws {
         let harness = try UsageRowHarness(meters: [
-            UsageMeterValue(provider: .claude, percentUsed: 88, tokenTotal: nil),
-            UsageMeterValue(provider: .codex, percentUsed: 12, tokenTotal: nil),
+            UsageMeterValue(provider: .claude, windows: [
+                UsageWindowValue(label: "5H", percentUsed: 88, untilReset: "2h51m"),
+                UsageWindowValue(label: "7D", percentUsed: 40, untilReset: "1d2h"),
+            ], tokenTotal: nil),
+            UsageMeterValue(provider: .codex, windows: [
+                UsageWindowValue(label: "30D", percentUsed: 12, untilReset: "6d18h"),
+            ], tokenTotal: nil),
         ])
 
         XCTAssertTrue(harness.labels.contains { $0.contains("CLAUDE") }, "claude meter: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("88%") }, "claude percent used: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("CODEX") }, "codex meter: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("12%") }, "codex percent used: \(harness.labels)")
-        XCTAssertFalse(harness.labels.contains { $0.contains("USAGE 8") }, "no single USAGE column: \(harness.labels)")
+        XCTAssertTrue(harness.labels.contains { $0.contains("5H") && $0.contains("88%") && $0.contains("2h51m") }, "claude 5h line: \(harness.labels)")
+        XCTAssertTrue(harness.labels.contains { $0.contains("7D") && $0.contains("40%") && $0.contains("1d2h") }, "claude 7d line: \(harness.labels)")
+        XCTAssertTrue(harness.labels.contains { $0.contains("30D") && $0.contains("12%") && $0.contains("6d18h") }, "codex single 30d line: \(harness.labels)")
     }
 
     func testUnpickedAgentsDoNotRender() throws {
         let harness = try UsageRowHarness(meters: [
-            UsageMeterValue(provider: .claude, percentUsed: 88, tokenTotal: nil),
+            UsageMeterValue(provider: .claude, windows: [
+                UsageWindowValue(label: "5H", percentUsed: 88, untilReset: nil),
+            ], tokenTotal: nil),
         ])
 
         XCTAssertTrue(harness.labels.contains { $0.contains("CLAUDE") }, "\(harness.labels)")
@@ -91,8 +97,8 @@ final class UsageRowTests: XCTestCase {
     /// dimmed track, a dash when even that is missing.
     func testTokensOnlyAgentsShowTotalOrDash() throws {
         let harness = try UsageRowHarness(meters: [
-            UsageMeterValue(provider: .opencode, percentUsed: nil, tokenTotal: "12M"),
-            UsageMeterValue(provider: .gemini, percentUsed: nil, tokenTotal: nil),
+            UsageMeterValue(provider: .opencode, windows: [], tokenTotal: "12M"),
+            UsageMeterValue(provider: .gemini, windows: [], tokenTotal: nil),
         ])
 
         XCTAssertTrue(harness.labels.contains { $0.contains("OPENCODE") && $0.contains("12M") }, "opencode total: \(harness.labels)")
@@ -102,12 +108,23 @@ final class UsageRowTests: XCTestCase {
     func testNothingReadDimsEveryMeterButTheRowStillOpens() throws {
         var opens = 0
         let harness = try UsageRowHarness(meters: [
-            UsageMeterValue(provider: .claude, percentUsed: nil, tokenTotal: nil),
+            UsageMeterValue(provider: .claude, windows: [], tokenTotal: nil),
         ], onOpenSheet: { opens += 1 })
 
         XCTAssertTrue(harness.labels.contains { $0.contains("CLAUDE") && $0.contains("—") }, "\(harness.labels)")
         try harness.pressRow()
         XCTAssertEqual(opens, 1, "the dimmed row still opens the sheet")
+    }
+
+    /// `45m`, `2h51m`, `1d2h` — the countdown lines carry; nil without a
+    /// reset time.
+    func testUntilResetFormatting() {
+        let now = Date()
+        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval(45 * 60), now: now), "45m")
+        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval(171 * 60), now: now), "2h51m")
+        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval((26 * 3600) + (2 * 60)), now: now), "1d2h")
+        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval(-(10 * 60)), now: now), "0m", "past resets clamp")
+        XCTAssertNil(SidebarView.untilReset(nil, now: now))
     }
 
     /// The picked set persists as a comma list; toggling is its whole
