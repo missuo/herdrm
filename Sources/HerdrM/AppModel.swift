@@ -361,7 +361,7 @@ final class AppModel: ObservableObject {
     @AppStorage("usage.sidebarWatchedModel") var sidebarWatchedModel: String = ""
     /// Which agents the sidebar's usage row shows, comma-listed in
     /// canonical order; the Usage sheet's picker writes it.
-    @AppStorage("usage.sidebarAgents") var sidebarAgents: String = "claude,codex"
+    @AppStorage("usage.sidebarAgents") var sidebarAgents: String = "claude,codex,opencode"
 
     /// The sidebar usage row's picked agents, in canonical order; junk
     /// entries drop and an unparsable list falls back to the default pair.

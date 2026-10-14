@@ -39,7 +39,7 @@ struct UsageView: View {
     @AppStorage("usage.sidebarWatchedModel") private var watchedModel = ""
     /// Which agents the sidebar's usage row shows; the same comma list
     /// `AppModel.sidebarAgents` reads, written through the row's toggling.
-    @AppStorage("usage.sidebarAgents") private var sidebarAgents = "claude,codex"
+    @AppStorage("usage.sidebarAgents") private var sidebarAgents = "claude,codex,opencode"
 
     init(
         model: UsageModel,
