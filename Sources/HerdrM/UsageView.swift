@@ -518,7 +518,8 @@ private struct UsageHistoryBlock: View {
         switch provider {
         case .claude: Theme.accent
         case .codex: Theme.devicePalette[1]
-        default: Theme.textSecondary
+        case .opencode: Theme.devicePalette[3]
+        case .gemini: Theme.devicePalette[2]
         }
     }
 
