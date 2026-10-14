@@ -1461,7 +1461,7 @@ struct SidebarUsageStats: View {
 
     var body: some View {
         Button(action: onOpenSheet) {
-            HStack(spacing: 0) {
+            HStack(spacing: 12) {
                 ForEach(meters) { meter in
                     UsageMeter(
                         label: Self.name(meter.provider),
@@ -1472,7 +1472,7 @@ struct SidebarUsageStats: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
