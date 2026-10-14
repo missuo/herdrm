@@ -102,7 +102,7 @@ private struct SidebarMeter: View {
     var body: some View {
         let value = percent.map { min(100, max(0, $0)) }
         let tint = value.map(levelColor) ?? Theme.textGhost
-        return VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 Text(label)
                     .font(.system(size: 9, weight: .semibold))
