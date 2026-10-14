@@ -359,6 +359,20 @@ final class AppModel: ObservableObject {
     /// ("Fable"); empty means all models. The sheet's picker writes it and
     /// the sidebar reads it — both sides share the UserDefaults key.
     @AppStorage("usage.sidebarWatchedModel") var sidebarWatchedModel: String = ""
+    /// Which agents the sidebar's usage row shows, comma-listed in
+    /// canonical order; the Usage sheet's picker writes it.
+    @AppStorage("usage.sidebarAgents") var sidebarAgents: String = "claude,codex"
+
+    /// The sidebar usage row's picked agents, in canonical order; junk
+    /// entries drop and an unparsable list falls back to the default pair.
+    var sidebarAgentProviders: [UsageProvider] {
+        let canonical = UsageProvider.allCases.map(\.rawValue)
+        let picked = Set(sidebarAgents.split(separator: ",").map(String.init))
+        let providers = UsageProvider.allCases.filter { picked.contains($0.rawValue) }
+        return providers.isEmpty
+            ? canonical.compactMap(UsageProvider.init(rawValue:)).filter { ["claude", "codex"].contains($0.rawValue) }
+            : providers
+    }
     /// The install's tailcat client public key ("nodekey:…") for hosts' allow
     /// lists. Loaded on demand, so users without tailcat devices never create one.
     @Published var tailcatClientPublicKey: String?

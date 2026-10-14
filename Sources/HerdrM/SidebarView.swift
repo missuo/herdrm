@@ -192,12 +192,12 @@ struct SidebarView: View {
             Spacer(minLength: 0)
             if showsMachineStats, let device = model.statsDevice {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
+                SidebarUsageStats(meters: usageMeters, onOpenSheet: openUsage)
+                    .padding(.horizontal, 6)
                 SidebarMachineStats(
                     stats: model.machineStats,
                     device: device,
-                    isOpen: model.showMachineStats,
-                    usagePercent: usagePercent,
-                    onUsageTap: openUsage
+                    isOpen: model.showMachineStats
                 ) {
                     model.showMachineStats.toggle()
                 }
@@ -224,29 +224,66 @@ struct SidebarView: View {
         .background(VisualEffectView(material: .sidebar).ignoresSafeArea())
     }
 
-    /// The USAGE column's reading: percent used of the watched model's
-    /// tightest open window across every device, nil while nothing has
-    /// been read — the column stays, dimmed.
-    private var usagePercent: Double? {
-        watchedWindow.map { 100 - Double($0.window.left(now: Date())) }
+    /// The usage row's meters: one per picked agent (picked in the Usage
+    /// sheet, `usage.sidebarAgents`). Window-bearing agents show the
+    /// percent used of their own tightest open window — Claude's respects
+    /// the watched model — and tokens-only agents a compact total over a
+    /// dimmed track.
+    private var usageMeters: [UsageMeterValue] {
+        let now = Date()
+        let watched = model.sidebarWatchedModel
+        return model.sidebarAgentProviders.map { provider in
+            let scope = provider == .claude && !watched.isEmpty ? watched : nil
+            let window = UsageSelection.tightestWindow(
+                states: usageHint.states,
+                devices: model.devices,
+                provider: provider,
+                scope: scope,
+                now: now
+            )
+            return UsageMeterValue(
+                provider: provider,
+                percentUsed: window.map { 100 - Double($0.window.left(now: now)) },
+                tokenTotal: window == nil ? Self.tokenTotal(provider, of: usageHint.histories) : nil
+            )
+        }
     }
 
-    /// The window the USAGE column watches: the watched model's own, with
-    /// the all-models windows as fallback.
-    private var watchedWindow: (device: Device, window: GrazrWindow)? {
+    /// The picked agents' compact token total across devices — the meter
+    /// value for agents that report no quota windows.
+    static func tokenTotal(_ provider: UsageProvider, of histories: [UUID: UsageHistory]) -> String? {
+        var total = 0
+        for history in histories.values {
+            guard let models = history.modelTotals[provider] else { continue }
+            for tokens in models.values {
+                total += tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
+            }
+        }
+        guard total > 0 else { return nil }
+        return Self.compact(total)
+    }
+
+    /// `1.2K` / `3.4M` / `1.2B` — the compact form the meters and cards use.
+    static func compact(_ value: Int) -> String {
+        switch value {
+        case 1_000..<1_000_000: return String(format: "%.1fK", Double(value) / 1_000)
+        case 1_000_000..<1_000_000_000: return String(format: "%.1fM", Double(value) / 1_000_000)
+        case 1_000_000_000...: return String(format: "%.1fB", Double(value) / 1_000_000_000)
+        default: return "\(value)"
+        }
+    }
+
+    /// The usage row's tap: the Usage sheet, on the watched window's
+    /// device — the local device (else the first) while nothing is open.
+    private func openUsage() {
         let watched = model.sidebarWatchedModel
-        return UsageSelection.tightestWindow(
+        let window = UsageSelection.tightestWindow(
             states: usageHint.states,
             devices: model.devices,
             scope: watched.isEmpty ? nil : watched,
             now: Date()
         )
-    }
-
-    /// The USAGE column's tap: the Usage sheet on the watched window's
-    /// device — the local device (else the first) while nothing is open.
-    private func openUsage() {
-        model.usageDevice = watchedWindow?.device
+        model.usageDevice = window?.device
             ?? model.devices.first(where: \.isLocal)
             ?? model.devices.first
     }
@@ -268,7 +305,7 @@ struct SidebarView: View {
 
     /// Whether `device`'s states call for a read: never read, or any
     /// provider standing `.failed` or `.unknown` — every window reset, say
-    /// — so the USAGE column keeps a real picture behind it.
+    /// — so the usage row keeps a real picture behind it.
     static func needsUsageRead(_ states: [UsageProvider: UsageProviderState]?) -> Bool {
         guard let states else { return true }
         return states.contains { _, state in
@@ -1243,5 +1280,132 @@ struct SpinnerView: View {
             .rotationEffect(.degrees(spinning ? 360 : 0))
             .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spinning)
             .onAppear { spinning = true }
+    }
+}
+
+// MARK: - Usage meters row
+
+/// One meter's data in the sidebar's usage row: percent used of the
+/// provider's tightest open window where it reports windows, else a compact
+/// token total where it only reports tokens — both nil dims to a dash.
+struct UsageMeterValue: Identifiable, Equatable {
+    let provider: UsageProvider
+    let percentUsed: Double?
+    let tokenTotal: String?
+    var id: UsageProvider { provider }
+}
+
+/// The usage row above the machine-stats row, in its visual language: one
+/// meter column per picked agent. Window-bearing agents fill a
+/// level-tinted bar with the percent used; tokens-only agents show a
+/// compact total over a dimmed track. The whole row opens the Usage sheet.
+struct SidebarUsageStats: View {
+    let meters: [UsageMeterValue]
+    let onOpenSheet: () -> Void
+
+    /// The picked set's whole algebra: the comma list the sheet's picker
+    /// and `AppModel.sidebarAgents` share, toggling one agent in or out.
+    static func toggling(_ provider: UsageProvider, in raw: String) -> String {
+        var picked = raw.split(separator: ",").map(String.init)
+        if let index = picked.firstIndex(of: provider.rawValue) {
+            picked.remove(at: index)
+        } else {
+            picked.append(provider.rawValue)
+        }
+        // Keep the canonical order so the list reads stably.
+        let ordered = UsageProvider.allCases.map(\.rawValue)
+        picked.sort { lhs, rhs in
+            let l = ordered.firstIndex(of: lhs) ?? ordered.count
+            let r = ordered.firstIndex(of: rhs) ?? ordered.count
+            return l < r
+        }
+        return picked.joined(separator: ",")
+    }
+
+    var body: some View {
+        Button(action: onOpenSheet) {
+            HStack(spacing: 0) {
+                ForEach(meters) { meter in
+                    UsageMeter(
+                        label: Self.name(meter.provider),
+                        percentUsed: meter.percentUsed,
+                        tokenTotal: meter.tokenTotal
+                    )
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(String(localized: "Usage across your devices — click for details"))
+        .accessibilityLabel(summary)
+    }
+
+    private var summary: String {
+        let parts = meters.map { meter in
+            let value = meter.percentUsed.map { "\(Int($0.rounded()))% used" }
+                ?? meter.tokenTotal
+                ?? "—"
+            return "\(Self.name(meter.provider)) \(value)"
+        }
+        return String(localized: "Usage: \(parts.joined(separator: " · "))")
+    }
+
+    static func name(_ provider: UsageProvider) -> String {
+        switch provider {
+        case .claude: return String(localized: "Claude").uppercased()
+        case .codex: return String(localized: "Codex").uppercased()
+        case .opencode: return String(localized: "OpenCode").uppercased()
+        case .gemini: return String(localized: "Gemini").uppercased()
+        }
+    }
+}
+
+/// One compact meter column, `SidebarMachineStats`'s meter in the usage
+/// row's clothes: label and value over a level-tinted bar that fills the
+/// percent used — a dimmed track when only a token total exists.
+private struct UsageMeter: View {
+    let label: String
+    let percentUsed: Double?
+    let tokenTotal: String?
+
+    var body: some View {
+        let value = percentUsed.map { min(100, max(0, $0)) }
+        let tint = value.map(Self.levelColor) ?? Theme.textGhost
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                Text(verbatim: label)
+                    .font(.system(size: 9, weight: .semibold))
+                    .kerning(0.2)
+                    .foregroundStyle(Theme.textTertiary)
+                Spacer(minLength: 2)
+                Text(verbatim: value.map(MachineStatsFormat.percent) ?? tokenTotal ?? "—")
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(value.map { $0 >= 75 ? tint : Theme.textSecondary } ?? Theme.textGhost)
+                    .lineLimit(1)
+            }
+            GeometryReader { proxy in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Theme.textGhost.opacity(0.22))
+                    Capsule()
+                        .fill(tint)
+                        .frame(width: max((value ?? 0) > 0 ? 3 : 0, proxy.size.width * (value ?? 0) / 100))
+                }
+            }
+            .frame(height: 4)
+        }
+        .frame(maxWidth: .infinity)
+        .animation(.easeOut(duration: 0.35), value: value ?? -1)
+    }
+
+    /// The machine row's own rule, percent used: calm until the window is
+    /// nearly spent.
+    private static func levelColor(_ percent: Double) -> Color {
+        if percent >= 90 { return Theme.danger }
+        if percent >= 75 { return Theme.warning }
+        return Theme.textSecondary
     }
 }

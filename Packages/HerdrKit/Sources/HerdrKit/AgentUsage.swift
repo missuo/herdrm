@@ -91,18 +91,38 @@ public enum UsageSelection {
             }
     }
 
-    /// The tightest open window whose scope is exactly `scope`.
+    /// One provider's own tightest open window — the sidebar's per-agent
+    /// meter. Scope rules match the cross-provider variant: nil matches the
+    /// provider's scope-nil windows; non-nil prefers the provider's windows
+    /// of that scope, falling back to its scope-nil ones.
+    public static func tightestWindow(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        provider: UsageProvider,
+        scope: String?,
+        now: Date
+    ) -> (device: Device, window: GrazrWindow)? {
+        pick(states: states, devices: devices, scope: scope, now: now, provider: provider)
+            ?? scope.flatMap { _ in
+                pick(states: states, devices: devices, scope: nil, now: now, provider: provider)
+            }
+    }
+
+    /// The tightest open window whose scope is exactly `scope`, across
+    /// every provider — or within `provider` alone when given.
     private static func pick(
         states: [UUID: [UsageProvider: UsageProviderState]],
         devices: [Device],
         scope: String?,
-        now: Date
+        now: Date,
+        provider: UsageProvider? = nil
     ) -> (device: Device, window: GrazrWindow)? {
         var best: (device: Device, window: GrazrWindow)?
         for device in devices {
             guard let perProvider = states[device.id] else { continue }
-            for provider in UsageProvider.allCases {
-                guard case .readings(let readings) = perProvider[provider] else { continue }
+            for candidate in UsageProvider.allCases {
+                if let provider, candidate != provider { continue }
+                guard case .readings(let readings) = perProvider[candidate] else { continue }
                 for reading in readings {
                     for window in reading.windows
                     where window.scope == scope && window.isOpen(now: now) {
