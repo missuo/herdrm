@@ -169,7 +169,7 @@ final class UsageViewTests: XCTestCase {
         let labels = harness.labels
         XCTAssertTrue(labels.contains { $0.hasPrefix("Usage") }, "usage caption: \(labels)")
         XCTAssertTrue(
-            labels.contains { $0.contains("1.2M") && $0.contains("input") },
+            labels.contains { $0.contains("2.3M tokens total") && $0.contains("1.2M input") },
             "token line: \(labels)"
         )
         XCTAssertFalse(

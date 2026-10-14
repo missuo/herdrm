@@ -545,12 +545,12 @@ extension UsageHistoryUITests {
 
         // Claude: no tokens in its reading, 1.24M in 7d history → the line shows.
         XCTAssertTrue(
-            labels.contains { $0.contains("1.2M input") },
-            "claude's 7d line: \(labels)")
+            labels.contains { $0.contains("1.2M tokens total") && $0.contains("1.2M input") },
+            "claude's total-first line: \(labels)")
         // OpenCode: 7d history (500k) outranks the reading's own 77 tokens.
         XCTAssertTrue(
-            labels.contains { $0.contains("500k input") },
-            "opencode's history wins over its reading: \(labels)")
+            labels.contains { $0.contains("500k tokens total") && $0.contains("500k input") },
+            "opencode's history wins, total first: \(labels)")
         XCTAssertFalse(
             labels.contains { $0.contains("999k input") || $0.contains("1.0M input") },
             "day 9 is outside the 7d window: \(labels)")

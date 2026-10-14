@@ -676,14 +676,19 @@ private struct UsageProviderCard: View {
                 .font(.system(size: 11.5).monospacedDigit())
                 .foregroundStyle(Theme.textSecondary)
         }
-        .help(String(localized: "Tokens over the last 7 days"))
+        .help(String(localized: "Total = input + output + reasoning + cache read + cache write, from this device's transcripts over the last 7 days. Other devices and clients don't count here."))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(String(localized: "Usage") + ", " + line)
     }
 
+    /// The card's token line: the TOTAL first — the number comparable to
+    /// Claude's own usage readout — then the breakdown. Uncached input is
+    /// tiny by design when caching works, so leading with "input" made a
+    /// billion-token week read as 25k.
     private static func line(for tokens: UsageTokens) -> String {
-        String(
-            localized: "\(Self.count(tokens.input)) input · \(Self.count(tokens.output)) output · \(Self.count(tokens.cacheRead + tokens.cacheWrite)) cache"
+        let total = tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
+        return String(
+            localized: "\(Self.count(total)) tokens total · \(Self.count(tokens.input)) input · \(Self.count(tokens.output)) output · \(Self.count(tokens.cacheRead + tokens.cacheWrite)) cache"
         )
     }
 
