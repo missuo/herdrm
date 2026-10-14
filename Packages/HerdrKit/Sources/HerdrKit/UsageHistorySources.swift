@@ -22,9 +22,6 @@ public enum UsageHistorySource {
     /// keyed under `provider`. Nil when the output is not the history shape
     /// at all.
     public static func parse(_ provider: UsageProvider, stdout: Data, fetchedAt: Date) -> UsageHistory? {
-        if provider == .opencode {
-            return parseOpencode(stdout: stdout, fetchedAt: fetchedAt)
-        }
         guard let document = try? JSONDecoder().decode(NormalizedDocument.self, from: stdout) else {
             return nil
         }
@@ -167,62 +164,73 @@ public enum UsageHistorySource {
 
     // MARK: - OpenCode
 
-    /// Runs `opencode stats` for the last 30 days behind the `command -v`
-    /// guard that prints the installed-false envelope when the CLI is
-    /// missing. opencode prints its own JSON — no heredoc normalization —
-    /// so `parseOpencode` reads the stats shape directly.
+    /// Walks opencode's local database (`~/.local/share/opencode/
+    /// opencode.db`) read-only and streams assistant messages into the
+    /// normalized document: `data.role == "assistant"` rows carry
+    /// `tokens` and `time.created` (epoch ms), bucketed by the device's
+    /// local day and by `modelID` — every backing provider's messages
+    /// count as OpenCode usage. The 30-day window is an indexed SQL
+    /// cutoff; python3's sqlite3 stdlib opens the db read-only so the
+    /// running daemon's WAL never blocks the read. A missing db prints
+    /// the installed-false envelope.
     private static let opencodeCommand = SSHTunnel.remotePathExport + "\n"
-        + #"if command -v opencode >/dev/null 2>&1; then opencode stats --json --days 30; else echo '{"installed": false}'; fi"#
+        + #"""
+        python3 - <<'USAGE_EOF'
+        import json, os, sqlite3, time
 
-    /// opencode reports tokens only as per-model 30-day range totals (the
-    /// pinned 2026-10-13 `stats --json` shape; `activity` is steps-only),
-    /// so there is no daily series: every variant of one bare `model.id`
-    /// merges into a single entry and `days` stays empty. The
-    /// installed-false envelope and any non-stats output are nil, matching
-    /// the normalized parse's semantics.
-    private static func parseOpencode(stdout: Data, fetchedAt: Date) -> UsageHistory? {
-        guard let document = try? JSONDecoder().decode(OpencodeStatsDocument.self, from: stdout) else {
-            return nil
-        }
-        var totals: [String: UsageTokens] = [:]
-        for entry in document.models {
-            let row = totals[entry.model.id]
-                ?? UsageTokens(input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0)
-            totals[entry.model.id] = UsageTokens(
-                input: row.input + entry.tokens.input,
-                output: row.output + entry.tokens.output,
-                reasoning: row.reasoning + entry.tokens.reasoning,
-                cacheRead: row.cacheRead + entry.tokens.cache.read,
-                cacheWrite: row.cacheWrite + entry.tokens.cache.write)
-        }
-        return UsageHistory(days: [], modelTotals: [.opencode: totals], generatedAt: fetchedAt)
-    }
+        db = os.path.join(os.path.expanduser("~"), ".local", "share", "opencode", "opencode.db")
+        installed = os.path.isfile(db)
+        report = {"days": [], "models": {}}
+        if installed:
+            cutoff = int((time.time() - 30 * 86400) * 1000)
+            days, models = {}, {}
 
-    /// opencode's `stats --json` document: only the `models` array carries
-    /// tokens — `range`, `sessions`, and `activity` are unused.
-    private struct OpencodeStatsDocument: Decodable {
-        let models: [OpencodeModelUsage]
-    }
+            def blank():
+                return {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
 
-    /// One model row: the model ref plus its range token totals.
-    private struct OpencodeModelUsage: Decodable {
-        let model: OpencodeModelID
-        let tokens: OpencodeModelTokens
-    }
+            def add(bucket, tokens):
+                row = bucket
+                row["input"] += int(tokens.get("input") or 0)
+                row["output"] += int(tokens.get("output") or 0)
+                row["reasoning"] += int(tokens.get("reasoning") or 0)
+                cache = tokens.get("cache") or {}
+                row["cache_read"] += int(cache.get("read") or 0)
+                row["cache_write"] += int(cache.get("write") or 0)
 
-    /// The bare model id; `providerID` and `variant` distinguish rows that
-    /// merge into the same entry.
-    private struct OpencodeModelID: Decodable {
-        let id: String
-    }
+            try:
+                conn = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
+                for (data,) in conn.execute(
+                    "SELECT data FROM message WHERE time_created >= ?", (cutoff,)
+                ):
+                    try:
+                        row = json.loads(data)
+                    except Exception:
+                        continue
+                    if row.get("role") != "assistant":
+                        continue
+                    tokens = row.get("tokens")
+                    stamp = (row.get("time") or {}).get("created")
+                    if not isinstance(tokens, dict) or not isinstance(stamp, int):
+                        continue
+                    day = time.strftime("%Y-%m-%d", time.localtime(stamp / 1000))
+                    model = row.get("modelID") or "unknown"
+                    if day not in days:
+                        days[day] = blank()
+                    if model not in models:
+                        models[model] = blank()
+                    add(days[day], tokens)
+                    add(models[model], tokens)
+                conn.close()
+            except Exception:
+                pass
+            report["days"] = [dict(date=day, **days[day]) for day in sorted(days)]
+            report["models"] = {model: models[model] for model in sorted(models)}
+        else:
+            report["installed"] = False
+        print(json.dumps(report))
+        USAGE_EOF
+        """#
 
-    /// One row's range totals; cache splits into read and write.
-    private struct OpencodeModelTokens: Decodable {
-        let input: Int
-        let output: Int
-        let reasoning: Int
-        let cache: OpencodeCache
-    }
 
     private struct OpencodeCache: Decodable {
         let read: Int

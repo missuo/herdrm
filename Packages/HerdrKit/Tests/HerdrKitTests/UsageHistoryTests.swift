@@ -127,40 +127,98 @@ final class UsageHistoryTests: XCTestCase {
 
     // MARK: - OpenCode
 
-    /// The pinned 2026-10-13 `opencode stats --json --days 30` shape: tokens
-    /// exist only as per-model range totals (`activity` is steps-only), so
-    /// `parse` merges every variant of one bare `model.id` into a single
-    /// entry and emits no daily series. The installed-false envelope and any
-    /// non-stats output are nil, matching the claude/codex parse semantics.
-    /// With opencode installed the real command must yield positive merged
-    /// totals too.
-    func testOpencodeHistoryMapsModelTotalsOnly() async throws {
-        let document = #"{"range": {"start": 1757894400000, "end": 1760486400000}, "sessions": 42, "activity": [{"date": "2026-09-14", "steps": 14}], "models": [{"model": {"id": "glm-5.3", "providerID": "zai-coding-plan", "variant": "default"}, "steps": 5227, "tokens": {"input": 11758747, "output": 1690291, "reasoning": 2101214, "cache": {"read": 406215424, "write": 0}}, "cost": 0}, {"model": {"id": "glm-5.3", "providerID": "zai-coding-plan", "variant": "high"}, "steps": 2613, "tokens": {"input": 5878061, "output": 845146, "reasoning": 1050607, "cache": {"read": 203107712, "write": 0}}, "cost": 0}]}"#
-        let history = try XCTUnwrap(
-            UsageHistorySource.parse(.opencode, stdout: Data(document.utf8), fetchedAt: fetchedAt))
-        XCTAssertEqual(history.generatedAt, fetchedAt)
-        XCTAssertEqual(history.days, [])
-        XCTAssertEqual(history.modelTotals[.opencode]?.count, 1)
-        XCTAssertEqual(
-            history.modelTotals[.opencode]?["glm-5.3"],
-            UsageTokens(
-                input: 17_636_808, output: 2_535_437, reasoning: 3_151_821,
-                cacheRead: 609_323_136, cacheWrite: 0))
+    /// opencode's history comes from its local sqlite db (`message` rows,
+    /// `data` JSON with role/tokens/time.created): assistant messages
+    /// bucket by the device's local day and by `modelID`, the SQL cutoff
+    /// drops anything older than 30 days, user rows never count, and a
+    /// missing db yields an empty history. Built against a real sqlite
+    /// fixture under a temp HOME with a pinned timezone.
+    func testOpencodeHistoryWalksItsDatabase() async throws {
+        try XCTSkipUnless(hasTool("python3"), "python3 is not installed")
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("usage-opencode-\(UUID().uuidString)").path
+        let dbDir = "\(home)/.local/share/opencode"
+        try FileManager.default.createDirectory(
+            atPath: dbDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: home) }
 
-        XCTAssertNil(
-            UsageHistorySource.parse(
-                .opencode, stdout: Data(#"{"installed": false}"#.utf8), fetchedAt: fetchedAt))
-        XCTAssertNil(UsageHistorySource.parse(.opencode, stdout: Data(), fetchedAt: fetchedAt))
+        func message(role: String, model: String, createdMs: Double, input: Int, output: Int, cacheRead: Int = 0) -> String {
+            let data: [String: Any] = [
+                "role": role,
+                "time": ["created": createdMs],
+                "modelID": model,
+                "tokens": ["input": input, "output": output, "reasoning": 0,
+                           "cache": ["read": cacheRead, "write": 0]],
+            ]
+            let json = try! JSONSerialization.data(withJSONObject: data)
+            return String(data: json, encoding: .utf8)!
+        }
+        // 2026-10-14 10:00 UTC = 12:00 Warsaw: one day's usage across two
+        // models; one row predating the 30-day cutoff; one user row that
+        // must never count.
+        let recent = 1_791_000_000_000.0
+        let old = recent - 31.5 * 86400 * 1000
+        let rows = [
+            message(role: "assistant", model: "glm-5.3", createdMs: recent, input: 1_000, output: 100, cacheRead: 5_000),
+            message(role: "assistant", model: "gemini-3-flash", createdMs: recent + 3_600_000, input: 200, output: 50),
+            message(role: "assistant", model: "glm-5.3", createdMs: old, input: 999_999, output: 999_999),
+            message(role: "user", model: "glm-5.3", createdMs: recent, input: 777, output: 777),
+        ]
+        let seed = """
+        import json, sqlite3, sys
+        conn = sqlite3.connect(sys.argv[1])
+        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
+        for index, row in enumerate(json.load(open(sys.argv[2]))):
+            conn.execute("INSERT INTO message VALUES (?, ?, ?, ?, ?)", (str(index), "s", int(json.loads(row)['time']['created']), 0, row))
+        conn.commit()
+        """
+        let seedURL = URL(fileURLWithPath: dbDir).appendingPathComponent("seed.py")
+        let rowsURL = URL(fileURLWithPath: dbDir).appendingPathComponent("rows.json")
+        try seed.write(to: seedURL, atomically: true, encoding: .utf8)
+        try JSONSerialization.data(withJSONObject: rows).write(to: rowsURL)
+        let seedProcess = Process()
+        seedProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        seedProcess.arguments = ["python3", seedURL.path, "\(dbDir)/opencode.db", rowsURL.path]
+        try seedProcess.run()
+        seedProcess.waitUntilExit()
+        XCTAssertEqual(seedProcess.terminationStatus, 0, "fixture seed failed")
 
-        guard hasTool("opencode") else { throw XCTSkip("opencode is not installed") }
         let command = try XCTUnwrap(UsageHistorySource.command(for: .opencode))
-        let output = try await DeviceFileService(device: .local).run(command)
-        let live = try XCTUnwrap(
+        let output = try await DeviceFileService(device: .local).run(
+            "HOME='\(home)'; export HOME; TZ='Europe/Warsaw'; export TZ; " + command)
+        let history = try XCTUnwrap(
             UsageHistorySource.parse(.opencode, stdout: output, fetchedAt: fetchedAt))
-        XCTAssertTrue(live.days.isEmpty)
-        let totals = try XCTUnwrap(live.modelTotals[.opencode])
-        XCTAssertFalse(totals.isEmpty)
-        XCTAssertTrue(totals.values.reduce(0) { $0 + $1.input } > 0)
+
+        XCTAssertEqual(history.days.count, 1, "both recent rows share the Warsaw day: \(history.days)")
+        XCTAssertEqual(
+            history.days.first?.tokens[.opencode],
+            UsageTokens(input: 1_200, output: 150, reasoning: 0, cacheRead: 5_000, cacheWrite: 0))
+        XCTAssertEqual(history.modelTotals[.opencode]?.count, 2)
+        XCTAssertEqual(history.modelTotals[.opencode]?["glm-5.3"]?.input, 1_000)
+        XCTAssertEqual(history.modelTotals[.opencode]?["gemini-3-flash"]?.input, 200)
+
+        // A missing db is a valid, empty history — the daemon's absence
+        // reads as "no data", not a failure.
+        let emptyHome = FileManager.default.temporaryDirectory
+            .appendingPathComponent("usage-opencode-empty-\(UUID().uuidString)").path
+        try FileManager.default.createDirectory(atPath: emptyHome, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: emptyHome) }
+        let emptyOutput = try await DeviceFileService(device: .local).run(
+            "HOME='\(emptyHome)'; export HOME; " + command)
+        let empty = try XCTUnwrap(
+            UsageHistorySource.parse(.opencode, stdout: emptyOutput, fetchedAt: fetchedAt))
+        XCTAssertEqual(empty.days, [])
+        XCTAssertTrue(empty.modelTotals[.opencode]?.isEmpty ?? false)
+
+        // With opencode installed and used, the real db yields real days.
+        guard hasTool("opencode"), FileManager.default.fileExists(
+            atPath: NSString(string: "~/.local/share/opencode/opencode.db").expandingTildeInPath)
+        else { return }
+        let liveOutput = try await DeviceFileService(device: .local).run(command)
+        let live = try XCTUnwrap(
+            UsageHistorySource.parse(.opencode, stdout: liveOutput, fetchedAt: fetchedAt))
+        XCTAssertFalse(live.days.isEmpty, "the real opencode db has recent usage")
+        XCTAssertTrue((live.modelTotals[.opencode]?["glm-5.3"]?.input ?? 0) > 0)
     }
 
     // MARK: - Parse
@@ -217,9 +275,11 @@ final class UsageHistoryTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(UsageHistorySource.command(for: .codex)).contains("sessions"))
         let opencode = try XCTUnwrap(UsageHistorySource.command(for: .opencode))
         XCTAssertTrue(opencode.hasPrefix(SSHTunnel.remotePathExport))
-        XCTAssertTrue(opencode.contains("if command -v opencode >/dev/null 2>&1; then"))
-        XCTAssertTrue(opencode.contains("opencode stats --json --days 30"))
-        XCTAssertTrue(opencode.contains(#"else echo '{"installed": false}'; fi"#))
+        XCTAssertTrue(opencode.contains("python3 - <<'USAGE_EOF'"), "the sqlite walk is a heredoc")
+        XCTAssertTrue(opencode.contains("opencode.db"), "it reads opencode's own database")
+        XCTAssertTrue(opencode.contains("mode=ro"), "read-only, so the daemon's WAL never blocks")
+        XCTAssertTrue(opencode.contains("WHERE time_created >="), "the 30-day window is an indexed SQL cutoff")
+        XCTAssertTrue(opencode.contains("assistant"), "assistant messages are the rows that count")
         XCTAssertNil(UsageHistorySource.command(for: .gemini))
     }
 

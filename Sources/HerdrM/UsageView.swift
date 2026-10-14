@@ -259,7 +259,7 @@ private struct UsageHistoryBlock: View {
 
     /// The providers charted, in stack order. OpenCode reports only 30-day
     /// per-model totals (no daily series), gemini nothing at all.
-    private static let charted: [UsageProvider] = [.claude, .codex]
+    private static let charted: [UsageProvider] = [.claude, .codex, .opencode]
 
     /// The providers with per-model rows.
     private static let modeled: [UsageProvider] = [.claude, .codex, .opencode]

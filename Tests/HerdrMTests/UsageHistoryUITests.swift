@@ -366,7 +366,8 @@ final class UsageHistoryStoreTests: XCTestCase {
     }
 
     /// Routes by the command's own text: the claude heredoc reads
-    /// `.claude`, codex's `.codex`, opencode's `opencode stats`.
+    /// `.claude`, codex's `.codex`, opencode's sqlite walk reads
+    /// `opencode.db` and prints the same normalized document.
     private func fixture(_ command: String) -> Data {
         if command.contains(".claude") {
             return Data(Self.claudeDocument.utf8)
@@ -374,8 +375,8 @@ final class UsageHistoryStoreTests: XCTestCase {
         if command.contains(".codex") {
             return Data(Self.codexDocument.utf8)
         }
-        if command.contains("opencode stats") {
-            return Data(Self.opencodeStats.utf8)
+        if command.contains("opencode.db") {
+            return Data(Self.opencodeDocument.utf8)
         }
         return Data("{}".utf8)
     }
@@ -400,11 +401,12 @@ final class UsageHistoryStoreTests: XCTestCase {
         XCTAssertNotNil(day.tokens[.codex], "\(day.tokens)")
         XCTAssertEqual(history.days.count, 1, "\(history.days)")
 
-        // Per-model totals keep their providers; opencode contributes its
-        // stats totals with empty days.
+        // Per-model totals keep their providers; opencode's sqlite walk
+        // contributes its own day alongside the transcript providers.
         XCTAssertEqual(history.modelTotals[.claude]?["claude-opus-5-5"], tokens(1_000_000, 200_000))
         XCTAssertEqual(history.modelTotals[.codex]?["gpt-5.3-codex"], tokens(100_000))
         XCTAssertEqual(history.modelTotals[.opencode]?["glm-5.3"], tokens(300_000, 50_000))
+        XCTAssertNotNil(day.tokens[.opencode], "\(day.tokens)")
         XCTAssertNil(history.modelTotals[.gemini], "\(history.modelTotals)")
         XCTAssertEqual(history.generatedAt, stamp)
     }
@@ -462,8 +464,8 @@ final class UsageHistoryStoreTests: XCTestCase {
     {"days": [{"date": "2026-10-12", "input": 100000, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}], "models": {"gpt-5.3-codex": {"input": 100000, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}}}
     """#
 
-    private static let opencodeStats = #"""
-    {"models": [{"model": {"id": "glm-5.3"}, "tokens": {"input": 300000, "output": 50000, "reasoning": 0, "cache": {"read": 0, "write": 0}}}]}
+    private static let opencodeDocument = #"""
+    {"days": [{"date": "2026-10-12", "input": 300000, "output": 50000, "reasoning": 0, "cache_read": 0, "cache_write": 0}], "models": {"glm-5.3": {"input": 300000, "output": 50000, "reasoning": 0, "cache_read": 0, "cache_write": 0}}}
     """#
 
     private func tokens(_ input: Int, _ output: Int = 0) -> UsageTokens {
