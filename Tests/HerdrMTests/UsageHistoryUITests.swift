@@ -491,3 +491,68 @@ private final class MutableClock: @unchecked Sendable {
         lock.withLock { current = current.addingTimeInterval(seconds) }
     }
 }
+
+/// Every card's token line means the same thing: the device's last-7-days
+/// history. Claude's quota reading carries no tokens of its own, yet its
+/// card shows the line once history lands; a provider whose history is
+/// empty falls back to whatever its quota reading carried.
+extension UsageHistoryUITests {
+    func testCardTokenLinesComeFromSevenDayHistory() throws {
+        let model = UsageModel()
+        let now = Date()
+        let today = Calendar.current.startOfDay(for: now)
+        func day(_ offset: Int, provider: UsageProvider, input: Int) -> UsageDay {
+            UsageDay(date: today.addingTimeInterval(Double(-offset) * 86400),
+                     tokens: [provider: UsageTokens(input: input, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0)])
+        }
+        let history = UsageHistory(days: [
+            day(0, provider: .claude, input: 1_000_000),
+            day(6, provider: .claude, input: 240_000),
+            day(9, provider: .claude, input: 999_999),   // beyond the window
+            day(2, provider: .opencode, input: 500_000),
+        ], modelTotals: [:], generatedAt: now)
+        model.preload(.local, [
+            .claude: .readings([AgentUsageReading(
+                id: "claude", provider: .claude,
+                windows: [GrazrWindow(kind: "quota", group: "session", remaining: 40,
+                                      resetsAt: now.addingTimeInterval(3600))],
+                tokens: nil, fetchedAt: now)]),
+            .opencode: .readings([AgentUsageReading(
+                id: "opencode", provider: .opencode, windows: [],
+                tokens: UsageTokens(input: 77, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0),
+                fetchedAt: now)]),
+        ])
+        model.preloadHistory(.local, history)
+
+        let view = UsageView(model: model, anchor: .local, devices: [.local], refresh: { _, _, _ in })
+            .frame(width: 520, height: 480)
+        let root = NSHostingView(rootView: AnyView(view))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 480),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.title = "CardTokens \(UUID().uuidString)"
+        window.contentView = root
+        window.orderFrontRegardless()
+        root.layoutSubtreeIfNeeded()
+        defer { window.close() }
+        let end = Date().addingTimeInterval(0.6)
+        while Date() < end {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            NSApp?.windows.forEach { $0.contentView?.layoutSubtreeIfNeeded() }
+        }
+        let labels = AccessibilityProbe.elements(in: window).compactMap(\.name)
+
+        // Claude: no tokens in its reading, 1.24M in 7d history → the line shows.
+        XCTAssertTrue(
+            labels.contains { $0.contains("1.2M input") },
+            "claude's 7d line: \(labels)")
+        // OpenCode: 7d history (500k) outranks the reading's own 77 tokens.
+        XCTAssertTrue(
+            labels.contains { $0.contains("500k input") },
+            "opencode's history wins over its reading: \(labels)")
+        XCTAssertFalse(
+            labels.contains { $0.contains("999k input") || $0.contains("1.0M input") },
+            "day 9 is outside the 7d window: \(labels)")
+    }
+}
