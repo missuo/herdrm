@@ -250,7 +250,9 @@ struct SidebarView: View {
             return UsageMeterValue(
                 provider: provider,
                 windows: windows,
-                tokenTotal: windows.isEmpty ? Self.tokenTotal(provider, of: usageHint.histories) : nil
+                tokenTotal: windows.isEmpty
+                    ? Self.tokenTotal(provider, states: usageHint.states)
+                    : nil
             )
         }
     }
@@ -277,12 +279,18 @@ struct SidebarView: View {
     }
 
     /// The picked agents' compact token total across devices — the meter
-    /// value for agents that report no quota windows.
-    static func tokenTotal(_ provider: UsageProvider, of histories: [UUID: UsageHistory]) -> String? {
+    /// value for agents that report no quota windows. Sourced from the
+    /// quota readings (OpenCode's `opencode stats` totals ride along with
+    /// them), so the row needs no history fetch of its own.
+    static func tokenTotal(
+        _ provider: UsageProvider,
+        states: [UUID: [UsageProvider: UsageProviderState]]
+    ) -> String? {
         var total = 0
-        for history in histories.values {
-            guard let models = history.modelTotals[provider] else { continue }
-            for tokens in models.values {
+        for perProvider in states.values {
+            guard case .readings(let readings) = perProvider[provider] else { continue }
+            for reading in readings {
+                guard let tokens = reading.tokens else { continue }
                 total += tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
             }
         }

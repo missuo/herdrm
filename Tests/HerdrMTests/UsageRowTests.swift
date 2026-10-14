@@ -128,6 +128,27 @@ final class UsageRowTests: XCTestCase {
         XCTAssertEqual(UsageFormat.compact(7_800_000_000_000_000), "7.8P")
     }
 
+    /// Tokens-only meters source their total from the quota readings —
+    /// the row never waits on a history fetch. OpenCode's stats ride along
+    /// with its quota read; a provider without readings yet stays dimmed.
+    func testTokenTotalComesFromQuotaStates() {
+        func reading(_ provider: UsageProvider, tokens: UsageTokens?) -> AgentUsageReading {
+            AgentUsageReading(id: provider.rawValue, provider: provider, windows: [], tokens: tokens, fetchedAt: Date())
+        }
+        let tokens = UsageTokens(input: 4_000_000, output: 400_000, reasoning: 0, cacheRead: 800_000, cacheWrite: 0)
+        let states: [UUID: [UsageProvider: UsageProviderState]] = [
+            Device.local.id: [.opencode: .readings([reading(.opencode, tokens: tokens)])],
+            UUID(): [.opencode: .readings([reading(.opencode, tokens: tokens)])],
+        ]
+        XCTAssertEqual(SidebarView.tokenTotal(.opencode, states: states), "10.4M", "sums across devices")
+
+        var unread = states
+        unread[Device.local.id]?[.opencode] = .loading
+        XCTAssertEqual(SidebarView.tokenTotal(.opencode, states: unread), "5.2M", "only readings count")
+
+        XCTAssertNil(SidebarView.tokenTotal(.gemini, states: states), "a provider without readings stays dimmed")
+    }
+
     /// `45m`, `2h51m`, `1d2h` — the countdown lines carry; nil without a
     /// reset time.
     func testUntilResetFormatting() {
