@@ -1365,7 +1365,7 @@ struct SidebarUsageStats: View {
             HStack(spacing: 12) {
                 ForEach(meters) { meter in
                     UsageMeter(
-                        label: Self.name(meter.provider),
+                        provider: meter.provider,
                         windows: meter.windows,
                         tokenTotal: meter.tokenTotal
                     )
@@ -1403,21 +1403,27 @@ struct SidebarUsageStats: View {
     }
 }
 
-/// One meter column: the agent's name over a line per open window — label,
-/// percent used, time until reset — each above its level-tinted bar.
-/// Tokens-only agents show the compact total over a single dimmed track.
+/// One meter column: the agent's brand icon over a line per open window —
+/// label, percent used, time until reset — each above its level-tinted
+/// bar. Tokens-only agents show the compact total over a single dimmed
+/// track. Icons, not names: three-plus meters leave no room for words
+/// ("OPENCODE" wrapped mid-name at this width).
 private struct UsageMeter: View {
-    let label: String
+    let provider: UsageProvider
     let windows: [UsageWindowValue]
     let tokenTotal: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
-                Text(verbatim: label)
-                    .font(.system(size: 9, weight: .semibold))
-                    .kerning(0.2)
-                    .foregroundStyle(Theme.textTertiary)
+                if let resource = BrandIconLoader.agentIcon(for: provider.rawValue) {
+                    BrandIcon(resource: resource, size: 11, fallbackSystemName: fallback)
+                        .foregroundStyle(Theme.textTertiary)
+                } else {
+                    Image(systemName: fallback)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textTertiary)
+                }
                 Spacer(minLength: 2)
                 Text(verbatim: header)
                     .font(.system(size: 10).monospacedDigit())
@@ -1485,5 +1491,15 @@ private struct UsageMeter: View {
         if percent >= 90 { return Theme.danger }
         if percent >= 75 { return Theme.warning }
         return Theme.textSecondary
+    }
+
+    /// An SF fallback when no brand icon is bundled for the agent.
+    private var fallback: String {
+        switch provider {
+        case .claude: return "sparkles"
+        case .codex: return "infinity"
+        case .opencode: return "chevron.left.forwardslash.chevron.right"
+        case .gemini: return "wand.and.stars"
+        }
     }
 }
