@@ -4368,6 +4368,38 @@
           }
         }
       }
+    },
+    "Collapse space": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Collapse space"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "折叠空间"
+          }
+        }
+      }
+    },
+    "Expand space": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Expand space"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "展开空间"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

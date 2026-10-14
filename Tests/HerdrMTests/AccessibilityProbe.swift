@@ -11,6 +11,8 @@ enum AccessibilityProbe {
         /// What VoiceOver reads: the description, else the title.
         let name: String?
         let identifier: String?
+        /// Screen frame, top-left origin, as the accessibility API reports it.
+        let frame: CGRect?
         fileprivate let ref: AXUIElement
     }
 
@@ -38,6 +40,14 @@ enum AccessibilityProbe {
         return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
     }
 
+    private static func frame(of element: AXUIElement) -> CGRect? {
+        var origin = CGPoint.zero, size = CGSize.zero
+        guard let p = attribute(element, kAXPositionAttribute), let z = attribute(element, kAXSizeAttribute),
+              AXValueGetValue(p as! AXValue, .cgPoint, &origin), AXValueGetValue(z as! AXValue, .cgSize, &size)
+        else { return nil }
+        return CGRect(origin: origin, size: size)
+    }
+
     private static func walk(_ element: AXUIElement, into out: inout [Element], depth: Int = 0) {
         guard depth < 40 else { return }
         let name = (attribute(element, kAXDescriptionAttribute) as? String).flatMap { $0.isEmpty ? nil : $0 }
@@ -46,6 +56,7 @@ enum AccessibilityProbe {
             role: attribute(element, kAXRoleAttribute) as? String ?? "",
             name: name,
             identifier: attribute(element, kAXIdentifierAttribute) as? String,
+            frame: frame(of: element),
             ref: element
         ))
         for child in attribute(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {

@@ -5,6 +5,13 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- The chevron on a space row folds that space's panes when the sidebar is
+  grouped by space. Clicking it used to select the space instead, and
+  VoiceOver read it as the space's name; it now reads Collapse / Expand space.
+
 ## [0.6.17] - 2026-10-13
 
 ### Changed

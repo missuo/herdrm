@@ -1026,10 +1026,11 @@ private struct SpaceRowView: View {
     var body: some View {
         let selected = model.selectedSpace == entry.ref
         let expanded = model.isSpaceExpanded(entry)
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             if grouped {
-                // Its own button so the chevron folds the tree while the rest of
-                // the row keeps selecting the space, as it always has.
+                // Beside the drag host, not under it: the host's AppKit view takes
+                // every click inside its frame, so a chevron covered by it selected
+                // the space instead of folding it.
                 Button {
                     withAnimation(.easeInOut(duration: 0.2)) { model.toggleSpaceExpanded(entry) }
                 } label: {
@@ -1037,33 +1038,69 @@ private struct SpaceRowView: View {
                         .font(.system(size: 9, weight: .semibold))
                         .foregroundStyle(Theme.textGhost)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                        .frame(width: 12, height: 20)
+                        .frame(width: 12)
+                        .padding(.leading, 8)
+                        .frame(maxHeight: .infinity)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel(expanded ? "Collapse space" : "Expand space")
-                // Above the drag host overlay, or the click would select the space instead.
-                .zIndex(1)
+                .accessibilityLabel(expanded ? String(localized: "Collapse space") : String(localized: "Expand space"))
             }
-            Image(systemName: "folder")
-                .font(.system(size: 11.5))
-                .foregroundStyle(selected ? Theme.textSecondary : Theme.textTertiary)
-            Text(entry.workspace.label)
-                .font(.system(size: 13))
-                .foregroundStyle(selected ? Theme.text : Theme.textSecondary)
-                .lineLimit(1)
-            Spacer()
-            SpaceAttentionGlyph(attention: model.attention(in: entry))
-            if model.showsRowDeviceBadges {
-                DeviceChip(device: entry.device)
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(selected ? Theme.textSecondary : Theme.textTertiary)
+                Text(entry.workspace.label)
+                    .font(.system(size: 13))
+                    .foregroundStyle(selected ? Theme.text : Theme.textSecondary)
+                    .lineLimit(1)
+                Spacer()
+                SpaceAttentionGlyph(attention: model.attention(in: entry))
+                if model.showsRowDeviceBadges {
+                    DeviceChip(device: entry.device)
+                }
+                Text("\(model.agentCount(in: entry))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textGhost)
             }
-            Text("\(model.agentCount(in: entry))")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textGhost)
+            .padding(.horizontal, 8)
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .overlay {
+                SpaceRowDragHost(
+                    entryID: entry.id,
+                    label: entry.workspace.label,
+                    onClick: { model.selectSpace(entry.ref) },
+                    onRename: { model.spaceToRename = entry },
+                    onClose: { model.requestCloseSpace(entry) },
+                    onDragStart: { draggingSpaceID = $0 },
+                    onDragEnd: {
+                        draggingSpaceID = nil
+                        spaceDrop = nil
+                    },
+                    onDropHover: { after in
+                        spaceDrop = sidebarDropTarget(
+                            onto: entry.id, after: after, items: model.visibleSpaces
+                        )
+                    },
+                    onHoverExit: {
+                        if spaceDrop?.id == entry.id { spaceDrop = nil }
+                    },
+                    onDrop: { sourceID, after in
+                        draggingSpaceID = nil
+                        spaceDrop = nil
+                        guard let source = model.visibleSpaces.first(where: { $0.id == sourceID })
+                        else { return }
+                        model.moveSpace(source, onto: entry, placeAfter: after)
+                    }
+                )
+            }
+            // On the content only, so the chevron keeps its own name for VoiceOver.
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.selectSpace(entry.ref) }
+            .accessibilityLabel(accessibilityLabel)
         }
-        .padding(.horizontal, 8)
         .frame(height: 30)
-        .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 7)
                 .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
@@ -1074,38 +1111,6 @@ private struct SpaceRowView: View {
             dropAfter: spaceDrop?.after,
             isTarget: spaceDrop?.id == entry.id
         )
-        .overlay {
-            SpaceRowDragHost(
-                entryID: entry.id,
-                label: entry.workspace.label,
-                onClick: { model.selectSpace(entry.ref) },
-                onRename: { model.spaceToRename = entry },
-                onClose: { model.requestCloseSpace(entry) },
-                onDragStart: { draggingSpaceID = $0 },
-                onDragEnd: {
-                    draggingSpaceID = nil
-                    spaceDrop = nil
-                },
-                    onDropHover: { after in
-                        spaceDrop = sidebarDropTarget(
-                            onto: entry.id, after: after, items: model.visibleSpaces
-                        )
-                    },
-                onHoverExit: {
-                    if spaceDrop?.id == entry.id { spaceDrop = nil }
-                },
-                onDrop: { sourceID, after in
-                    draggingSpaceID = nil
-                    spaceDrop = nil
-                    guard let source = model.visibleSpaces.first(where: { $0.id == sourceID })
-                    else { return }
-                    model.moveSpace(source, onto: entry, placeAfter: after)
-                }
-            )
-        }
-        .accessibilityAddTraits(.isButton)
-        .accessibilityAction { model.selectSpace(entry.ref) }
-        .accessibilityLabel(accessibilityLabel)
     }
 
     private var accessibilityLabel: String {
