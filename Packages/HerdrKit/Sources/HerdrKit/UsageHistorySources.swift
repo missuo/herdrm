@@ -165,14 +165,15 @@ public enum UsageHistorySource {
     // MARK: - OpenCode
 
     /// Walks opencode's local database (`~/.local/share/opencode/
-    /// opencode.db`) read-only and streams assistant messages into the
-    /// normalized document: `data.role == "assistant"` rows carry
-    /// `tokens` and `time.created` (epoch ms), bucketed by the device's
-    /// local day and by `modelID` — every backing provider's messages
-    /// count as OpenCode usage. The 30-day window is an indexed SQL
-    /// cutoff; python3's sqlite3 stdlib opens the db read-only so the
-    /// running daemon's WAL never blocks the read. A missing db prints
-    /// the installed-false envelope.
+    /// opencode.db`) read-only and streams per-SESSION token aggregates
+    /// into the normalized document. opencode's v2 schema (the
+    /// `migration.v1-v2` kv marker) moved token accounting from
+    /// `message.data` — frozen at the migration — to `session_v2`'s
+    /// `tokens_*` columns; each session's totals bucket by its
+    /// `time_created` local day and by the `model` JSON's id. The 30-day
+    /// window is an indexed SQL cutoff; python3's sqlite3 stdlib opens
+    /// the db read-only so the running daemon's WAL never blocks the
+    /// read. A missing db prints the installed-false envelope.
     private static let opencodeCommand = SSHTunnel.remotePathExport + "\n"
         + #"""
         python3 - <<'USAGE_EOF'
@@ -188,38 +189,28 @@ public enum UsageHistorySource {
             def blank():
                 return {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
 
-            def add(bucket, tokens):
-                row = bucket
-                row["input"] += int(tokens.get("input") or 0)
-                row["output"] += int(tokens.get("output") or 0)
-                row["reasoning"] += int(tokens.get("reasoning") or 0)
-                cache = tokens.get("cache") or {}
-                row["cache_read"] += int(cache.get("read") or 0)
-                row["cache_write"] += int(cache.get("write") or 0)
-
             try:
                 conn = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
-                for (data,) in conn.execute(
-                    "SELECT data FROM message WHERE time_created >= ?", (cutoff,)
-                ):
+                rows = conn.execute(
+                    "SELECT time_created, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, model"
+                    " FROM session_v2 WHERE time_created >= ?",
+                    (cutoff,))
+                for created, i, o, r, cr, cw, model in rows:
+                    day = time.strftime("%Y-%m-%d", time.localtime((created or 0) / 1000))
                     try:
-                        row = json.loads(data)
+                        name = (json.loads(model or "{}").get("id")) or "unknown"
                     except Exception:
-                        continue
-                    if row.get("role") != "assistant":
-                        continue
-                    tokens = row.get("tokens")
-                    stamp = (row.get("time") or {}).get("created")
-                    if not isinstance(tokens, dict) or not isinstance(stamp, int):
-                        continue
-                    day = time.strftime("%Y-%m-%d", time.localtime(stamp / 1000))
-                    model = row.get("modelID") or "unknown"
+                        name = "unknown"
                     if day not in days:
                         days[day] = blank()
-                    if model not in models:
-                        models[model] = blank()
-                    add(days[day], tokens)
-                    add(models[model], tokens)
+                    if name not in models:
+                        models[name] = blank()
+                    for bucket in (days[day], models[name]):
+                        bucket["input"] += int(i or 0)
+                        bucket["output"] += int(o or 0)
+                        bucket["reasoning"] += int(r or 0)
+                        bucket["cache_read"] += int(cr or 0)
+                        bucket["cache_write"] += int(cw or 0)
                 conn.close()
             except Exception:
                 pass
