@@ -94,6 +94,17 @@ final class SidebarHarness {
         AccessibilityProbe.elements(in: window).contains { $0.identifier == "sidebar.machineStats" }
     }
 
+    /// The controls VoiceOver lists in the sidebar, without the scroll bar's own parts.
+    var controls: [AccessibilityProbe.Element] {
+        let all = AccessibilityProbe.elements(in: window)
+        let scrollBars = all.filter { $0.role == "AXScrollBar" }.compactMap(\.frame)
+        let roles: Set<String> = ["AXButton", "AXCheckBox", "AXPopUpButton", "AXMenuButton", "AXRadioButton", "AXTextField"]
+        return all.filter { e in
+            guard roles.contains(e.role), let f = e.frame, f.width > 0, f.height > 0 else { return false }
+            return !scrollBars.contains { $0.contains(CGPoint(x: f.midX, y: f.midY)) }
+        }
+    }
+
     /// Names VoiceOver reads for the buttons on a section header.
     func headerButtons(_ header: Header) -> [String] {
         headerButtonElements(header).compactMap(\.name)

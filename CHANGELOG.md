@@ -5,6 +5,14 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- VoiceOver reads the sidebar's icon buttons by what they do: Group Sidebar by
+  Space, Hide Sidebar, Settings. They were read by their icons' names, such as
+  "Gear Shape". A new test fails when any sidebar control has no name or is
+  read by its icon's name.
+
 ## [0.6.17] - 2026-10-13
 
 ### Changed

@@ -709,6 +709,7 @@ struct SidebarView: View {
             }
             .buttonStyle(.plain)
             .focusEffectDisabled()
+            .accessibilityLabel(Text("Settings"))
         }
         .padding(.horizontal, 10)
         .frame(height: SidebarFooterMetrics.deviceSwitcherHeight)
@@ -789,6 +790,8 @@ struct TitlebarIconButton: View {
         .focusEffectDisabled()
         .onHover { hovered = $0 }
         .help(help)
+        // Without it VoiceOver reads the symbol's own name ("Gear Shape").
+        .accessibilityLabel(Text(help))
     }
 }
 
