@@ -257,6 +257,9 @@ final class AppModel: ObservableObject {
     @Published var showNewAgent = false
     @Published var showNewTerminal = false
     @Published var showNewSpace = false
+    /// The space a New Agent / New Terminal sheet opens on when it was started
+    /// from that space's menu; the sheet reads it once, then clears it.
+    @Published var newItemSpace: SpaceRef?
     @Published var showSearch = false
     @Published var isFileManagerActive = false
     @Published var shellSplitAxis: SplitAxis?
@@ -1013,6 +1016,22 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - Selection
+
+    func showNewAgent(in space: SpaceRef) {
+        newItemSpace = space
+        showNewAgent = true
+    }
+
+    func showNewTerminal(in space: SpaceRef) {
+        newItemSpace = space
+        showNewTerminal = true
+    }
+
+    /// The space a New Agent / New Terminal sheet should open on.
+    func takeNewItemSpace() -> SpaceRef? {
+        defer { newItemSpace = nil }
+        return newItemSpace ?? selectedSpace
+    }
 
     func selectSpace(_ ref: SpaceRef?) {
         isFileManagerActive = false

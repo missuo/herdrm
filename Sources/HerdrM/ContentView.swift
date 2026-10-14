@@ -1534,13 +1534,14 @@ struct NewTerminalSheet: View {
         }
         .frame(width: 420)
         .onAppear {
-            deviceID = model.selectedSpace?.deviceID
+            let space = model.takeNewItemSpace()
+            deviceID = space?.deviceID
                 ?? model.selectedAttachedEntry?.device.id
                 ?? model.deviceFilter
                 ?? model.devices.first?.id
                 ?? Device.local.id
-            let preferredSpace = model.selectedSpace?.deviceID == deviceID
-                ? model.selectedSpace?.workspaceID
+            let preferredSpace = space?.deviceID == deviceID
+                ? space?.workspaceID
                 : model.selectedAttachedEntry.flatMap {
                     $0.device.id == deviceID ? $0.workspaceID : nil
                 }
@@ -1802,12 +1803,13 @@ struct NewAgentSheet: View {
         }
         .frame(width: 480)
         .onAppear {
-            deviceID = model.selectedSpace?.deviceID
+            let space = model.takeNewItemSpace()
+            deviceID = space?.deviceID
                 ?? model.deviceFilter
                 ?? model.devices.first?.id
                 ?? Device.local.id
-            workspaceID = model.selectedSpace?.deviceID == deviceID
-                ? (model.selectedSpace?.workspaceID ?? "")
+            workspaceID = space?.deviceID == deviceID
+                ? (space?.workspaceID ?? "")
                 : ""
             if !kinds.contains(kind) { kind = kinds.first ?? "" }
             arguments = AgentLaunchArgsStore.resolved(for: kind)

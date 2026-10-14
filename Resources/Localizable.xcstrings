@@ -4400,6 +4400,22 @@
           }
         }
       }
+    },
+    "New Terminal…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "New Terminal…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "新建终端…"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

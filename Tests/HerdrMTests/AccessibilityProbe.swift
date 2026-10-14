@@ -11,6 +11,8 @@ enum AccessibilityProbe {
         /// What VoiceOver reads: the description, else the title.
         let name: String?
         let identifier: String?
+        /// A text's contents, a control's current value.
+        let value: String?
         /// Screen frame, top-left origin, as the accessibility API reports it.
         let frame: CGRect?
         fileprivate let ref: AXUIElement
@@ -56,6 +58,7 @@ enum AccessibilityProbe {
             role: attribute(element, kAXRoleAttribute) as? String ?? "",
             name: name,
             identifier: attribute(element, kAXIdentifierAttribute) as? String,
+            value: attribute(element, kAXValueAttribute) as? String,
             frame: frame(of: element),
             ref: element
         ))

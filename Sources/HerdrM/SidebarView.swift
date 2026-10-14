@@ -1071,6 +1071,8 @@ private struct SpaceRowView: View {
                     entryID: entry.id,
                     label: entry.workspace.label,
                     onClick: { model.selectSpace(entry.ref) },
+                    onNewAgent: { model.showNewAgent(in: entry.ref) },
+                    onNewTerminal: { model.showNewTerminal(in: entry.ref) },
                     onRename: { model.spaceToRename = entry },
                     onClose: { model.requestCloseSpace(entry) },
                     onDragStart: { draggingSpaceID = $0 },

@@ -62,6 +62,8 @@ struct SpaceRowDragHost: View {
     let entryID: String
     let label: String
     let onClick: () -> Void
+    let onNewAgent: () -> Void
+    let onNewTerminal: () -> Void
     let onRename: () -> Void
     let onClose: () -> Void
     let onDragStart: (String) -> Void
@@ -75,6 +77,9 @@ struct SpaceRowDragHost: View {
             entryID: entryID,
             pasteboardType: SidebarRowDragNSView.spacePasteboardType,
             menuItems: [
+                .item(title: String(localized: "New Agent…"), action: onNewAgent),
+                .item(title: String(localized: "New Terminal…"), action: onNewTerminal),
+                .separator,
                 .item(title: String(localized: "Rename Space…"), action: onRename),
                 .separator,
                 .destructive(title: String(localized: "Close Space \"\(label)\"…"), action: onClose),

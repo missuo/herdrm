@@ -7,6 +7,11 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+- **New Agent and New Terminal from a space's menu.** Right-click a space in
+  the sidebar to start an agent or a terminal in it, without selecting it
+  first.
+
 ### Fixed
 - The chevron on a space row folds that space's panes when the sidebar is
   grouped by space. Clicking it used to select the space instead, and
