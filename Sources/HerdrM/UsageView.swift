@@ -159,6 +159,7 @@ struct UsageView: View {
                     UsageProviderCard(
                         provider: provider,
                         state: model.states[device.id]?[provider] ?? .loading,
+                        history: model.histories[device.id],
                         now: Date()
                     )
                 }
@@ -486,7 +487,7 @@ private struct UsageHistoryBlock: View {
     /// identity the chart's axis buckets by, the window cutoff counts,
     /// and the labels format, so a bar, its axis tick, and its
     /// accessibility label never disagree for users west or east of UTC.
-    private static func localStart(of date: Date) -> Date {
+    static func localStart(of date: Date) -> Date {
         Calendar.current.startOfDay(for: date)
     }
 
@@ -537,6 +538,9 @@ private struct UsageHistoryBlock: View {
 private struct UsageProviderCard: View {
     let provider: UsageProvider
     let state: UsageProviderState
+    /// The device's history — the card's token line is its last-7-days
+    /// totals, uniform across providers.
+    var history: UsageHistory?
     let now: Date
 
     private var name: String {
@@ -577,7 +581,7 @@ private struct UsageProviderCard: View {
         case .readings(let readings):
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(readings) { reading in
-                    accountRow(reading)
+                    accountRow(reading, historyTokens: historyTokens())
                 }
                 if let newest = readings.map(\.fetchedAt).max() {
                     Text(String(localized: "Read \(Self.age(newest, now: now))"))
@@ -605,8 +609,35 @@ private struct UsageProviderCard: View {
         }
     }
 
+    /// The provider's last-7-days tokens from the device's history — the
+    /// uniform meaning of every card's token line. Nil without history.
+    private func historyTokens() -> UsageTokens? {
+        guard let history else { return nil }
+        let calendar = Calendar.current
+        let cutoff = calendar.startOfDay(for: now).addingTimeInterval(-6 * 86400)
+        var total = UsageTokens(input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0)
+        var any = false
+        for day in history.days where UsageHistoryBlock.localStart(of: day.date) >= cutoff {
+            guard let tokens = day.tokens[provider] else { continue }
+            total.input += tokens.input
+            total.output += tokens.output
+            total.reasoning += tokens.reasoning
+            total.cacheRead += tokens.cacheRead
+            total.cacheWrite += tokens.cacheWrite
+            any = true
+        }
+        return any ? total : nil
+    }
+
     @ViewBuilder
-    private func accountRow(_ reading: AgentUsageReading) -> some View {
+    private func accountRow(_ reading: AgentUsageReading, historyTokens: UsageTokens?) -> some View {
+        // The card's token line is uniform across providers: the device's
+        // last-7-days totals from history — Claude's transcripts, Codex's
+        // sessions, OpenCode's database all carry the same buckets. The
+        // reading's own tokens (whatever its source happened to carry) are
+        // only the pre-history fallback, so no card goes blank while the
+        // first history fetch is still in flight.
+        let tokens = historyTokens ?? reading.tokens
         let row = VStack(alignment: .leading, spacing: 6) {
             if let account = reading.account {
                 Text(account)
@@ -622,7 +653,7 @@ private struct UsageProviderCard: View {
                     }
                 }
             }
-            if let tokens = reading.tokens {
+            if let tokens {
                 tokensRow(tokens)
             }
         }
@@ -645,6 +676,7 @@ private struct UsageProviderCard: View {
                 .font(.system(size: 11.5).monospacedDigit())
                 .foregroundStyle(Theme.textSecondary)
         }
+        .help(String(localized: "Tokens over the last 7 days"))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(String(localized: "Usage") + ", " + line)
     }
