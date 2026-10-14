@@ -127,12 +127,13 @@ final class UsageHistoryTests: XCTestCase {
 
     // MARK: - OpenCode
 
-    /// opencode's history comes from its local sqlite db (`message` rows,
-    /// `data` JSON with role/tokens/time.created): assistant messages
-    /// bucket by the device's local day and by `modelID`, the SQL cutoff
-    /// drops anything older than 30 days, user rows never count, and a
-    /// missing db yields an empty history. Built against a real sqlite
-    /// fixture under a temp HOME with a pinned timezone.
+    /// opencode's history comes from its local sqlite db — the v2 schema's
+    /// `session_v2` per-session token aggregates (the `message` table
+    /// froze at the v1→v2 migration). Sessions bucket by their start day
+    /// in the device's local zone and by the `model` JSON's id; the SQL
+    /// cutoff drops anything older than 30 days, and a missing db yields
+    /// an empty history. Built against a real sqlite fixture under a temp
+    /// HOME with a pinned timezone, plus the live db when present.
     func testOpencodeHistoryWalksItsDatabase() async throws {
         try XCTSkipUnless(hasTool("python3"), "python3 is not installed")
         let home = FileManager.default.temporaryDirectory
@@ -142,43 +143,29 @@ final class UsageHistoryTests: XCTestCase {
             atPath: dbDir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(atPath: home) }
 
-        func message(role: String, model: String, createdMs: Double, input: Int, output: Int, cacheRead: Int = 0) -> String {
-            let data: [String: Any] = [
-                "role": role,
-                "time": ["created": createdMs],
-                "modelID": model,
-                "tokens": ["input": input, "output": output, "reasoning": 0,
-                           "cache": ["read": cacheRead, "write": 0]],
-            ]
-            let json = try! JSONSerialization.data(withJSONObject: data)
-            return String(data: json, encoding: .utf8)!
-        }
-        // 2026-10-14 10:00 UTC = 12:00 Warsaw: one day's usage across two
-        // models; one row predating the 30-day cutoff; one user row that
-        // must never count.
-        let recent = 1_791_000_000_000.0
-        let old = recent - 31.5 * 86400 * 1000
-        let rows = [
-            message(role: "assistant", model: "glm-5.3", createdMs: recent, input: 1_000, output: 100, cacheRead: 5_000),
-            message(role: "assistant", model: "gemini-3-flash", createdMs: recent + 3_600_000, input: 200, output: 50),
-            message(role: "assistant", model: "glm-5.3", createdMs: old, input: 999_999, output: 999_999),
-            message(role: "user", model: "glm-5.3", createdMs: recent, input: 777, output: 777),
-        ]
+        // opencode's v2 schema: per-SESSION token aggregates on session_v2,
+        // bucketed by the session's start day. 2026-10-14 10:00 UTC =
+        // 12:00 Warsaw. One session predating the 30-day cutoff never counts.
+        let recent = 1_791_000_000_000
+        let old = Int(Double(recent) - 31.5 * 86400 * 1000)
         let seed = """
-        import json, sqlite3, sys
+        import sqlite3, sys
         conn = sqlite3.connect(sys.argv[1])
-        conn.execute("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)")
-        for index, row in enumerate(json.load(open(sys.argv[2]))):
-            conn.execute("INSERT INTO message VALUES (?, ?, ?, ?, ?)", (str(index), "s", int(json.loads(row)['time']['created']), 0, row))
+        conn.execute("CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_created INTEGER, model TEXT, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER)")
+        rows = [
+            (1, {r}, '{"id":"glm-5.3","providerID":"zai"}', 1000, 100, 0, 5000, 0),
+            (2, {r} + 3600000, '{"id":"gemini-3-flash","providerID":"google"}', 200, 50, 0, 0, 0),
+            (3, {o}, '{"id":"glm-5.3"}', 999999, 999999, 0, 0, 0),
+        ]
+        conn.executemany("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
         conn.commit()
-        """
+        """.replacingOccurrences(of: "{r}", with: String(recent))
+            .replacingOccurrences(of: "{o}", with: String(old))
         let seedURL = URL(fileURLWithPath: dbDir).appendingPathComponent("seed.py")
-        let rowsURL = URL(fileURLWithPath: dbDir).appendingPathComponent("rows.json")
         try seed.write(to: seedURL, atomically: true, encoding: .utf8)
-        try JSONSerialization.data(withJSONObject: rows).write(to: rowsURL)
         let seedProcess = Process()
         seedProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        seedProcess.arguments = ["python3", seedURL.path, "\(dbDir)/opencode.db", rowsURL.path]
+        seedProcess.arguments = ["python3", seedURL.path, "\(dbDir)/opencode.db"]
         try seedProcess.run()
         seedProcess.waitUntilExit()
         XCTAssertEqual(seedProcess.terminationStatus, 0, "fixture seed failed")
@@ -189,7 +176,7 @@ final class UsageHistoryTests: XCTestCase {
         let history = try XCTUnwrap(
             UsageHistorySource.parse(.opencode, stdout: output, fetchedAt: fetchedAt))
 
-        XCTAssertEqual(history.days.count, 1, "both recent rows share the Warsaw day: \(history.days)")
+        XCTAssertEqual(history.days.count, 1, "both recent sessions share the Warsaw day: \(history.days)")
         XCTAssertEqual(
             history.days.first?.tokens[.opencode],
             UsageTokens(input: 1_200, output: 150, reasoning: 0, cacheRead: 5_000, cacheWrite: 0))
@@ -221,7 +208,7 @@ final class UsageHistoryTests: XCTestCase {
         XCTAssertTrue((live.modelTotals[.opencode]?["glm-5.3"]?.input ?? 0) > 0)
     }
 
-    // MARK: - Parse
+// MARK: - Parse
 
     /// The normalized document the heredocs print decodes to a `UsageHistory`
     /// with the day label pinned to midnight UTC and totals keyed by
@@ -279,7 +266,8 @@ final class UsageHistoryTests: XCTestCase {
         XCTAssertTrue(opencode.contains("opencode.db"), "it reads opencode's own database")
         XCTAssertTrue(opencode.contains("mode=ro"), "read-only, so the daemon's WAL never blocks")
         XCTAssertTrue(opencode.contains("WHERE time_created >="), "the 30-day window is an indexed SQL cutoff")
-        XCTAssertTrue(opencode.contains("assistant"), "assistant messages are the rows that count")
+        XCTAssertTrue(opencode.contains("FROM session_v2"), "the v2 session aggregates are the rows that count")
+        XCTAssertTrue(opencode.contains("tokens_cache_read"), "and they carry the token columns")
         XCTAssertNil(UsageHistorySource.command(for: .gemini))
     }
 
