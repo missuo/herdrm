@@ -4,7 +4,7 @@ import SwiftUI
 import XCTest
 @testable import herdrm
 
-/// Pins the production wiring of the sidebar's USAGE column: the REAL
+/// Pins the production wiring of the sidebar's usage row: the REAL
 /// SidebarView, a real AppModel with a selected shell (so the stats block
 /// renders), and the column's real `.task` → `UsageModel.refresh` →
 /// `UsageStore.shared` → device commands — no spies, no preloads. Guards
@@ -23,7 +23,7 @@ final class UsageColumnProductionTests: XCTestCase {
         let local = try XCTUnwrap(model.devices.first(where: \.isLocal), "no local device")
 
         // A selected shell makes statsDevice non-nil so the stats block
-        // (machine meters + the USAGE column) renders — the user's situation.
+        // (usage row + machine meters) renders — the user's situation.
         model.newShellSession(on: local)
         let shell = try XCTUnwrap(model.shellSessions.last, "no shell session")
         model.selectShell(shell.id)
@@ -42,7 +42,7 @@ final class UsageColumnProductionTests: XCTestCase {
         root.layoutSubtreeIfNeeded()
         defer { window.close() }
 
-        // Pump while the real sampler starts; the USAGE column rides the
+        // Pump while the real sampler starts; the usage row rides the
         // stats block, so it appears alongside CPU/RAM.
         let deadline = Date().addingTimeInterval(20)
         var labels: [String] = []
@@ -52,12 +52,12 @@ final class UsageColumnProductionTests: XCTestCase {
                 .filter { $0.role != "AXWindow" }
                 .compactMap(\.name)
             let machineStatsVisible = labels.contains { $0.contains("CPU") || $0.contains("RAM") }
-            let usageColumn = labels.contains { $0.contains("USAGE") }
-            if machineStatsVisible, usageColumn { break }
+            let usageRow = labels.contains { $0.contains("Usage:") }
+            if machineStatsVisible, usageRow { break }
         }
 
         XCTAssertTrue(
-            labels.contains { $0.contains("USAGE") },
+            labels.contains { $0.contains("Usage:") },
             "usage column never appeared in the real sidebar (statsDevice=\(String(describing: model.statsDevice?.name)), devices=\(model.devices.map(\.name)))"
         )
     }

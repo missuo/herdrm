@@ -32,11 +32,14 @@ struct UsageView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isRefreshing = false
-    /// The model whose weekly window the sidebar's USAGE column watches;
+    /// The model whose weekly window the sidebar's Claude meter follows;
     /// empty means all models. `@AppStorage` in a view publishes and
     /// persists in one move, and matches `AppModel.sidebarWatchedModel`'s
     /// key from the other side.
     @AppStorage("usage.sidebarWatchedModel") private var watchedModel = ""
+    /// Which agents the sidebar's usage row shows; the same comma list
+    /// `AppModel.sidebarAgents` reads, written through the row's toggling.
+    @AppStorage("usage.sidebarAgents") private var sidebarAgents = "claude,codex"
 
     init(
         model: UsageModel,
@@ -70,9 +73,27 @@ struct UsageView: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
-                    .help(String(localized: "The sidebar's USAGE meter follows this model's weekly window"))
+                    .help(String(localized: "The sidebar's Claude meter follows this model's weekly window"))
                     .padding(.trailing, 16)
                 }
+                Menu {
+                    ForEach(UsageProvider.allCases, id: \.self) { provider in
+                        Button {
+                            sidebarAgents = SidebarUsageStats.toggling(provider, in: sidebarAgents)
+                        } label: {
+                            if sidebarAgents.split(separator: ",").contains(Substring(provider.rawValue)) {
+                                Label(SidebarUsageStats.name(provider), systemImage: "checkmark")
+                            } else {
+                                Text(verbatim: SidebarUsageStats.name(provider))
+                            }
+                        }
+                    }
+                } label: {
+                    Label(String(localized: "Sidebar row"), systemImage: "menubar.rectangle")
+                }
+                .fixedSize()
+                .help(String(localized: "Choose which agents the sidebar's usage row shows"))
+                .padding(.trailing, 16)
             }
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
