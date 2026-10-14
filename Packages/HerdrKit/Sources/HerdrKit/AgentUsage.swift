@@ -108,6 +108,58 @@ public enum UsageSelection {
             }
     }
 
+    /// The provider's tightest open **session** window (~5h) across
+    /// devices — the usage row's first line.
+    public static func tightestSession(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        provider: UsageProvider,
+        now: Date
+    ) -> (device: Device, window: GrazrWindow)? {
+        var best: (device: Device, window: GrazrWindow)?
+        for device in devices {
+            guard case .readings(let readings)? = states[device.id]?[provider] else { continue }
+            for reading in readings {
+                for window in reading.windows
+                where window.group == "session" && window.isOpen(now: now) {
+                    if window.left(now: now) < best?.window.left(now: now) ?? .max {
+                        best = (device, window)
+                    }
+                }
+            }
+        }
+        return best
+    }
+
+    /// The provider's tightest open **limit** window — weekly, monthly,
+    /// anything not a session — the usage row's second line. Scope rules
+    /// as `tightestWindow`.
+    public static func tightestLimit(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        provider: UsageProvider,
+        scope: String?,
+        now: Date
+    ) -> (device: Device, window: GrazrWindow)? {
+        var scoped: (device: Device, window: GrazrWindow)?
+        var plain: (device: Device, window: GrazrWindow)?
+        for device in devices {
+            guard case .readings(let readings)? = states[device.id]?[provider] else { continue }
+            for reading in readings {
+                for window in reading.windows
+                where window.group != "session" && window.isOpen(now: now) {
+                    let candidate = (device, window)
+                    func tighter(_ current: (device: Device, window: GrazrWindow)?) -> Bool {
+                        window.left(now: now) < current?.window.left(now: now) ?? .max
+                    }
+                    if window.scope == scope, tighter(scoped) { scoped = candidate }
+                    if window.scope == nil, tighter(plain) { plain = candidate }
+                }
+            }
+        }
+        return scoped ?? plain
+    }
+
     /// The tightest open window whose scope is exactly `scope`, across
     /// every provider — or within `provider` alone when given.
     private static func pick(

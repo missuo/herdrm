@@ -225,28 +225,55 @@ struct SidebarView: View {
     }
 
     /// The usage row's meters: one per picked agent (picked in the Usage
-    /// sheet, `usage.sidebarAgents`). Window-bearing agents show the
-    /// percent used of their own tightest open window — Claude's respects
-    /// the watched model — and tokens-only agents a compact total over a
-    /// dimmed track.
+    /// sheet, `usage.sidebarAgents`). Window-bearing agents get a line per
+    /// open window — the ~5h session and the longer limit — percent used
+    /// and time until reset; Claude's limit respects the watched model.
+    /// Tokens-only agents get a compact total.
     private var usageMeters: [UsageMeterValue] {
         let now = Date()
         let watched = model.sidebarWatchedModel
         return model.sidebarAgentProviders.map { provider in
             let scope = provider == .claude && !watched.isEmpty ? watched : nil
-            let window = UsageSelection.tightestWindow(
-                states: usageHint.states,
-                devices: model.devices,
-                provider: provider,
-                scope: scope,
-                now: now
-            )
+            func line(_ found: (device: Device, window: GrazrWindow)?) -> UsageWindowValue? {
+                guard let found else { return nil }
+                return UsageWindowValue(
+                    label: Self.windowLabel(found.window),
+                    percentUsed: 100 - Double(found.window.left(now: now)),
+                    untilReset: Self.untilReset(found.window.resetsAt, now: now)
+                )
+            }
+            let session = line(UsageSelection.tightestSession(
+                states: usageHint.states, devices: model.devices, provider: provider, now: now))
+            let limit = line(UsageSelection.tightestLimit(
+                states: usageHint.states, devices: model.devices, provider: provider, scope: scope, now: now))
+            let windows = [session, limit].compactMap { $0 }
             return UsageMeterValue(
                 provider: provider,
-                percentUsed: window.map { 100 - Double($0.window.left(now: now)) },
-                tokenTotal: window == nil ? Self.tokenTotal(provider, of: usageHint.histories) : nil
+                windows: windows,
+                tokenTotal: windows.isEmpty ? Self.tokenTotal(provider, of: usageHint.histories) : nil
             )
         }
+    }
+
+    /// A window line's label: the ~5h session, the week, or the window's
+    /// own span (30D) when an agent reports something else.
+    static func windowLabel(_ window: GrazrWindow) -> String {
+        switch window.group {
+        case "session": return "5H"
+        case "weekly": return "7D"
+        default: return window.group.uppercased()
+        }
+    }
+
+    /// `45m`, `2h51m`, `1d2h` — how long until the window refills; nil
+    /// when the reading carries no reset time.
+    static func untilReset(_ resetsAt: Date?, now: Date) -> String? {
+        guard let resetsAt else { return nil }
+        let minutes = Int((max(0, resetsAt.timeIntervalSince(now)) / 60).rounded())
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h\(minutes % 60)m" }
+        return "\(hours / 24)d\(hours % 24)h"
     }
 
     /// The picked agents' compact token total across devices — the meter
@@ -1285,14 +1312,27 @@ struct SpinnerView: View {
 
 // MARK: - Usage meters row
 
-/// One meter's data in the sidebar's usage row: percent used of the
-/// provider's tightest open window where it reports windows, else a compact
-/// token total where it only reports tokens — both nil dims to a dash.
+/// One window line in a usage meter: its own label (5H, 7D, 30D), the
+/// percent used, and how long until it refills.
+struct UsageWindowValue: Equatable {
+    let label: String
+    let percentUsed: Double
+    let untilReset: String?
+}
+
+/// One meter's data in the sidebar's usage row: up to two open windows —
+/// the ~5h session and the longer limit (week, 30d) — or, for agents that
+/// report no windows, a compact token total. Neither dims to a dash.
 struct UsageMeterValue: Identifiable, Equatable {
     let provider: UsageProvider
-    let percentUsed: Double?
-    let tokenTotal: String?
+    var windows: [UsageWindowValue] = []
+    var tokenTotal: String?
     var id: UsageProvider { provider }
+
+    /// The header percent: the most-used of the agent's windows.
+    var tightestPercentUsed: Double? {
+        windows.map(\.percentUsed).max()
+    }
 }
 
 /// The usage row above the machine-stats row, in its visual language: one
@@ -1328,7 +1368,7 @@ struct SidebarUsageStats: View {
                 ForEach(meters) { meter in
                     UsageMeter(
                         label: Self.name(meter.provider),
-                        percentUsed: meter.percentUsed,
+                        windows: meter.windows,
                         tokenTotal: meter.tokenTotal
                     )
                 }
@@ -1346,9 +1386,10 @@ struct SidebarUsageStats: View {
 
     private var summary: String {
         let parts = meters.map { meter in
-            let value = meter.percentUsed.map { "\(Int($0.rounded()))% used" }
-                ?? meter.tokenTotal
-                ?? "—"
+            let windows = meter.windows
+                .map { "\($0.label) \(Int($0.percentUsed.rounded()))%\(($0.untilReset.map { " · \($0)" }) ?? "")" }
+                .joined(separator: " · ")
+            let value = windows.isEmpty ? (meter.tokenTotal ?? "—") : windows
             return "\(Self.name(meter.provider)) \(value)"
         }
         return String(localized: "Usage: \(parts.joined(separator: " · "))")
@@ -1364,17 +1405,15 @@ struct SidebarUsageStats: View {
     }
 }
 
-/// One compact meter column, `SidebarMachineStats`'s meter in the usage
-/// row's clothes: label and value over a level-tinted bar that fills the
-/// percent used — a dimmed track when only a token total exists.
+/// One meter column: the agent's name over a line per open window — label,
+/// percent used, time until reset — each above its level-tinted bar.
+/// Tokens-only agents show the compact total over a single dimmed track.
 private struct UsageMeter: View {
     let label: String
-    let percentUsed: Double?
+    let windows: [UsageWindowValue]
     let tokenTotal: String?
 
     var body: some View {
-        let value = percentUsed.map { min(100, max(0, $0)) }
-        let tint = value.map(Self.levelColor) ?? Theme.textGhost
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
                 Text(verbatim: label)
@@ -1382,23 +1421,64 @@ private struct UsageMeter: View {
                     .kerning(0.2)
                     .foregroundStyle(Theme.textTertiary)
                 Spacer(minLength: 2)
-                Text(verbatim: value.map(MachineStatsFormat.percent) ?? tokenTotal ?? "—")
+                Text(verbatim: header)
                     .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(value.map { $0 >= 75 ? tint : Theme.textSecondary } ?? Theme.textGhost)
+                    .foregroundStyle(headerTint)
                     .lineLimit(1)
             }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.textGhost.opacity(0.22))
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max((value ?? 0) > 0 ? 3 : 0, proxy.size.width * (value ?? 0) / 100))
+            if windows.isEmpty {
+                track(percent: nil)
+            } else {
+                ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 3) {
+                            Text(verbatim: window.label)
+                                .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Theme.textTertiary)
+                            Text(verbatim: line(window))
+                                .font(.system(size: 9.5).monospacedDigit())
+                                .foregroundStyle(Self.levelColor(window.percentUsed) == Theme.textSecondary ? Theme.textSecondary : Self.levelColor(window.percentUsed))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        track(percent: window.percentUsed)
+                    }
                 }
             }
-            .frame(height: 4)
         }
         .frame(maxWidth: .infinity)
-        .animation(.easeOut(duration: 0.35), value: value ?? -1)
+        .animation(.easeOut(duration: 0.35), value: windows)
+    }
+
+    /// The header value: the tightest window's percent, the token total,
+    /// or a dimmed dash.
+    private var header: String {
+        windows.map(\.percentUsed).max().map { Self.percent($0) } ?? tokenTotal ?? "—"
+    }
+
+    private var headerTint: Color {
+        windows.map(\.percentUsed).max().map(Self.levelColor) ?? Theme.textGhost
+    }
+
+    private func line(_ window: UsageWindowValue) -> String {
+        let percent = Self.percent(window.percentUsed)
+        return window.untilReset.map { "\(percent) · \($0)" } ?? percent
+    }
+
+    private func track(percent: Double?) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.textGhost.opacity(0.22))
+                Capsule()
+                    .fill(percent.map(Self.levelColor) ?? Theme.textGhost)
+                    .frame(width: max((percent ?? 0) > 0 ? 3 : 0, proxy.size.width * (percent ?? 0) / 100))
+            }
+        }
+        .frame(height: 4)
+    }
+
+    private static func percent(_ value: Double) -> String {
+        MachineStatsFormat.percent(value)
     }
 
     /// The machine row's own rule, percent used: calm until the window is
