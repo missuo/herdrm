@@ -135,10 +135,10 @@ final class UsageViewTests: XCTestCase {
         XCTAssertTrue(labels.contains("Gemini"), "\(labels)")
         XCTAssertTrue(labels.contains("senad@example.com"), "account row: \(labels)")
         XCTAssertTrue(labels.contains("offline"), "failed reason: \(labels)")
-        let meter = try XCTUnwrap(labels.first { $0.contains("98% left") }, "no meter: \(labels)")
+        let meter = try XCTUnwrap(labels.first { $0.contains("2% used") }, "no meter: \(labels)")
         XCTAssertTrue(meter.contains("30d"), "meter should read its label: \(meter)")
-        XCTAssertTrue(labels.contains { $0.contains("42% left") }, "claude 5h meter: \(labels)")
-        XCTAssertTrue(labels.contains { $0.contains("87% left") }, "claude week meter: \(labels)")
+        XCTAssertTrue(labels.contains { $0.contains("58% used") }, "claude 5h meter: \(labels)")
+        XCTAssertTrue(labels.contains { $0.contains("13% used") }, "claude week meter: \(labels)")
     }
 
     func testWindowMeterExposesTheResetTime() throws {
@@ -152,7 +152,7 @@ final class UsageViewTests: XCTestCase {
         let harness = try UsageSheetHarness(model: model)
 
         let expected = GrazrStyle.time(resetsAt, now: Date())
-        let meter = try XCTUnwrap(harness.labels.first { $0.contains("98% left") }, "\(harness.labels)")
+        let meter = try XCTUnwrap(harness.labels.first { $0.contains("2% used") }, "\(harness.labels)")
         XCTAssertTrue(meter.contains(expected), "\(meter) should read the reset time \(expected)")
     }
 

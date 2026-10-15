@@ -812,15 +812,17 @@ private struct UsageProviderCard: View {
     }
 }
 
-/// One grazr window's meter row: label, bar of what is left, the percent, and
-/// when it resets — the Accounts sheet's window row, without its thresholds
-/// (the usage readings carry none; 25% is the swap line the hint uses).
+/// One window's meter row: label, bar of what is **used**, the percent
+/// used, and when it resets — matching the sidebar row's headline
+/// convention (percent used everywhere; "left" read in both directions
+/// was confusing). Color still follows how close the window is to empty.
 private struct UsageWindowMeter: View {
     let window: GrazrWindow
     let now: Date
 
     var body: some View {
         let left = window.left(now: now)
+        let used = 100 - left
         let color = GrazrStyle.tint(left: left, threshold: 25)
         return HStack(spacing: 8) {
             Text(window.label)
@@ -828,10 +830,10 @@ private struct UsageWindowMeter: View {
                 .foregroundStyle(Theme.textSecondary)
                 .frame(width: 84, alignment: .leading)
                 .lineLimit(1)
-            ProgressView(value: Double(left) / 100)
+            ProgressView(value: Double(used) / 100)
                 .progressViewStyle(.linear)
                 .tint(color)
-            Text(String(localized: "\(left)% left"))
+            Text(String(localized: "\(used)% used"))
                 .font(.system(size: 11.5).monospacedDigit())
                 .foregroundStyle(color)
                 .frame(width: 62, alignment: .trailing)

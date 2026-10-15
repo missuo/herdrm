@@ -483,18 +483,18 @@
         }
       }
     },
-    "%lld% left": {
+    "%lld% used": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%lld% left"
+            "value": "%lld% used"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "剩余 %lld%%"
+            "value": "已用 %lld%%"
           }
         }
       }
