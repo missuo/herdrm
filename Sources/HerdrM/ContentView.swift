@@ -27,6 +27,9 @@ struct RootView: View {
     @ObservedObject var model: AppModel
     // Deliberately not persisted: the app always launches with the sidebar visible.
     @State private var sidebarCollapsed = false
+    // Usage presents as its own movable, resizable window (sheets are
+    // neither); `usageDevice` remains the one trigger everywhere.
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -115,9 +118,12 @@ struct RootView: View {
         .sheet(item: $model.terminalToRename) { entry in RenameTerminalSheet(model: model, entry: entry) }
         .sheet(item: $model.deviceToEdit) { device in EditDeviceSheet(model: model, device: device) }
         .sheet(item: $model.grazrAccountsDevice) { device in GrazrAccountsSheet(model: model, device: device) }
-        .sheet(item: $model.usageDevice) { device in
-            UsageView(model: .init(), anchor: device, devices: model.devices)
-                .frame(minWidth: 560, minHeight: 640)
+        // Usage opens as its own window (see HerdrMApp's `Window` scene):
+        // movable and resizable, floored at the old sheet's 560×640. The
+        // anchor device rides on usageDevice — the window re-anchors live.
+        .onChange(of: model.usageDevice) { _, device in
+            guard device != nil else { return }
+            openWindow(id: "usage")
         }
         .sheet(item: $model.sshAuthenticationRequest) { request in
             SSHAuthenticationSheet(model: model, request: request)
