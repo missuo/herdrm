@@ -194,6 +194,7 @@ struct SidebarView: View {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 SidebarUsageStats(meters: usageMeters, onOpenSheet: openUsage)
                     .padding(.horizontal, 6)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
                 SidebarMachineStats(
                     stats: model.machineStats,
                     device: device,
