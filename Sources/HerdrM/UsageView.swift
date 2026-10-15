@@ -184,10 +184,21 @@ struct UsageView: View {
             .keyboardShortcut("r", modifiers: .command)
             .help(String(localized: "Run every provider's usage command again, even when the last reading is still fresh"))
             .disabled(isRefreshing)
-            if isRefreshing {
-                ProgressView().controlSize(.small)
-            }
             Spacer()
+            if isRefreshing {
+                // Discrete, corner-anchored: the known data stays on screen
+                // while the refresh runs; only this spinner and the age lines
+                // move.
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.mini)
+                    Text(String(localized: "Updating…"))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textGhost)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(String(localized: "Updating…"))
+                .padding(.trailing, 12)
+            }
             Button(String(localized: "Done")) { dismiss() }
                 .buttonStyle(.borderedProminent)
                 .tint(Theme.accent)

@@ -26,8 +26,15 @@ final class UsageModel: ObservableObject {
     /// button). Never throws: a failed run becomes that provider's `.failed`
     /// state.
     func refresh(_ device: Device, force: Bool = false) async {
+        // A refresh keeps the last readings standing — only never-read
+        // providers show loading. Wiping what's known for a spinner is the
+        // thing the sheet must never do: the data stays, freshness rides on
+        // the per-card age line and the footer's corner spinner.
+        let previous = states[device.id] ?? [:]
         states[device.id] = Dictionary(
-            uniqueKeysWithValues: UsageProvider.allCases.map { ($0, UsageProviderState.loading) }
+            uniqueKeysWithValues: UsageProvider.allCases.map { provider in
+                (provider, previous[provider] ?? UsageProviderState.loading)
+            }
         )
         let store = store
         await withTaskGroup(of: (UsageProvider, UsageProviderState).self) { group in
