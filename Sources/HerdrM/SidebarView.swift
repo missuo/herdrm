@@ -311,6 +311,7 @@ struct SidebarView: View {
         model.usageDevice = window?.device
             ?? model.devices.first(where: \.isLocal)
             ?? model.devices.first
+        model.usageOpens += 1
     }
 
     /// First read for devices with no states yet, and — when the stats

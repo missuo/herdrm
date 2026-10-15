@@ -355,6 +355,11 @@ final class AppModel: ObservableObject {
     @Published var grazrAccountsDevice: Device?
     /// The device whose usage sheet is open.
     @Published var usageDevice: Device?
+    /// Bumps on every Usage open request — the window-open trigger. The
+    /// anchor alone can't be the trigger: tapping the same device twice
+    /// (after closing the window) wouldn't change it, and the window would
+    /// never come back.
+    @Published var usageOpens: Int = 0
     /// The model whose weekly window the sidebar's USAGE column watches
     /// ("Fable"); empty means all models. The sheet's picker writes it and
     /// the sidebar reads it — both sides share the UserDefaults key.

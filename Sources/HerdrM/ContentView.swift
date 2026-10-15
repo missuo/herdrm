@@ -121,8 +121,8 @@ struct RootView: View {
         // Usage opens as its own window (see HerdrMApp's `Window` scene):
         // movable and resizable, floored at the old sheet's 560×640. The
         // anchor device rides on usageDevice — the window re-anchors live.
-        .onChange(of: model.usageDevice) { _, device in
-            guard device != nil else { return }
+        .onChange(of: model.usageOpens) { _, opens in
+            guard opens > 0 else { return }
             openWindow(id: "usage")
         }
         .sheet(item: $model.sshAuthenticationRequest) { request in
