@@ -151,16 +151,18 @@ final class UsageHistoryTests: XCTestCase {
         let seed = """
         import sqlite3, sys
         conn = sqlite3.connect(sys.argv[1])
-        conn.execute("CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_created INTEGER, model TEXT, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER)")
+        conn.execute("CREATE TABLE session_v2 (id TEXT PRIMARY KEY, time_created INTEGER, directory TEXT, title TEXT, model TEXT, tokens_input INTEGER, tokens_output INTEGER, tokens_reasoning INTEGER, tokens_cache_read INTEGER, tokens_cache_write INTEGER)")
         rows = [
-            (1, {r}, '{"id":"glm-5.3","providerID":"zai"}', 1000, 100, 0, 5000, 0),
-            (2, {r} + 3600000, '{"id":"gemini-3-flash","providerID":"google"}', 200, 50, 0, 0, 0),
-            (3, {o}, '{"id":"glm-5.3"}', 999999, 999999, 0, 0, 0),
+            (1, {r}, "/work/api-server", "Fix flaky tests", '{{"id":"glm-5.3","providerID":"zai"}}', 1000, 100, 0, 5000, 0),
+            (2, {r} + 3600000, "/work/api-server", None, '{{"id":"gemini-3-flash","providerID":"google"}}', 200, 50, 0, 0, 0),
+            (3, {o}, "/work/old-thing", None, '{{"id":"glm-5.3"}}', 999999, 999999, 0, 0, 0),
         ]
-        conn.executemany("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        conn.executemany("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
         conn.commit()
         """.replacingOccurrences(of: "{r}", with: String(recent))
             .replacingOccurrences(of: "{o}", with: String(old))
+            .replacingOccurrences(of: "{{", with: "{")
+            .replacingOccurrences(of: "}}", with: "}")
         let seedURL = URL(fileURLWithPath: dbDir).appendingPathComponent("seed.py")
         try seed.write(to: seedURL, atomically: true, encoding: .utf8)
         let seedProcess = Process()
@@ -183,6 +185,19 @@ final class UsageHistoryTests: XCTestCase {
         XCTAssertEqual(history.modelTotals[.opencode]?.count, 2)
         XCTAssertEqual(history.modelTotals[.opencode]?["glm-5.3"]?.input, 1_000)
         XCTAssertEqual(history.modelTotals[.opencode]?["gemini-3-flash"]?.input, 200)
+
+        // The drilldown's rows: sessions carry their directory and title;
+        // the beyond-cutoff session never shows. Newest first.
+        XCTAssertEqual(history.sessions.count, 2)
+        XCTAssertEqual(history.sessions.first?.path, "/work/api-server")
+        XCTAssertEqual(
+            history.sessions.first?.tokens,
+            UsageTokens(input: 200, output: 50, reasoning: 0, cacheRead: 0, cacheWrite: 0))
+        XCTAssertEqual(history.sessions.last?.title, "Fix flaky tests")
+        XCTAssertEqual(
+            history.sessions.last?.tokens,
+            UsageTokens(input: 1_000, output: 100, reasoning: 0, cacheRead: 5_000, cacheWrite: 0))
+        XCTAssertTrue(history.sessions.allSatisfy { $0.path != "/work/old-thing" })
 
         // A missing db is a valid, empty history — the daemon's absence
         // reads as "no data", not a failure.

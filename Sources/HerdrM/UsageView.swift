@@ -293,6 +293,7 @@ private struct UsageHistoryBlock: View {
                 legend
                 totalsRow
                 modelRows
+                projectRows
                 ageRow
             }
         }
@@ -408,6 +409,103 @@ private struct UsageHistoryBlock: View {
                 }
             }
         }
+    }
+
+    /// The drilldown: the visible window's sessions grouped by working
+    /// directory — top projects by tokens, each expanding to its sessions
+    /// (title or fallback, provider dot in the chart's color, tokens).
+    @State private var expandedProject: String?
+
+    @ViewBuilder
+    private var projectRows: some View {
+        let projects = Self.projects(in: history, window: window, now: now)
+        if !projects.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                SheetSectionLabel("By project")
+                ForEach(projects, id: \.path) { project in
+                    let tokens = String(localized: "\(UsageFormat.compact(Self.total(project.tokens))) tokens")
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { expandedProject == project.path },
+                        set: { expandedProject = $0 ? project.path : nil })
+                    ) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(project.sessions) { session in
+                                sessionRow(session)
+                            }
+                        }
+                        .padding(.top, 2)
+                    } label: {
+                        HStack {
+                            Text(verbatim: URL(fileURLWithPath: project.path).lastPathComponent)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Text(tokens)
+                                .font(.system(size: 11.5).monospacedDigit())
+                                .foregroundStyle(Theme.textTertiary)
+                        }
+                        .help(project.path)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(project.path), \(tokens)")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: UsageSession) -> some View {
+        let when = Self.dayText(session.created)
+        let tokens = UsageFormat.compact(Self.total(session.tokens))
+        HStack(spacing: 6) {
+            Circle().fill(Self.color(session.provider)).frame(width: 5, height: 5)
+            Text(verbatim: session.title ?? when)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if session.title != nil {
+                Text(verbatim: when)
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(Theme.textGhost)
+            }
+            Spacer()
+            Text(verbatim: tokens)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .help("\(session.path) · \(session.title ?? "")")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(session.title ?? when), \(session.provider.rawValue), \(tokens)")
+    }
+
+    /// The window's sessions grouped by path, top six by tokens, each
+    /// carrying its sessions newest-first (capped at eight per project).
+    static func projects(
+        in history: UsageHistory,
+        window: HistoryWindow,
+        now: Date
+    ) -> [(path: String, tokens: UsageTokens, sessions: [UsageSession])] {
+        let cutoff = localStart(of: now).addingTimeInterval(-Double(window.rawValue - 1) * 86400)
+        let visible = history.sessions.filter { localStart(of: $0.created) >= cutoff }
+        var grouped: [String: (tokens: UsageTokens, sessions: [UsageSession])] = [:]
+        for session in visible {
+            var group = grouped[session.path] ?? (UsageTokens(input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0), [])
+            group.0.input += session.tokens.input
+            group.0.output += session.tokens.output
+            group.0.reasoning += session.tokens.reasoning
+            group.0.cacheRead += session.tokens.cacheRead
+            group.0.cacheWrite += session.tokens.cacheWrite
+            group.1.append(session)
+            grouped[session.path] = group
+        }
+        return grouped
+            .map { (path: $0.key, tokens: $0.value.tokens, sessions: Array($0.value.sessions.sorted { $0.created > $1.created }.prefix(8))) }
+            .sorted { total($0.tokens) > total($1.tokens) }
+            .prefix(6)
+            .map { $0 }
     }
 
     /// When the history was generated, so stale data reads as stale — the

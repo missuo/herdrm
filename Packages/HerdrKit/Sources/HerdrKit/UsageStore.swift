@@ -170,11 +170,18 @@ public actor UsageStore {
             historyCache[key] = nil
             throw HerdrError.malformedResponse("no history source on \(device.name) succeeded: \(failures.joined(separator: "; "))")
         }
+        var sessions: [UsageSession] = []
+        for member in members {
+            guard case .success(let history?) = member.outcome else { continue }
+            sessions.append(contentsOf: history.sessions)
+        }
+        sessions.sort { $0.created > $1.created }
         let history = UsageHistory(
             days: dayTokens
                 .map { UsageDay(date: $0.key, tokens: $0.value) }
                 .sorted { $0.date < $1.date },
             modelTotals: modelTotals,
+            sessions: Array(sessions.prefix(400)),
             generatedAt: stamp)
         historyCache[key] = (stamp, history)
         return history
