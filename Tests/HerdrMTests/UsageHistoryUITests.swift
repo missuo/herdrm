@@ -556,3 +556,52 @@ extension UsageHistoryUITests {
             "day 9 is outside the 7d window: \(labels)")
     }
 }
+
+/// The drilldown: the window's sessions grouped by project — top projects
+/// by tokens under a "By project" section, each expanding to its sessions
+/// with provider dots; the 7d/30d window scopes what groups include.
+extension UsageHistoryUITests {
+    func testProjectDrilldownGroupsSessionsByPath() throws {
+        let model = UsageModel()
+        let now = Date()
+        let today = Calendar.current.startOfDay(for: now)
+        func session(_ offset: Int, provider: UsageProvider, path: String, title: String?, input: Int) -> UsageSession {
+            UsageSession(provider: provider, path: path, title: title,
+                         created: today.addingTimeInterval(Double(-offset) * 86400),
+                         tokens: UsageTokens(input: input, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0))
+        }
+        model.preloadHistory(.local, UsageHistory(
+            days: [UsageDay(date: today, tokens: [.claude: UsageTokens(input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0)])],
+            modelTotals: [:],
+            sessions: [
+            session(0, provider: .claude, path: "/work/herdrm", title: "Usage meters", input: 1_200_000),
+            session(1, provider: .codex, path: "/work/herdrm", title: nil, input: 300_000),
+            session(2, provider: .opencode, path: "/work/api-server", title: "Fix flaky tests", input: 500_000),
+            session(9, provider: .claude, path: "/work/old", title: nil, input: 9_000_000),   // outside 7d
+        ], generatedAt: now))
+        let view = UsageView(model: model, anchor: .local, devices: [.local], refresh: { _, _, _ in })
+            .frame(width: 520, height: 640)
+        let root = NSHostingView(rootView: AnyView(view))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 640),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.title = "Drilldown \(UUID().uuidString)"
+        window.contentView = root
+        window.orderFrontRegardless()
+        root.layoutSubtreeIfNeeded()
+        defer { window.close() }
+        let end = Date().addingTimeInterval(0.6)
+        while Date() < end {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+            NSApp?.windows.forEach { $0.contentView?.layoutSubtreeIfNeeded() }
+        }
+        let labels = AccessibilityProbe.elements(in: window).compactMap(\.name)
+
+        // Both projects group; herdrm's total sums its two sessions.
+        XCTAssertTrue(labels.contains { $0.contains("herdrm") && $0.contains("1.5M tokens") }, "\(labels)")
+        XCTAssertTrue(labels.contains { $0.contains("api-server") && $0.contains("500k tokens") }, "\(labels)")
+        // The outside-7d project never shows.
+        XCTAssertFalse(labels.contains { $0.contains("old,") }, "\(labels)")
+    }
+}

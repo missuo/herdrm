@@ -29,9 +29,19 @@ public enum UsageHistorySource {
             guard let date = dayDate(day.date) else { return nil }
             return UsageDay(date: date, tokens: [provider: day.usageTokens])
         }
+        let sessions = document.sessions?.compactMap { session -> UsageSession? in
+            guard let created = session.created else { return nil }
+            return UsageSession(
+                provider: provider,
+                path: session.path,
+                title: session.title,
+                created: Date(timeIntervalSince1970: created / 1000),
+                tokens: session.usageTokens)
+        } ?? []
         return UsageHistory(
             days: days,
             modelTotals: [provider: document.models.mapValues(\.usageTokens)],
+            sessions: sessions,
             generatedAt: fetchedAt)
     }
 
@@ -75,30 +85,56 @@ public enum UsageHistorySource {
 
         home = os.path.expanduser("~")
         cutoff = time.time() - 30 * 86400
-        days, models, seen = {}, {}, set()
+        days, models, sessions, seen = {}, {}, [], set()
         for path in glob.glob(os.path.join(home, ".claude", "projects", "**", "*.jsonl"), recursive=True):
             if os.path.getmtime(path) < cutoff:
                 continue
+            file_seen, file_tokens = set(), blank()
+            first_stamp, cwd, title = None, None, None
             with open(path, errors="replace") as handle:
                 for line in handle:
                     try: rec = json.loads(line)
                     except Exception: continue
+                    if cwd is None and isinstance(rec.get("cwd"), str):
+                        cwd = rec["cwd"]
+                    if title is None and rec.get("type") == "summary" and isinstance(rec.get("summary"), str):
+                        title = rec["summary"]
+                    if first_stamp is None and isinstance(rec.get("timestamp"), str):
+                        first_stamp = rec["timestamp"]
                     if rec.get("type") != "assistant": continue
                     message = rec.get("message") or {}
                     usage = message.get("usage")
                     if not isinstance(usage, dict): continue
                     key = "{}\t{}".format(message.get("id") or "", rec.get("requestId") or "")
-                    if key in seen: continue
-                    seen.add(key)
+                    # Days and models dedupe across files (resumed sessions
+                    # rewrite the same message everywhere); the session row
+                    # counts its own file, so a resumed copy shows in both
+                    # sessions it appears in.
+                    if key in file_seen:
+                        continue
+                    file_seen.add(key)
                     stamp = rec.get("timestamp")
                     if not isinstance(stamp, str): continue
                     try: day = iso_day(stamp)
                     except Exception: continue
-                    add(days, day, usage)
-                    add(models, message.get("model") or "unknown", usage)
+                    if key not in seen:
+                        seen.add(key)
+                        add(days, day, usage)
+                        add(models, message.get("model") or "unknown", usage)
+                    file_tokens["input"] += int(usage.get("input_tokens") or 0)
+                    file_tokens["output"] += int(usage.get("output_tokens") or 0)
+                    file_tokens["cache_read"] += int(usage.get("cache_read_input_tokens") or 0)
+                    file_tokens["cache_write"] += int(usage.get("cache_creation_input_tokens") or 0)
+            if first_stamp is None: continue
+            try: created = calendar.timegm(time.strptime(first_stamp[:19], "%Y-%m-%dT%H:%M:%S")) * 1000
+            except Exception: continue
+            directory = cwd or os.path.basename(os.path.dirname(path)).replace("-", "/")
+            sessions.append({"path": directory, "title": title, "time": created, **file_tokens})
+        sessions.sort(key=lambda row: row["time"], reverse=True)
         print(json.dumps({
             "days": [dict(date=day, **days[day]) for day in sorted(days)],
-            "models": dict(sorted(models.items()))}))
+            "models": dict(sorted(models.items())),
+            "sessions": sessions}))
         USAGE_EOF
         """#
 
@@ -132,16 +168,18 @@ public enum UsageHistorySource {
 
         home = os.path.expanduser("~")
         cutoff = time.time() - 30 * 86400
-        days, models = {}, {}
+        days, models, sessions = {}, {}, []
         for path in glob.glob(os.path.join(home, ".codex", "sessions", "**", "*.jsonl"), recursive=True):
             if os.path.getmtime(path) < cutoff:
                 continue
-            last = None
+            last, meta = None, {}
             with open(path, errors="replace") as handle:
                 for line in handle:
                     try: rec = json.loads(line)
                     except Exception: continue
                     payload = rec.get("payload") or {}
+                    if rec.get("type") == "session_meta" and isinstance(payload, dict):
+                        meta = payload
                     if isinstance(payload, dict) and payload.get("type") == "token_count":
                         last = rec
             if last is None: continue
@@ -156,9 +194,22 @@ public enum UsageHistorySource {
             add(days, day, total)
             if isinstance(info.get("model"), str) and info.get("model"):
                 add(models, info["model"], total)
+            try: created = calendar.timegm(time.strptime(stamp[:19], "%Y-%m-%dT%H:%M:%S")) * 1000
+            except Exception: continue
+            sessions.append({
+                "path": meta.get("cwd") or os.path.dirname(path),
+                "title": None,
+                "time": created,
+                "input": int(total.get("input_tokens") or 0),
+                "output": int(total.get("output_tokens") or 0),
+                "reasoning": int(total.get("reasoning_output_tokens") or 0),
+                "cache_read": int(total.get("cached_input_tokens") or 0),
+                "cache_write": int(total.get("cache_write_input_tokens") or 0)})
+        sessions.sort(key=lambda row: row["time"], reverse=True)
         print(json.dumps({
             "days": [dict(date=day, **days[day]) for day in sorted(days)],
-            "models": dict(sorted(models.items()))}))
+            "models": dict(sorted(models.items())),
+            "sessions": sessions}))
         USAGE_EOF
         """#
 
@@ -181,10 +232,10 @@ public enum UsageHistorySource {
 
         db = os.path.join(os.path.expanduser("~"), ".local", "share", "opencode", "opencode.db")
         installed = os.path.isfile(db)
-        report = {"days": [], "models": {}}
+        report = {"days": [], "models": {}, "sessions": []}
         if installed:
             cutoff = int((time.time() - 30 * 86400) * 1000)
-            days, models = {}, {}
+            days, models, sessions = {}, {}, []
 
             def blank():
                 return {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0}
@@ -192,10 +243,10 @@ public enum UsageHistorySource {
             try:
                 conn = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
                 rows = conn.execute(
-                    "SELECT time_created, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, model"
+                    "SELECT time_created, directory, title, tokens_input, tokens_output, tokens_reasoning, tokens_cache_read, tokens_cache_write, model"
                     " FROM session_v2 WHERE time_created >= ?",
                     (cutoff,))
-                for created, i, o, r, cr, cw, model in rows:
+                for created, directory, title, i, o, r, cr, cw, model in rows:
                     day = time.strftime("%Y-%m-%d", time.localtime((created or 0) / 1000))
                     try:
                         name = (json.loads(model or "{}").get("id")) or "unknown"
@@ -211,11 +262,22 @@ public enum UsageHistorySource {
                         bucket["reasoning"] += int(r or 0)
                         bucket["cache_read"] += int(cr or 0)
                         bucket["cache_write"] += int(cw or 0)
+                    sessions.append({
+                        "path": directory or "~",
+                        "title": title,
+                        "time": int(created or 0),
+                        "input": int(i or 0),
+                        "output": int(o or 0),
+                        "reasoning": int(r or 0),
+                        "cache_read": int(cr or 0),
+                        "cache_write": int(cw or 0)})
                 conn.close()
             except Exception:
                 pass
             report["days"] = [dict(date=day, **days[day]) for day in sorted(days)]
             report["models"] = {model: models[model] for model in sorted(models)}
+            sessions.sort(key=lambda row: row["time"], reverse=True)
+            report["sessions"] = sessions
         else:
             report["installed"] = False
         print(json.dumps(report))
@@ -235,6 +297,39 @@ public enum UsageHistorySource {
     private struct NormalizedDocument: Decodable {
         let days: [NormalizedDay]
         let models: [String: NormalizedTokens]
+        /// The drilldown's session rows — optional so pre-drilldown
+        /// documents (and the installed-false envelope) still decode.
+        var sessions: [NormalizedSession]?
+    }
+
+    /// One session row as the heredocs emit it: where, what it was
+    /// called, when it started (epoch ms), what it spent.
+    private struct NormalizedSession: Decodable {
+        let path: String
+        var title: String?
+        var created: Double?
+        var input: Int?
+        var output: Int?
+        var reasoning: Int?
+        var cacheRead: Int?
+        var cacheWrite: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case path, title
+            case created = "time"
+            case input, output, reasoning
+            case cacheRead = "cache_read"
+            case cacheWrite = "cache_write"
+        }
+
+        var usageTokens: UsageTokens {
+            UsageTokens(
+                input: input ?? 0,
+                output: output ?? 0,
+                reasoning: reasoning ?? 0,
+                cacheRead: cacheRead ?? 0,
+                cacheWrite: cacheWrite ?? 0)
+        }
     }
 
     /// One day row: the device-local date label plus its token totals.
