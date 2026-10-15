@@ -1360,7 +1360,9 @@ struct SidebarUsageStats: View {
 
     var body: some View {
         Button(action: onOpenSheet) {
-            HStack(spacing: 12) {
+            // Top-aligned so every column's icon + value headline sits on
+            // one line; shorter columns just leave space below.
+            HStack(alignment: .top, spacing: 12) {
                 ForEach(meters) { meter in
                     UsageMeter(
                         provider: meter.provider,
