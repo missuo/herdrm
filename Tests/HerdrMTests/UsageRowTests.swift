@@ -164,8 +164,19 @@ final class UsageRowTests: XCTestCase {
     /// algebra. Default: the window-bearing pair plus OpenCode's tokens.
     func testAgentPickTogglingAndDefaults() {
         let key = "usage.sidebarAgents"
+        // The UIUX suite hosts inside the app: standard UserDefaults is the
+        // user's real store. Snapshot and restore rather than remove — the
+        // remove-based cleanup wiped the user's picked agents on every test
+        // run, so the choice never survived a restart.
+        let original = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
         XCTAssertEqual(AppModel().sidebarAgents, "claude,codex,opencode", "the default pick")
         XCTAssertEqual(SidebarUsageStats.toggling(.opencode, in: "claude,codex"), "claude,codex,opencode")
         XCTAssertEqual(SidebarUsageStats.toggling(.codex, in: "claude,codex"), "claude")
@@ -176,8 +187,15 @@ final class UsageRowTests: XCTestCase {
     /// The parsed pick keeps `UsageProvider.allCases` order and drops junk.
     func testParsedPickFiltersAndOrders() {
         let key = "usage.sidebarAgents"
+        let original = UserDefaults.standard.object(forKey: key)
         UserDefaults.standard.removeObject(forKey: key)
-        defer { UserDefaults.standard.removeObject(forKey: key) }
+        defer {
+            if let original {
+                UserDefaults.standard.set(original, forKey: key)
+            } else {
+                UserDefaults.standard.removeObject(forKey: key)
+            }
+        }
         let model = AppModel()
         model.sidebarAgents = "gemini,claude,nonsense"
         XCTAssertEqual(model.sidebarAgentProviders, [.claude, .gemini])
