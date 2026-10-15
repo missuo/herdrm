@@ -32,11 +32,6 @@ struct UsageView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var isRefreshing = false
-    /// The model whose weekly window the sidebar's Claude meter follows;
-    /// empty means all models. `@AppStorage` in a view publishes and
-    /// persists in one move, and matches `AppModel.sidebarWatchedModel`'s
-    /// key from the other side.
-    @AppStorage("usage.sidebarWatchedModel") private var watchedModel = ""
     /// Which agents the sidebar's usage row shows; the same comma list
     /// `AppModel.sidebarAgents` reads, written through the row's toggling.
     @AppStorage("usage.sidebarAgents") private var sidebarAgents = "claude,codex,opencode"
@@ -63,37 +58,17 @@ struct UsageView: View {
                     title: String(localized: "Usage"),
                     subtitle: sectionDevices.map(\.name).joined(separator: " · ")
                 )
-                if !scopes.isEmpty {
-                    Picker(String(localized: "Watched model"), selection: $watchedModel) {
-                        Text(String(localized: "All models")).tag("")
-                        ForEach(scopes, id: \.self) { scope in
-                            Text(verbatim: scope).tag(scope)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                    .help(String(localized: "The sidebar's Claude meter follows this model's weekly window"))
-                    .padding(.trailing, 16)
-                }
-                Menu {
+                // The sidebar row's agent picker: one always-visible toggle
+                // chip per agent (brand icon + tick when picked) — the old
+                // menu gave no visible state and read as doing nothing.
+                HStack(spacing: 4) {
                     ForEach(UsageProvider.allCases, id: \.self) { provider in
-                        Button {
-                            sidebarAgents = SidebarUsageStats.toggling(provider, in: sidebarAgents)
-                        } label: {
-                            if sidebarAgents.split(separator: ",").contains(Substring(provider.rawValue)) {
-                                Label(SidebarUsageStats.name(provider), systemImage: "checkmark")
-                            } else {
-                                Text(verbatim: SidebarUsageStats.name(provider))
-                            }
-                        }
+                        sidebarAgentChip(provider)
                     }
-                } label: {
-                    Label(String(localized: "Sidebar row"), systemImage: "menubar.rectangle")
                 }
-                .fixedSize()
-                .help(String(localized: "Choose which agents the sidebar's usage row shows"))
                 .padding(.trailing, 16)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(String(localized: "Agents in the sidebar row"))
             }
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
@@ -127,28 +102,6 @@ struct UsageView: View {
         var list = devices
         if !list.contains(anchor) { list.insert(anchor, at: 0) }
         return list.filter(\.isLocal) + list.filter { !$0.isLocal }
-    }
-
-    /// Every distinct window scope in the current readings ("Fable"), in
-    /// first-seen order — the watched-model picker's options. Hidden while
-    /// no provider reports a per-model window.
-    private var scopes: [String] {
-        var seen: Set<String> = []
-        var out: [String] = []
-        for device in sectionDevices {
-            guard let perProvider = model.states[device.id] else { continue }
-            for provider in UsageProvider.allCases {
-                guard case .readings(let readings) = perProvider[provider] else { continue }
-                for reading in readings {
-                    for window in reading.windows {
-                        if let scope = window.scope, seen.insert(scope).inserted {
-                            out.append(scope)
-                        }
-                    }
-                }
-            }
-        }
-        return out
     }
 
     private func deviceSection(_ device: Device) -> some View {
@@ -221,6 +174,47 @@ struct UsageView: View {
             }
             isRefreshing = false
         }
+    }
+
+    /// One always-visible toggle chip: the agent's brand icon, ringed and
+    /// badged when picked for the sidebar row, dim when not.
+    private func sidebarAgentChip(_ provider: UsageProvider) -> some View {
+        let picked = sidebarAgents.split(separator: ",").contains(Substring(provider.rawValue))
+        return Button {
+            sidebarAgents = SidebarUsageStats.toggling(provider, in: sidebarAgents)
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let resource = BrandIconLoader.agentIcon(for: provider.rawValue) {
+                        BrandIcon(resource: resource, size: 13, fallbackSystemName: "terminal")
+                    } else {
+                        Image(systemName: "terminal")
+                            .font(.system(size: 11))
+                    }
+                }
+                .foregroundStyle(picked ? Theme.text : Theme.textGhost)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(picked ? Theme.itemWash : .clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(picked ? Theme.accent : Theme.hairline, lineWidth: 1)
+                )
+                if picked {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Theme.accent, Theme.itemWash)
+                        .offset(x: 4, y: -4)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(String(localized: "Show \(SidebarUsageStats.name(provider)) in the sidebar's usage row"))
+        .accessibilityLabel(String(localized: "\(SidebarUsageStats.name(provider)) in sidebar row"))
+        .accessibilityAddTraits(picked ? [.isSelected] : [])
     }
 
     /// Devices the model knows nothing about get their first read; preloaded

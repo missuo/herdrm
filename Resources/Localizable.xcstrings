@@ -113,6 +113,22 @@
         }
       }
     },
+    "%@ in sidebar row": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ in sidebar row"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "侧边栏行中的 %@"
+          }
+        }
+      }
+    },
     "%@ input · %@ output · %@ cache": {
       "localizations": {
         "en": {
@@ -687,6 +703,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "Agent"
+          }
+        }
+      }
+    },
+    "Agents in the sidebar row": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Agents in the sidebar row"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "侧边栏行中的智能体"
           }
         }
       }
@@ -6178,6 +6210,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "按 Shell 语法解析：含空格的值请加引号。新建 Agent 时以此为初始值，并可针对单次启动修改。"
+          }
+        }
+      }
+    },
+    "Show %@ in the sidebar's usage row": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show %@ in the sidebar's usage row"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在侧边栏用量行中显示 %@"
           }
         }
       }

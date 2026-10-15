@@ -231,9 +231,7 @@ struct SidebarView: View {
     /// Tokens-only agents get a compact total.
     private var usageMeters: [UsageMeterValue] {
         let now = Date()
-        let watched = model.sidebarWatchedModel
         return model.sidebarAgentProviders.map { provider in
-            let scope = provider == .claude && !watched.isEmpty ? watched : nil
             func line(_ found: (device: Device, window: GrazrWindow)?) -> UsageWindowValue? {
                 guard let found else { return nil }
                 return UsageWindowValue(
@@ -245,7 +243,7 @@ struct SidebarView: View {
             let session = line(UsageSelection.tightestSession(
                 states: usageHint.states, devices: model.devices, provider: provider, now: now))
             let limit = line(UsageSelection.tightestLimit(
-                states: usageHint.states, devices: model.devices, provider: provider, scope: scope, now: now))
+                states: usageHint.states, devices: model.devices, provider: provider, scope: nil, now: now))
             let windows = [session, limit].compactMap { $0 }
             return UsageMeterValue(
                 provider: provider,
@@ -301,11 +299,10 @@ struct SidebarView: View {
     /// The usage row's tap: the Usage sheet, on the watched window's
     /// device — the local device (else the first) while nothing is open.
     private func openUsage() {
-        let watched = model.sidebarWatchedModel
         let window = UsageSelection.tightestWindow(
             states: usageHint.states,
             devices: model.devices,
-            scope: watched.isEmpty ? nil : watched,
+            scope: nil,
             now: Date()
         )
         model.usageDevice = window?.device
