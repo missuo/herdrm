@@ -104,14 +104,19 @@ struct UsageView: View {
                     }
                 }
                 .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, minHeight: 220, maxHeight: 520)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
             footer
         }
-        .frame(width: 520)
+        // Resizable: the sheet opens at its natural 560×640 and can grow or
+        // shrink, but never below that — the opening size is the floor. The
+        // scroll view absorbs extra height; every row stretches with width.
+        .frame(minWidth: 560, idealWidth: 560, maxWidth: .infinity,
+               minHeight: 640, idealHeight: 640, maxHeight: .infinity)
         .task { await refreshUnknownDevices() }
     }
 
