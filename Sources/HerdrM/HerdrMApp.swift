@@ -103,13 +103,17 @@ extension FocusedValues {
 
 // The Usage window's root: bridges the window scene to the view the sheet
 // used to present, anchored on whichever device the sidebar last tapped —
-// re-anchoring live while the window stays open.
+// re-anchoring live while the window stays open. The usage model is
+// @StateObject: it must survive every body re-evaluation (a resize, an
+// anchor change) — recreating it wiped the readings and re-ran the first
+// read on every resize, exactly the blank-out refreshes we banished.
 struct UsageWindowRoot: View {
     @ObservedObject var model: AppModel
+    @StateObject private var usage = UsageModel()
 
     var body: some View {
         UsageView(
-            model: .init(),
+            model: usage,
             anchor: model.usageDevice ?? .local,
             devices: model.devices
         )
