@@ -8,38 +8,52 @@ the Sparkle update description — a release without a section here fails CI.
 ## [Unreleased]
 
 ### Added
-- **Usage meters.** A new Usage sheet shows one card per provider — Claude,
-  Codex, OpenCode and Gemini — for each device, with quota meters where a
-  provider reports windows (what is left, when it resets) and token
-  statistics where it only publishes those. Every card stands alone, so one
-  stuck provider never blanks the sheet, and ⌘R re-reads every visible
-  device. All readings come from commands run on the device itself — herdrm
-  never authenticates anywhere — cached for five minutes.
+- **Usage meters in the sidebar.** A row above CPU / RAM / Disk, in its
+  visual language: one meter per picked agent — brand icon, its ~5h window
+  and its longer limit (week, 30d) each with percent used, a level-tinted
+  bar, and a countdown to the refill (`2h51m`, `1d2h`); agents that
+  publish no windows (OpenCode, Gemini) show a compact token total over a
+  dimmed track. Which agents appear is picked with always-visible toggle
+  chips in the Usage window and persists across restarts; clicking the row
+  opens the Usage window on the tightest window's device. A hairline
+  separates it from the machine stats.
+- **Usage window.** The Usage dialog is its own movable, resizable window
+  (sheets are neither) — floored at the 560×640 it opens at, re-anchoring
+  live on whatever device the sidebar taps, and reopening after close.
+  Refreshes keep the known data on screen: the last readings stand while
+  new ones land, and a discrete Updating… spinner rides the footer corner.
 - **Usage history charts with approximate dollar totals.** Each device's
-  section in the Usage sheet gains a history card: stacked daily token bars
-  for Claude and Codex with a 7d / 30d range toggle, per-model token rows
-  for Claude, Codex and OpenCode, and a totals row that prices every model
-  at API list rates — always labelled "(approx.)", since the rates are a
-  dated snapshot of public list prices, not the account's bill. Providers
-  contribute what they publish, so OpenCode shows rows and totals without
-  daily bars and Gemini shows neither; a device with nothing read yet shows
-  "No history yet".
-- **A USAGE column in the sidebar.** The sidebar's stats block gains a USAGE
-  meter beside CPU / RAM / Disk: percent used of the watched Claude model's
-  tightest open window across every device, dimmed until a reading lands
-  and opening the Usage sheet on that window's device when clicked. The
-  watched model is chosen with a picker in the Usage sheet; with none
-  picked, the meter falls back to the all-models windows.
+  section gains a history card: stacked daily token bars for Claude,
+  Codex and OpenCode with a 7d / 30d range toggle, per-model token rows,
+  and a totals row that prices every model at API list rates — always
+  labelled "(approx.)", a dated snapshot of public prices, not the bill.
+  Token counts everywhere use k / M / G / T / P tiers, never scientific
+  notation.
+- **Per-project and per-session drilldown.** Under the chart, a "By
+  project" section groups the window's sessions by working directory —
+  top projects by tokens, each expanding to its sessions with provider
+  dots in the chart's palette. Titles come from what the CLIs record
+  (Claude summaries, OpenCode session titles).
+- **Every card's token line means the same thing.** The device's
+  last-7-days totals from its transcripts, database and sessions, leading
+  with the total (`1.1B tokens total · 55k input · 6.7M output · 1.1B
+  cache`) — the tooltip states the composition and that only this
+  device's data counts. Window meters read percent used everywhere.
 
 ### Changed
-- **Claude's quota is read by the Claude CLI itself.** The Usage sheet and
-  the sidebar's USAGE column get their Claude windows from running `claude`
-  on the device, so the usage feature no longer needs grazr. grazr itself is
-  untouched — account rotation, pins and the Accounts sheet work as before.
-- **History dollar totals state their span.** The Usage sheet's totals row
-  reads "Total (30d)" and its tooltip spells out that the approximate
-  figures cover the fetched 30 days, so they cannot be mistaken for a
-  billing period.
+- **Claude's quota is read by the Claude CLI itself.** The meters get
+  their Claude windows from running `claude -p /usage` on the device, so
+  the usage feature needs neither grazr nor any credential handling —
+  herdrm never authenticates anywhere. grazr itself is untouched:
+  rotation, pins and the Accounts sheet work as before.
+- **OpenCode's history reads its own database.** A read-only walk of
+  `~/.local/share/opencode/opencode.db` — the v2 schema's per-session
+  token aggregates (the v1 `message` table froze at the migration) — so
+  OpenCode's daily bars and totals are complete, including cache.
+- **History dollar totals state their span.** The totals row reads
+  "Total (30d)" and its tooltip spells out that the approximate figures
+  cover the fetched 30 days, so they cannot be mistaken for a billing
+  period.
 
 D
 
