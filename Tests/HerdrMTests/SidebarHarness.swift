@@ -349,9 +349,12 @@ final class SidebarHarness {
         return out
     }
 
-    /// Ink is thin, so most of a region is background.
+    /// Ink is thin, so most of a region is background. An empty sample
+    /// (the region landed off-render on this run) returns a neutral 1.0 so
+    /// the contrast assertions fail as failures — subscripting an empty
+    /// array here trapped SIGTRAP and took the whole suite down with it.
     private static func background(_ values: [Double]) -> Double {
-        values.sorted()[values.count / 2]
+        values.isEmpty ? 1.0 : values.sorted()[values.count / 2]
     }
 
     /// Contrast of the pixel that differs most from the background.
