@@ -323,6 +323,33 @@ final class GrazrSyncTests: XCTestCase {
         XCTAssertEqual(planner.observe(round, now: 20), [])
     }
 
+    /// After a restart the order HerdrM pushed to a blocked follower bumps its
+    /// changed_at past the source's. A planner restored from its snapshot
+    /// knows that state and keeps the source; a fresh one would crown the
+    /// follower and move everyone to its account.
+    func testARestoredSnapshotKeepsAPushedFollowerFromWinning() throws {
+        var planner = GrazrSyncPlanner()
+        let ig = ["icloud", "gmail"]
+        let blocked = GrazrSyncProblem.blocked(accountID: "i", reason: "rate limited")
+        let a = device("a", id: A, order: ig, active: "i", changedAt: 2000)
+        let c = device("c", id: C, order: ig, active: "i", changedAt: 1500)
+        let b = device("b", id: B, order: gi, active: "g", blocked: ["i": "rate limited"], changedAt: 1000)
+        XCTAssertEqual(planner.observe([a, b, c], now: 0), [push(B, order: ig, problem: blocked)])
+        // The order lands, the switch cannot: b is on gmail, stamped newest.
+        let pushed = device("b", id: B, order: ig, active: "g", blocked: ["i": "rate limited"], changedAt: 3000)
+        planner.settle(pushed)
+        planner.recordResult(device: B, problem: blocked, now: 0)
+
+        let saved = try JSONEncoder().encode(planner.snapshot())
+        var restored = GrazrSyncPlanner(snapshot: try JSONDecoder().decode(GrazrSyncPlanner.Snapshot.self, from: saved))
+        XCTAssertEqual(restored.snapshot(), planner.snapshot())
+        XCTAssertEqual(restored.observe([a, pushed, c], now: 60), [push(B, problem: blocked)])
+        XCTAssertEqual(restored.target?.source, A)
+
+        var fresh = GrazrSyncPlanner()
+        XCTAssertEqual(fresh.observe([a, pushed, c], now: 60), [push(A, to: "g"), push(C, to: "g")], "what a restart did before")
+    }
+
     func testStateMapsOrderNamesToIDsAndEqualityIgnoresUnsharedAccounts() {
         let listed = GrazrSyncState(report: GrazrReport(
             active: "i", accounts: [GrazrAccount(id: "g", name: "gmail"), GrazrAccount(id: "i", name: "icloud")],

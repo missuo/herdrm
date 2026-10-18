@@ -5971,6 +5971,38 @@
         }
       }
     },
+    "%@ follows %@ (changed %@)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ follows %@ (changed %@)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 跟随 %2$@（%3$@ 更改）"
+          }
+        }
+      }
+    },
+    "%@ follows %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ follows %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 跟随 %2$@"
+          }
+        }
+      }
+    },
     "All devices in sync": {
       "localizations": {
         "en": {
@@ -6147,6 +6179,22 @@
         }
       }
     },
+    "did not move": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "did not move"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "没有切换"
+          }
+        }
+      }
+    },
     "Sign in to this account again in a terminal on the device": {
       "localizations": {
         "en": {
@@ -6159,6 +6207,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "在设备的终端中重新登录此账户"
+          }
+        }
+      }
+    },
+    "Re-authenticate…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Re-authenticate…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新认证…"
           }
         }
       }

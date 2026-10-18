@@ -17,7 +17,8 @@ enum GrazrSyncStatus: Equatable {
     case off
     /// Fewer than two devices run grazr; `name` is the one that does.
     case fewDevices(name: String?)
-    /// Just turned on: what the first round would do, run on Apply.
+    /// Turned on (or relaunched before Apply) with something to move: what
+    /// the first round would do, run on Apply. Nothing to move skips it.
     case preview(lines: [GrazrSyncLine], pushes: [GrazrSyncPush])
     case lines([GrazrSyncLine])
 }
@@ -59,6 +60,21 @@ final class GrazrSyncCoordinator {
     /// Any command ran since the option went on. Until then the devices
     /// agreed by themselves.
     private var pushedAnything = false
+    /// Pushed devices whose reread failed: settled at their next read, so the
+    /// state HerdrM wrote is not taken for a change of their own. Saved.
+    private var unsettled: Set<UUID> = []
+    /// Switches that answered ok on a device that could not be reread: the
+    /// next read says whether they landed. Not saved.
+    private var unconfirmed: [UUID: (account: String, summary: String?, sourceName: String)] = [:]
+    /// A preview with moves was shown since the option went on (or before
+    /// this launch): a lone device then no longer counts as nothing to approve.
+    private var heldForApproval = false
+
+    /// What `syncAccountsStateKey` holds.
+    private struct Saved: Codable {
+        var planner: GrazrSyncPlanner.Snapshot
+        var unsettled: [UUID]
+    }
 
     init(model: AppModel, defaults: UserDefaults = .standard) {
         self.model = model
@@ -67,19 +83,27 @@ final class GrazrSyncCoordinator {
     }
 
     var enabled: Bool { defaults.bool(forKey: AppModel.syncAccountsKey) }
+    /// The user applied the first round, or it had nothing to approve.
+    var applied: Bool { defaults.bool(forKey: AppModel.syncAccountsAppliedKey) }
 
     /// On shows what the first round would do and pushes nothing until
-    /// `apply`; off stops the loop and forgets everything seen. On while
-    /// already syncing changes nothing.
+    /// `apply` (nothing to approve starts the sync at once); off stops the
+    /// loop and forgets everything seen. On while already syncing changes
+    /// nothing.
     func setEnabled(_ on: Bool) {
         if on, enabled, loop != nil { return }
         defaults.set(on, forKey: AppModel.syncAccountsKey)
+        defaults.removeObject(forKey: AppModel.syncAccountsAppliedKey)
+        defaults.removeObject(forKey: AppModel.syncAccountsStateKey)
         generation += 1
         loop?.cancel()
         loop = nil
         planner.reset()
         problems = [:]
         pushedAnything = false
+        unsettled = []
+        unconfirmed = [:]
+        heldForApproval = false
         if on {
             pendingRound = Task { await round(preview: true) }
         } else {
@@ -93,13 +117,21 @@ final class GrazrSyncCoordinator {
     /// still wins.
     func apply() {
         guard enabled else { return }
+        markApplied()
         startLoop()
     }
 
-    /// At launch: with the option on, the first round pushes without a preview.
+    /// At launch: applied, the sync carries on from the saved state without
+    /// a preview; not yet applied, the preview is shown again.
     func startIfEnabled() {
         guard enabled, loop == nil else { return }
-        startLoop()
+        if applied {
+            restore()
+            startLoop()
+        } else {
+            heldForApproval = true
+            pendingRound = Task { await round(preview: true) }
+        }
     }
 
     /// One round now. Before Apply it only refreshes the preview.
@@ -107,19 +139,39 @@ final class GrazrSyncCoordinator {
         guard enabled else { return }
         if loop != nil {
             pendingRound = Task { await round(preview: false) }
-        } else if model.grazrSyncStatus != .off {
+        } else if !applied, model.grazrSyncStatus != .off {
             pendingRound = Task { await round(preview: true) }
         }
     }
 
-    /// A round now (`pendingRound`), then one each `interval`.
-    private func startLoop() {
+    private func markApplied() {
+        defaults.set(true, forKey: AppModel.syncAccountsAppliedKey)
+        heldForApproval = false
+    }
+
+    private func save() {
+        let saved = Saved(planner: planner.snapshot(), unsettled: unsettled.sorted { $0.uuidString < $1.uuidString })
+        guard let data = try? JSONEncoder().encode(saved) else { return }
+        defaults.set(data, forKey: AppModel.syncAccountsStateKey)
+    }
+
+    private func restore() {
+        guard let data = defaults.data(forKey: AppModel.syncAccountsStateKey),
+              let saved = try? JSONDecoder().decode(Saved.self, from: data)
+        else { return }
+        planner = GrazrSyncPlanner(snapshot: saved.planner)
+        unsettled = Set(saved.unsettled)
+    }
+
+    /// A round now (`pendingRound`) unless the caller is in one, then one
+    /// each `interval`.
+    private func startLoop(roundNow: Bool = true) {
         loop?.cancel()
         let generation = generation
-        let first = Task { await round(preview: false) }
-        pendingRound = first
+        let first: Task<Void, Never>? = roundNow ? Task { await round(preview: false) } : nil
+        if let first { pendingRound = first }
         loop = Task { [weak self] in
-            await first.value
+            await first?.value
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.interval))
                 guard !Task.isCancelled, let self, self.generation == generation else { return }
@@ -154,6 +206,13 @@ final class GrazrSyncCoordinator {
         guard generation == self.generation else { return }
         let known = syncDevices(group)
         guard known.count >= 2 else {
+            // One device at enable: nothing to approve, the sync waits for a
+            // second. Not so once moves were shown, or for a launch that has
+            // not met every device yet.
+            if preview, !heldForApproval {
+                markApplied()
+                startLoop(roundNow: false)
+            }
             model.grazrSyncStatus = .fewDevices(name: known.first?.name)
             return
         }
@@ -164,17 +223,37 @@ final class GrazrSyncCoordinator {
         if preview {
             var copy = planner
             let pushes = copy.observe(members, now: now)
-            let found = Dictionary(pushes.compactMap { push in push.problem.map { (push.device, $0) } }) { $1 }
-            model.grazrSyncStatus = .preview(
-                lines: Self.lines(
-                    planner: copy, pushes: pushes, results: found, pushedAnything: pushedAnything,
-                    devices: members, now: now, device: model.device
-                ),
-                pushes: pushes
-            )
-            return
+            if pushes.contains(where: { $0.orderNames != nil || $0.switchTo != nil }) {
+                heldForApproval = true
+                let found = Dictionary(pushes.compactMap { push in push.problem.map { (push.device, $0) } }) { $1 }
+                model.grazrSyncStatus = .preview(
+                    lines: Self.lines(
+                        planner: copy, pushes: pushes, results: found, pushedAnything: pushedAnything,
+                        devices: members, now: now, device: model.device
+                    ),
+                    pushes: pushes
+                )
+                return
+            }
+            // Nothing would move: no Apply to wait for, this round runs as the first.
+            markApplied()
+            startLoop(roundNow: false)
         }
 
+        // Read again since a push whose reread failed: what it finds is that push.
+        for member in members {
+            if unsettled.remove(member.id) != nil { planner.settle(member) }
+            if let pending = unconfirmed.removeValue(forKey: member.id), let device = model.device(member.id) {
+                let problem = confirm(
+                    pending.account, on: device, report: member.report, summary: pending.summary,
+                    sourceName: pending.sourceName
+                )
+                if let problem {
+                    planner.recordResult(device: member.id, problem: problem, now: now)
+                    problems[member.id] = problem
+                }
+            }
+        }
         let pushes = planner.observe(members, now: now)
         let sourceName = planner.target.flatMap { target in members.first { $0.id == target.source }?.name } ?? ""
         for push in pushes where push.device != planner.target?.source {
@@ -197,6 +276,7 @@ final class GrazrSyncCoordinator {
             planner: planner, pushes: [], results: problems, pushedAnything: pushedAnything,
             devices: known.map { device in fresh.first { $0.id == device.id } ?? device }, now: now, device: model.device
         ))
+        save()
     }
 
     /// Order first, then the switch. Returns what got in the way, if anything.
@@ -207,6 +287,8 @@ final class GrazrSyncCoordinator {
         var orderProblem: GrazrSyncProblem?
         var switchProblem = push.problem
         var ran = false
+        /// An ok answer: grazr's summary, until a reread shows it landed.
+        var answered: (account: String, summary: String?)?
         if let names = push.orderNames {
             ran = true
             switch await command(Grazr.setAccountsCommand(names: names), on: device) {
@@ -220,27 +302,49 @@ final class GrazrSyncCoordinator {
         if let account = push.switchTo, generation == self.generation {
             ran = true
             switch await command(Grazr.switchCommand(to: account), on: device) {
-            case .answered(let result) where result.ok:
-                let name = model.session(device.id).grazrReport?.accounts.first { $0.id == account }?.name ?? account
-                notifier(
-                    String(localized: "grazr: \(device.name) now on \(name)"),
-                    String(localized: "following \(sourceName)"),
-                    device.name
-                )
+            case .answered(let result) where result.ok: answered = (account, result.summary)
             case .answered(let result): switchProblem = Self.problem(from: result, accountID: account)
             case .failed(let problem): switchProblem = problem
             }
         }
-        let problem = switchProblem ?? orderProblem
         // Unread after the push: its state stays unknown, not the old one.
         let reread = ran ? await reportLoader(device.id) : false
-        guard generation == self.generation else { return problem }
+        guard generation == self.generation else { return switchProblem ?? orderProblem }
         if ran { pushedAnything = true }
-        if reread, let report = model.session(device.id).grazrReport {
+        let report = reread ? model.session(device.id).grazrReport : nil
+        if let report {
+            unsettled.remove(device.id)
             planner.settle(GrazrSyncDevice(id: device.id, name: device.name, report: report))
+            if let answered {
+                switchProblem = confirm(
+                    answered.account, on: device, report: report, summary: answered.summary, sourceName: sourceName
+                )
+            }
+        } else if ran {
+            unsettled.insert(device.id)
+            if let answered { unconfirmed[device.id] = (answered.account, answered.summary, sourceName) }
         }
+        let problem = switchProblem ?? orderProblem
         planner.recordResult(device: device.id, problem: problem, now: Date().timeIntervalSince1970)
         return problem
+    }
+
+    /// A switch grazr answered ok counts once the device's report is on the
+    /// account: notified then. grazr with DRY_RUN=1 answers ok and stays put,
+    /// which is a refusal in its words, so it is not pushed again at once.
+    private func confirm(
+        _ account: String, on device: Device, report: GrazrReport, summary: String?, sourceName: String
+    ) -> GrazrSyncProblem? {
+        guard report.active == account else {
+            return .refused(summary ?? String(localized: "did not move"))
+        }
+        let name = report.accounts.first { $0.id == account }?.name ?? account
+        notifier(
+            String(localized: "grazr: \(device.name) now on \(name)"),
+            String(localized: "following \(sourceName)"),
+            device.name
+        )
+        return nil
     }
 
     private enum Outcome {
@@ -308,14 +412,19 @@ final class GrazrSyncCoordinator {
         let agreed = !pushedAnything && results.isEmpty && pushes.isEmpty && planner.bouncing == nil
         if !agreed, let target = planner.target {
             let wanted = GrazrSyncState(orderIDs: target.orderIDs, activeID: target.activeID, changedAt: nil)
-            let followers = devices
+            let following = devices
                 .filter { $0.id != target.source && GrazrSyncPlanner.equal(GrazrSyncState(report: $0.report), wanted) }
-                .map(\.name).joined(separator: ", ")
+                .map(\.name)
+            let followers = following.joined(separator: ", ")
             let from = name(target.source)
-            if !followers.isEmpty {
-                let text = target.at > 0
-                    ? String(localized: "\(followers) follow \(from) (changed \(relative(target.at, now: now)))")
-                    : String(localized: "\(followers) follow \(from)")
+            if !following.isEmpty {
+                let text: String
+                switch (following.count, target.at > 0) {
+                case (1, true): text = String(localized: "\(followers) follows \(from) (changed \(relative(target.at, now: now)))")
+                case (1, false): text = String(localized: "\(followers) follows \(from)")
+                case (_, true): text = String(localized: "\(followers) follow \(from) (changed \(relative(target.at, now: now)))")
+                case (_, false): text = String(localized: "\(followers) follow \(from)")
+                }
                 lines.append(GrazrSyncLine(id: "in-sync", text: text, tone: .ok, device: nil, blockedAccount: nil))
             }
             for push in pushes where push.switchTo != nil || push.orderNames != nil {

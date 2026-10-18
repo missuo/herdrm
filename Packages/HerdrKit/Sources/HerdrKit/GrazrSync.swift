@@ -3,7 +3,7 @@ import Foundation
 /// One device's rotation as the sync compares it: ACCOUNTS as account ids,
 /// and the account Claude is on. Ids, not names, because each device names
 /// its accounts itself.
-public struct GrazrSyncState: Sendable, Equatable, Hashable {
+public struct GrazrSyncState: Sendable, Equatable, Hashable, Codable {
     public var orderIDs: [String]
     public var activeID: String?
     /// When the device's rotation last changed (epoch seconds).
@@ -43,7 +43,7 @@ public struct GrazrSyncDevice: Sendable, Equatable {
 
 /// The state every device is brought to: the newest change seen, and the
 /// device it came from.
-public struct GrazrSyncTarget: Sendable, Equatable {
+public struct GrazrSyncTarget: Sendable, Equatable, Codable {
     public var orderIDs: [String]
     public var activeID: String?
     public var at: Double
@@ -87,7 +87,7 @@ public struct GrazrSyncPush: Sendable, Equatable {
 
 /// Two devices whose grazrs kept undoing each other: `source`'s state was
 /// pushed to `follower`, whose grazr rotated away again.
-public struct GrazrSyncBounce: Sendable, Equatable {
+public struct GrazrSyncBounce: Sendable, Equatable, Codable {
     public let source: UUID
     public let follower: UUID
 
@@ -140,6 +140,27 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
     private var names: [UUID: String] = [:]
 
     public init() {}
+
+    /// What a restart must not forget: without `lastSeen` a device's state as
+    /// HerdrM pushed it reads as its own change, and the newest stamp (often
+    /// a follower's) would win. Pushes in flight are not kept.
+    public struct Snapshot: Sendable, Equatable, Codable {
+        public var lastSeen: [UUID: GrazrSyncState]
+        public var target: GrazrSyncTarget?
+        public var pausedUntil: Double?
+        public var bouncing: GrazrSyncBounce?
+    }
+
+    public func snapshot() -> Snapshot {
+        Snapshot(lastSeen: lastSeen, target: target, pausedUntil: pausedUntil, bouncing: bouncing)
+    }
+
+    public init(snapshot: Snapshot) {
+        lastSeen = snapshot.lastSeen
+        target = snapshot.target
+        pausedUntil = snapshot.pausedUntil
+        bouncing = snapshot.bouncing
+    }
 
     /// Same active account, and the orders agree on the accounts both list:
     /// an account only one device has is no difference.

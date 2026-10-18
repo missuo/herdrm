@@ -2191,6 +2191,12 @@ final class AppModel: ObservableObject {
     static let autoModelSwitchKey = "grazr.autoModelSwitch"
     /// Keep every device's grazr on one order and active account (`GrazrSyncCoordinator`).
     static let syncAccountsKey = "grazr.syncAccounts"
+    /// Set once the user applied the first round (or there was nothing to
+    /// approve). Enabled but not applied, a launch shows the preview again.
+    static let syncAccountsAppliedKey = "grazr.syncAccounts.applied"
+    /// The planner's `lastSeen`/`target`, so a restart tells a device's own
+    /// change from a push HerdrM made (JSON).
+    static let syncAccountsStateKey = "grazr.syncAccounts.state"
 
     /// When the week's Fable allowance is spent, Claude Code stops before its
     /// next request and asks whether to switch to its fallback model or pay

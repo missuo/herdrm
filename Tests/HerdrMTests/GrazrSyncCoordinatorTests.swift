@@ -40,6 +40,7 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         await world.sync.pendingRound?.value
 
         XCTAssertTrue(defaults.bool(forKey: AppModel.syncAccountsKey))
+        XCTAssertFalse(defaults.bool(forKey: AppModel.syncAccountsAppliedKey), "not applied until Apply")
         XCTAssertEqual(Set(world.loads), [world.id("studio"), world.id("laptop")])
         guard case .preview(let lines, let pushes) = world.model.grazrSyncStatus else {
             return XCTFail("expected a preview, got \(world.model.grazrSyncStatus)")
@@ -52,6 +53,63 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         world.sync.setEnabled(false)
         XCTAssertEqual(world.model.grazrSyncStatus, .off)
         XCTAssertFalse(defaults.bool(forKey: AppModel.syncAccountsKey))
+    }
+
+    func testARestartBeforeApplyShowsThePreviewAndPushesNothing() async throws {
+        let world = SyncWorld(defaults: defaults, [
+            ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 60)),
+            ("studio", report(active: work.id, order: ["work", "home"], changedAt: now - 600)),
+        ])
+        world.sync.setEnabled(true)
+        await world.sync.pendingRound?.value
+
+        // The window closed without Apply; HerdrM starts again.
+        await world.restart()
+        XCTAssertEqual(world.sent, [], "a launch before Apply pushes nothing")
+        guard case .preview(_, let pushes) = world.model.grazrSyncStatus else {
+            return XCTFail("expected the preview again, got \(world.model.grazrSyncStatus)")
+        }
+        XCTAssertEqual(pushes.map(\.device), [world.id("studio")])
+        await world.kick()
+        XCTAssertEqual(world.sent, [], "a kick only refreshes the preview")
+
+        world.sync.apply()
+        await world.sync.pendingRound?.value
+        XCTAssertEqual(world.sent, ["studio order home,work", "studio switch home"])
+        XCTAssertTrue(defaults.bool(forKey: AppModel.syncAccountsAppliedKey))
+        XCTAssertNotNil(defaults.data(forKey: AppModel.syncAccountsStateKey))
+
+        world.sync.setEnabled(false)
+        XCTAssertFalse(defaults.bool(forKey: AppModel.syncAccountsAppliedKey))
+        XCTAssertNil(defaults.data(forKey: AppModel.syncAccountsStateKey))
+    }
+
+    func testAPreviewWithNothingToMoveStartsTheSync() async throws {
+        let world = SyncWorld(defaults: defaults, [
+            ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 60)),
+            ("studio", report(active: home.id, order: ["home", "work"], changedAt: now - 600)),
+        ])
+        world.sync.setEnabled(true)
+        await world.sync.pendingRound?.value
+        XCTAssertEqual(world.model.grazrSyncStatus, .lines([GrazrSyncLine(
+            id: "in-sync", text: "All devices in sync", tone: .ok, device: nil, blockedAccount: nil
+        )]), "no Apply when nothing would move")
+        XCTAssertTrue(defaults.bool(forKey: AppModel.syncAccountsAppliedKey))
+
+        // laptop's grazr rotates on its own: the running sync spreads it.
+        world.reports[world.id("laptop")] = report(active: work.id, order: ["home", "work"], changedAt: now)
+        await world.kick()
+        XCTAssertEqual(world.sent, ["studio switch work"])
+        world.sync.setEnabled(false)
+
+        // One device runs grazr: nothing to approve either, the sync waits for a second.
+        defaults.removePersistentDomain(forName: suiteName)
+        let alone = SyncWorld(defaults: defaults, [("laptop", report(active: home.id, order: ["home", "work"], changedAt: now))])
+        alone.sync.setEnabled(true)
+        await alone.sync.pendingRound?.value
+        XCTAssertEqual(alone.model.grazrSyncStatus, .fewDevices(name: "laptop"))
+        XCTAssertTrue(defaults.bool(forKey: AppModel.syncAccountsAppliedKey))
+        alone.sync.setEnabled(false)
     }
 
     // MARK: - Pushes
@@ -69,7 +127,7 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
             world.sync.planner.lastSeen[world.id("studio")], GrazrSyncState(report: world.reports[world.id("studio")]!),
             "the landed push is settled, not a change of studio's own"
         )
-        XCTAssertTrue(world.lineTexts.first?.hasPrefix("studio follow laptop (changed ") == true, "\(world.lineTexts)")
+        XCTAssertTrue(world.lineTexts.first?.hasPrefix("studio follows laptop (changed ") == true, "\(world.lineTexts)")
 
         // In step now: the next round sends nothing and posts nothing.
         await world.kick()
@@ -137,6 +195,47 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         world.sync.setEnabled(false)
     }
 
+    func testAnOkSwitchThatDoesNotMoveIsAProblemNotANotification() async throws {
+        let world = SyncWorld(defaults: defaults, [
+            ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 60)),
+            ("studio", report(active: work.id, order: ["home", "work"], changedAt: now - 600)),
+        ])
+        // grazr with DRY_RUN=1: ok, but nothing rotates.
+        world.answers["studio switch home"] = GrazrSwitchResult(ok: true, output: "DRY_RUN: would rotate work -> home")
+        world.unmoved = ["studio switch home"]
+        await world.enableAndApply()
+        XCTAssertEqual(world.sent, ["studio switch home"])
+        XCTAssertEqual(world.notes, [], "no notification for a switch that did not land")
+        XCTAssertTrue(world.lineTexts.contains("studio: DRY_RUN: would rotate work -> home"), "\(world.lineTexts)")
+
+        // studio is unchanged: not asked again before retryAfter.
+        await world.kick()
+        XCTAssertEqual(world.sent.count, 1)
+        XCTAssertEqual(world.notes, [])
+        XCTAssertTrue(world.lineTexts.contains("studio: DRY_RUN: would rotate work -> home"), "\(world.lineTexts)")
+        world.sync.setEnabled(false)
+    }
+
+    func testARestartAfterAPartialLandingKeepsTheSource() async throws {
+        let world = SyncWorld(defaults: defaults, [
+            ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 600)),
+            ("studio", report(
+                active: work.id, order: ["work", "home"], changedAt: now - 900,
+                blocked: [home.id: GrazrBlock(reason: "rate limited")]
+            )),
+            ("server", report(active: home.id, order: ["home", "work"], changedAt: now - 1_200)),
+        ])
+        await world.enableAndApply()
+        // The order lands and stamps studio newest; the switch cannot.
+        XCTAssertEqual(world.sent, ["studio order home,work"])
+
+        await world.restart()
+        XCTAssertEqual(world.sent, ["studio order home,work"], "nobody is moved to studio's account")
+        XCTAssertEqual(world.sync.planner.target?.source, world.id("laptop"))
+        XCTAssertTrue(world.lineTexts.contains("studio: home is blocked (rate limited), still on work"), "\(world.lineTexts)")
+        world.sync.setEnabled(false)
+    }
+
     func testAnUnreadableDeviceSitsOutAndKeepsItsProblem() async throws {
         let world = SyncWorld(defaults: defaults, [
             ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 60)),
@@ -177,7 +276,7 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         world.onCommand = { name, _ in world.unreadable.insert(world.id(name)) }
         await world.enableAndApply()
         XCTAssertEqual(world.sent, ["studio switch home", "server switch home"])
-        XCTAssertEqual(world.notes.count, 2)
+        XCTAssertEqual(world.notes, [], "not confirmed until they are read")
 
         // Their old "work" reports must not read as two bounces, which would pause the sync.
         await world.kick()
@@ -192,6 +291,8 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         XCTAssertEqual(world.sent.count, 2)
         XCTAssertNil(world.sync.planner.bouncing)
         XCTAssertEqual(world.sync.planner.lastSeen[world.id("studio")]?.activeID, home.id)
+        XCTAssertEqual(world.sync.planner.target?.source, world.id("laptop"), "a pushed state is no change of the follower's")
+        XCTAssertEqual(world.notes.count, 2, "both landings confirmed on the read")
         world.sync.setEnabled(false)
     }
 
@@ -298,13 +399,25 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         formatter.unitsStyle = .short
         let threeMinutesAgo = formatter.localizedString(for: Date(timeIntervalSince1970: now - 180), relativeTo: Date(timeIntervalSince1970: now))
         XCTAssertEqual(lines.map(\.text), [
-            "studio follow laptop (changed \(threeMinutesAgo))",
+            "studio follows laptop (changed \(threeMinutesAgo))",
             "server: home is blocked (401 Unauthorized), still on work",
         ])
         XCTAssertEqual(lines.map(\.tone), [.ok, .warning])
         XCTAssertEqual(lines[1].blockedAccount, home)
         XCTAssertEqual(lines[1].device, serverDevice)
         XCTAssertNil(lines[0].blockedAccount)
+
+        // Two followers read in the plural.
+        let bothFollow = devices.map { device in
+            device.id == server
+                ? GrazrSyncDevice(id: server, name: "server", report: report(active: home.id, order: ["home", "work"], changedAt: now - 3_000))
+                : device
+        }
+        XCTAssertEqual(
+            GrazrSyncCoordinator.lines(planner: planner, pushes: [], results: [:], pushedAnything: true, devices: bothFollow, now: now)
+                .map(\.text),
+            ["studio, server follow laptop (changed \(threeMinutesAgo))"]
+        )
 
         // An older grazr.
         XCTAssertEqual(
@@ -349,11 +462,14 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
 @MainActor
 private final class SyncWorld {
     let model = AppModel()
-    let sync: GrazrSyncCoordinator
+    private let defaults: UserDefaults
+    private(set) var sync: GrazrSyncCoordinator
     var reports: [UUID: GrazrReport] = [:]
     var unreadable: Set<UUID> = []
     /// Keyed "<device> <label>", as in `sent`.
     var answers: [String: GrazrSwitchResult] = [:]
+    /// Commands answered ok that change nothing, as grazr with DRY_RUN=1.
+    var unmoved: Set<String> = []
     var onLoad: ((UUID) async -> Void)?
     var onCommand: ((String, String) -> Void)?
     var loads: [UUID] = []
@@ -362,6 +478,7 @@ private final class SyncWorld {
     var notes: [[String]] = []
 
     init(defaults: UserDefaults, _ devices: [(String, GrazrReport)]) {
+        self.defaults = defaults
         sync = GrazrSyncCoordinator(model: model, defaults: defaults)
         model.devices = devices.map { Device(name: $0.0, kind: .ssh(target: "me@\($0.0)")) }
         for (device, (_, report)) in zip(model.devices, devices) {
@@ -371,6 +488,20 @@ private final class SyncWorld {
             model.sessions[device.id] = state
             reports[device.id] = report
         }
+        wire()
+    }
+
+    /// A new coordinator over the same devices and preferences, started the
+    /// way a launch starts it.
+    func restart() async {
+        sync = GrazrSyncCoordinator(model: model, defaults: defaults)
+        wire()
+        model.grazrSyncStatus = .off
+        sync.startIfEnabled()
+        await sync.pendingRound?.value
+    }
+
+    private func wire() {
         sync.reportLoader = { [unowned self] id in
             self.loads.append(id)
             await self.onLoad?(id)
@@ -383,7 +514,7 @@ private final class SyncWorld {
             self.sent.append("\(device.name) \(label)")
             self.onCommand?(device.name, label)
             let result = self.answers["\(device.name) \(label)"] ?? GrazrSwitchResult(ok: true, output: "done")
-            if result.ok { self.land(label, on: device.id) }
+            if result.ok, !self.unmoved.contains("\(device.name) \(label)") { self.land(label, on: device.id) }
             return try JSONSerialization.data(withJSONObject: ["ok": result.ok, "output": result.output])
         }
         sync.notifier = { [unowned self] title, body, device in self.notes.append([title, body, device]) }
