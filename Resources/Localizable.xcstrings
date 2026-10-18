@@ -6146,6 +6146,22 @@
           }
         }
       }
+    },
+    "Sign in to this account again in a terminal on the device": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sign in to this account again in a terminal on the device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在设备的终端中重新登录此账户"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
