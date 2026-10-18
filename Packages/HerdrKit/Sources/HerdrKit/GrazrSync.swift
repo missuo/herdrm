@@ -247,8 +247,11 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
               !Self.equal(state, GrazrSyncState(orderIDs: target.orderIDs, activeID: target.activeID, changedAt: nil))
         else { return nil }
         let report = device.report
+        let date = Date(timeIntervalSince1970: now)
         let enrolled = Set(report.accounts.map(\.id))
-        let fingerprint = Fingerprint(state: state, blocked: report.blocked.keys.sorted(), enrolled: enrolled.sorted())
+        // Only blocks still in force: one lapsing is a change worth retrying for.
+        let blocked = report.accounts.filter { report.block(for: $0, now: date) != nil }.map(\.id).sorted()
+        let fingerprint = Fingerprint(state: state, blocked: blocked, enrolled: enrolled.sorted())
         if let attempt = attempts[device.id], attempt.targetAt == target.at,
            attempt.fingerprint == fingerprint, now - attempt.at < Self.retryAfter {
             return nil
@@ -265,7 +268,8 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
         if let account = target.activeID, account != state.activeID {
             if !enrolled.contains(account) {
                 problem = .notEnrolled(accountID: account)
-            } else if let block = report.blocked[account] {
+            } else if let block = report.accounts.first(where: { $0.id == account })
+                .flatMap({ report.block(for: $0, now: date) }) {
                 problem = .blocked(accountID: account, reason: block.reason)
             } else if report.heldAccountIDs.contains(account) {
                 problem = .pinned(accountID: account)
@@ -277,7 +281,7 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
 
         let hadHeadroom = switchTo
             .flatMap { id in report.accounts.first { $0.id == id } }
-            .map { report.hasHeadroom($0, now: Date(timeIntervalSince1970: now)) } ?? false
+            .map { report.hasHeadroom($0, now: date) } ?? false
         attempts[device.id] = Attempt(
             targetAt: target.at, fingerprint: fingerprint, at: now,
             pushedAccount: switchTo, hadHeadroom: hadHeadroom, source: target.source

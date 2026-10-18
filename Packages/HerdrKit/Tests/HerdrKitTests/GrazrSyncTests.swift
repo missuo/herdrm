@@ -10,14 +10,14 @@ final class GrazrSyncTests: XCTestCase {
     private func device(
         _ name: String, id: UUID, order: [String], active: String,
         accounts: [(id: String, name: String)] = standard,
-        blocked: [String: String] = [:], pins: [String: String] = [:],
+        blocked: [String: String] = [:], blockedUntil: Double? = nil, pins: [String: String] = [:],
         windows: [String: [GrazrWindow]] = [:], changedAt: Double?
     ) -> GrazrSyncDevice {
         let report = GrazrReport(
             active: active,
             accounts: accounts.map { GrazrAccount(id: $0.id, name: $0.name, windows: windows[$0.id] ?? []) },
             order: order,
-            blocked: blocked.mapValues { GrazrBlock(reason: $0) },
+            blocked: blocked.mapValues { GrazrBlock(reason: $0, until: blockedUntil) },
             pins: pins.mapValues { GrazrPin(account: $0) },
             changedAt: changedAt
         )
@@ -156,6 +156,19 @@ final class GrazrSyncTests: XCTestCase {
 
         let retried = planner.observe([device("a", id: A, order: gi, active: "g", changedAt: 1000), b], now: 30)
         XCTAssertEqual(retried, [push(A, to: "i")])
+    }
+
+    func testAnExpiredBlockIsNotABlock() {
+        let now = 1_000_000.0
+        let b = device("b", id: B, order: gi, active: "i", changedAt: 2000)
+
+        var expired = GrazrSyncPlanner()
+        let lapsed = device("a", id: A, order: gi, active: "g", blocked: ["i": "rate limited"], blockedUntil: now - 10, changedAt: 1000)
+        XCTAssertEqual(expired.observe([lapsed, b], now: now), [push(A, to: "i")])
+
+        var current = GrazrSyncPlanner()
+        let held = device("a", id: A, order: gi, active: "g", blocked: ["i": "rate limited"], blockedUntil: now + 10, changedAt: 1000)
+        XCTAssertEqual(current.observe([held, b], now: now), [push(A, problem: .blocked(accountID: "i", reason: "rate limited"))])
     }
 
     func testAPinnedAccountIsNeverPushed() {
