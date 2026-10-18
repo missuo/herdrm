@@ -1505,7 +1505,10 @@ final class AppModel: ObservableObject {
         // An older server without plugin RPCs keeps an empty menu section.
         guard let actions = try? await service.pluginActions() else { return }
         sessions[deviceID]?.pluginActions = PluginActionGroup.menu(actions)
+        let learnedGrazr = sessions[deviceID]?.usesGrazr == false
         sessions[deviceID]?.usesGrazr = actions.contains(where: { $0.pluginID == Grazr.pluginID })
+        // A device connecting after launch joins the account sync now, not a minute later.
+        if learnedGrazr, session(deviceID).usesGrazr { grazrSync.kick() }
         // The first snapshot came before this, so a pane already waiting on
         // the usage-credits dialog when herdrm connected is checked now.
         if let device = device(deviceID) {
@@ -1520,12 +1523,15 @@ final class AppModel: ObservableObject {
     }
 
     /// A failed read keeps the last list; the menu only offers what it shows.
-    func loadGrazrReport(deviceID: UUID) async {
+    /// False then, so the account sync can tell a stale report from a fresh one.
+    @discardableResult
+    func loadGrazrReport(deviceID: UUID) async -> Bool {
         guard let device = device(deviceID),
               let output = try? await DeviceFileService(device: device).run(Grazr.readerCommand),
               let report = try? JSONDecoder().decode(GrazrReport.self, from: output)
-        else { return }
+        else { return false }
         sessions[deviceID]?.grazrReport = report
+        return true
     }
 
     /// Moves Claude on `device` to `account` with grazr, like its swap action

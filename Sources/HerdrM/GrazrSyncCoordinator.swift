@@ -36,11 +36,16 @@ final class GrazrSyncCoordinator {
     /// The latest round started by `setEnabled`, `apply` or `kick`, so a
     /// caller can wait for it.
     private(set) var pendingRound: Task<Void, Never>?
-    /// Rereads a device's grazr into its session. Tests replace it.
-    var reportLoader: @MainActor (UUID) async -> Void
+    /// Rereads a device's grazr into its session; false when it could not,
+    /// which leaves the last report there. Tests replace it.
+    var reportLoader: @MainActor (UUID) async -> Bool
     /// Runs a shell command on a device. Tests replace it.
-    var commandRunner: (Device, String) async throws -> Data = { device, command in
+    var commandRunner: @MainActor (Device, String) async throws -> Data = { device, command in
         try await DeviceFileService(device: device).run(command)
+    }
+    /// Posts a notification: title, body, device name. Tests replace it.
+    var notifier: @MainActor (String, String, String) -> Void = { title, body, deviceName in
+        NotificationManager.shared.postPluginResult(title: title, body: body, deviceName: deviceName)
     }
 
     private var loop: Task<Void, Never>?
@@ -51,6 +56,9 @@ final class GrazrSyncCoordinator {
     /// What each device last could not do, kept until it follows or a push
     /// says otherwise: the planner does not ask an unchanged device again.
     private var problems: [UUID: GrazrSyncProblem] = [:]
+    /// Any command ran since the option went on. Until then the devices
+    /// agreed by themselves.
+    private var pushedAnything = false
 
     init(model: AppModel, defaults: UserDefaults = .standard) {
         self.model = model
@@ -61,14 +69,17 @@ final class GrazrSyncCoordinator {
     var enabled: Bool { defaults.bool(forKey: AppModel.syncAccountsKey) }
 
     /// On shows what the first round would do and pushes nothing until
-    /// `apply`; off stops the loop and forgets everything seen.
+    /// `apply`; off stops the loop and forgets everything seen. On while
+    /// already syncing changes nothing.
     func setEnabled(_ on: Bool) {
+        if on, enabled, loop != nil { return }
         defaults.set(on, forKey: AppModel.syncAccountsKey)
         generation += 1
         loop?.cancel()
         loop = nil
         planner.reset()
         problems = [:]
+        pushedAnything = false
         if on {
             pendingRound = Task { await round(preview: true) }
         } else {
@@ -101,14 +112,18 @@ final class GrazrSyncCoordinator {
         }
     }
 
+    /// A round now (`pendingRound`), then one each `interval`.
     private func startLoop() {
         loop?.cancel()
         let generation = generation
+        let first = Task { await round(preview: false) }
+        pendingRound = first
         loop = Task { [weak self] in
+            await first.value
             while !Task.isCancelled {
-                guard let self, self.generation == generation else { return }
-                await self.round(preview: false)
                 try? await Task.sleep(for: .seconds(Self.interval))
+                guard !Task.isCancelled, let self, self.generation == generation else { return }
+                await self.round(preview: false)
             }
         }
     }
@@ -133,13 +148,17 @@ final class GrazrSyncCoordinator {
 
     private func runRound(preview: Bool, generation: Int) async {
         let group = model.devices.filter { model.sessions[$0.id]?.usesGrazr == true }
-        for device in group { await reportLoader(device.id) }
+        // A device that cannot be read sits this round out with its last state.
+        var unread: Set<UUID> = []
+        for device in group where !(await reportLoader(device.id)) { unread.insert(device.id) }
         guard generation == self.generation else { return }
-        let members = syncDevices(group)
-        guard members.count >= 2 else {
-            model.grazrSyncStatus = .fewDevices(name: members.first?.name)
+        let known = syncDevices(group)
+        guard known.count >= 2 else {
+            model.grazrSyncStatus = .fewDevices(name: known.first?.name)
             return
         }
+        let members = known.filter { !unread.contains($0.id) }
+        guard members.count >= 2 else { return }
         let now = Date().timeIntervalSince1970
 
         if preview {
@@ -147,7 +166,10 @@ final class GrazrSyncCoordinator {
             let pushes = copy.observe(members, now: now)
             let found = Dictionary(pushes.compactMap { push in push.problem.map { (push.device, $0) } }) { $1 }
             model.grazrSyncStatus = .preview(
-                lines: Self.lines(planner: copy, pushes: pushes, results: found, devices: members, now: now, device: model.device),
+                lines: Self.lines(
+                    planner: copy, pushes: pushes, results: found, pushedAnything: pushedAnything,
+                    devices: members, now: now, device: model.device
+                ),
                 pushes: pushes
             )
             return
@@ -162,18 +184,19 @@ final class GrazrSyncCoordinator {
         }
         guard generation == self.generation else { return }
 
-        let fresh = syncDevices(group)
-        if let target = planner.target {
-            let wanted = GrazrSyncState(orderIDs: target.orderIDs, activeID: target.activeID, changedAt: nil)
-            let present = Set(fresh.map(\.id))
-            problems = problems.filter { id, _ in
-                present.contains(id)
-                    && !(fresh.first { $0.id == id }.map { GrazrSyncPlanner.equal(GrazrSyncState(report: $0.report), wanted) } ?? false)
-            }
+        let fresh = syncDevices(group.filter { !unread.contains($0.id) })
+        let inGroup = Set(known.map(\.id))
+        let wanted = planner.target.map { GrazrSyncState(orderIDs: $0.orderIDs, activeID: $0.activeID, changedAt: nil) }
+        // An unread device keeps its problem; one that follows now loses it.
+        problems = problems.filter { id, _ in
+            guard inGroup.contains(id) else { return false }
+            guard let wanted, let report = fresh.first(where: { $0.id == id })?.report else { return true }
+            return !GrazrSyncPlanner.equal(GrazrSyncState(report: report), wanted)
         }
-        model.grazrSyncStatus = .lines(
-            Self.lines(planner: planner, pushes: [], results: problems, devices: fresh, now: now, device: model.device)
-        )
+        model.grazrSyncStatus = .lines(Self.lines(
+            planner: planner, pushes: [], results: problems, pushedAnything: pushedAnything,
+            devices: known.map { device in fresh.first { $0.id == device.id } ?? device }, now: now, device: model.device
+        ))
     }
 
     /// Order first, then the switch. Returns what got in the way, if anything.
@@ -199,19 +222,21 @@ final class GrazrSyncCoordinator {
             switch await command(Grazr.switchCommand(to: account), on: device) {
             case .answered(let result) where result.ok:
                 let name = model.session(device.id).grazrReport?.accounts.first { $0.id == account }?.name ?? account
-                NotificationManager.shared.postPluginResult(
-                    title: String(localized: "grazr: \(device.name) now on \(name)"),
-                    body: String(localized: "following \(sourceName)"),
-                    deviceName: device.name
+                notifier(
+                    String(localized: "grazr: \(device.name) now on \(name)"),
+                    String(localized: "following \(sourceName)"),
+                    device.name
                 )
             case .answered(let result): switchProblem = Self.problem(from: result, accountID: account)
             case .failed(let problem): switchProblem = problem
             }
         }
         let problem = switchProblem ?? orderProblem
-        if ran { await reportLoader(device.id) }
+        // Unread after the push: its state stays unknown, not the old one.
+        let reread = ran ? await reportLoader(device.id) : false
         guard generation == self.generation else { return problem }
-        if ran, let report = model.session(device.id).grazrReport {
+        if ran { pushedAnything = true }
+        if reread, let report = model.session(device.id).grazrReport {
             planner.settle(GrazrSyncDevice(id: device.id, name: device.name, report: report))
         }
         planner.recordResult(device: device.id, problem: problem, now: Date().timeIntervalSince1970)
@@ -254,10 +279,11 @@ final class GrazrSyncCoordinator {
     }
 
     /// The window's lines: a pause, who follows whom, what a preview would
-    /// do, and each device's problem. `device` resolves an id for the lines
-    /// that act on one.
+    /// do, and each device's problem. Before anything was pushed, with
+    /// nothing to do or report, it reads "All devices in sync". `device`
+    /// resolves an id for the lines that act on one.
     static func lines(
-        planner: GrazrSyncPlanner, pushes: [GrazrSyncPush], results: [UUID: GrazrSyncProblem],
+        planner: GrazrSyncPlanner, pushes: [GrazrSyncPush], results: [UUID: GrazrSyncProblem], pushedAnything: Bool,
         devices: [GrazrSyncDevice], now: Double, device resolve: (UUID) -> Device? = { _ in nil }
     ) -> [GrazrSyncLine] {
         func name(_ id: UUID) -> String { devices.first { $0.id == id }?.name ?? "" }
@@ -278,7 +304,9 @@ final class GrazrSyncCoordinator {
                 tone: .warning, device: nil, blockedAccount: nil
             ))
         }
-        if let target = planner.target {
+        // Nothing to do since the option went on: the devices agree by themselves.
+        let agreed = !pushedAnything && results.isEmpty && pushes.isEmpty && planner.bouncing == nil
+        if !agreed, let target = planner.target {
             let wanted = GrazrSyncState(orderIDs: target.orderIDs, activeID: target.activeID, changedAt: nil)
             let followers = devices
                 .filter { $0.id != target.source && GrazrSyncPlanner.equal(GrazrSyncState(report: $0.report), wanted) }
