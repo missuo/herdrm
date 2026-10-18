@@ -333,6 +333,10 @@ final class AppModel: ObservableObject {
     @Published var terminalToRename: TerminalEntry?
     /// The device whose grazr accounts window is open.
     @Published var grazrAccountsDevice: Device?
+    /// What Sync accounts across devices is doing, for the Accounts window.
+    @Published var grazrSyncStatus: GrazrSyncStatus = .off
+    /// Keeps every grazr device on one order and one active account.
+    lazy var grazrSync = GrazrSyncCoordinator(model: self)
     /// The install's tailcat client public key ("nodekey:…") for hosts' allow
     /// lists. Loaded on demand, so users without tailcat devices never create one.
     @Published var tailcatClientPublicKey: String?
@@ -1324,6 +1328,7 @@ final class AppModel: ObservableObject {
         // the user's running agents merely because a window appears.
         guard ProcessInfo.processInfo.environment["HERDRM_TEST_MODE"] != "1" else { return }
         NotificationManager.shared.setup(model: self)
+        grazrSync.startIfEnabled()
         // Finder-launched apps have launchd's PATH. Capture the login +
         // interactive shell environment on a background thread once; New Agent
         // lookup, herdr spawn, and terminal attach all read the same snapshot.
@@ -1546,6 +1551,7 @@ final class AppModel: ObservableObject {
                 actionError = actionErrorMessage(error, device: device)
             }
             await loadGrazrReport(deviceID: device.id)
+            grazrSync.kick()
             await refresh(device.id)
         }
     }
@@ -2177,6 +2183,8 @@ final class AppModel: ObservableObject {
 
     /// Settings › Agents: answer Claude's usage-credits dialog by switching model.
     static let autoModelSwitchKey = "grazr.autoModelSwitch"
+    /// Keep every device's grazr on one order and active account (`GrazrSyncCoordinator`).
+    static let syncAccountsKey = "grazr.syncAccounts"
 
     /// When the week's Fable allowance is spent, Claude Code stops before its
     /// next request and asks whether to switch to its fallback model or pay
@@ -2467,6 +2475,8 @@ final class AppModel: ObservableObject {
             } catch {
                 actionError = actionErrorMessage(error, device: device)
             }
+            // grazr's own swap moved this device; the others follow.
+            if action.pluginID == Grazr.pluginID { grazrSync.kick() }
         }
     }
 
