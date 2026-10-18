@@ -5858,6 +5858,294 @@
           }
         }
       }
+    },
+    "Keep accounts in sync across devices": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Keep accounts in sync across devices"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "在设备之间保持账户同步"
+          }
+        }
+      }
+    },
+    "Order and active account follow the device that changed last. Pins and thresholds stay per device.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Order and active account follow the device that changed last. Pins and thresholds stay per device."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "顺序和当前账户跟随最近更改的设备。固定和阈值保持每台设备各自独立。"
+          }
+        }
+      }
+    },
+    "Apply": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Apply"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "应用"
+          }
+        }
+      }
+    },
+    "%@ will move to %@ and take %@'s order": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ will move to %@ and take %@'s order"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 将切换到 %2$@ 并采用 %3$@ 的顺序"
+          }
+        }
+      }
+    },
+    "%@ will take %@'s order": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ will take %@'s order"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 将采用 %2$@ 的顺序"
+          }
+        }
+      }
+    },
+    "%@ follow %@ (changed %@)": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ follow %@ (changed %@)"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 跟随 %2$@（%3$@ 更改）"
+          }
+        }
+      }
+    },
+    "%@ follow %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ follow %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@ 跟随 %2$@"
+          }
+        }
+      }
+    },
+    "All devices in sync": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "All devices in sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "所有设备已同步"
+          }
+        }
+      }
+    },
+    "%@: %@ is blocked (%@), still on %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: %@ is blocked (%@), still on %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@：%2$@ 已被阻止（%3$@），仍在 %4$@"
+          }
+        }
+      }
+    },
+    "%@: %@ is not enrolled": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: %@ is not enrolled"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@：%2$@ 未注册"
+          }
+        }
+      }
+    },
+    "%@: %@ is pinned to an agent": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: %@ is pinned to an agent"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@：%2$@ 已固定到某个代理"
+          }
+        }
+      }
+    },
+    "grazr on %@ needs 0.4.7+senad.4 or later": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "grazr on %@ needs 0.4.7+senad.4 or later"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 上的 grazr 需要 0.4.7+senad.4 或更高版本"
+          }
+        }
+      }
+    },
+    "Sync paused: %@ and %@ keep undoing each other. Check that their thresholds match.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sync paused: %@ and %@ keep undoing each other. Check that their thresholds match."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "同步已暂停：%1$@ 和 %2$@ 不断互相撤销。请检查它们的阈值是否一致。"
+          }
+        }
+      }
+    },
+    "Only %@ runs grazr, nothing to sync yet": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Only %@ runs grazr, nothing to sync yet"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只有 %@ 在运行 grazr，暂时没有可同步的内容"
+          }
+        }
+      }
+    },
+    "grazr: %@ now on %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "grazr: %@ now on %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "grazr：%1$@ 现在使用 %2$@"
+          }
+        }
+      }
+    },
+    "following %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "following %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随 %@"
+          }
+        }
+      }
+    },
+    "no account": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "no account"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无账户"
+          }
+        }
+      }
+    },
+    "%@: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@：%2$@"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

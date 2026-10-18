@@ -5,6 +5,16 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- **Accounts in sync across devices.** The Claude Accounts window can keep
+  every device that runs grazr on one account order and one active account.
+  The device that changed last wins: a rotation or a swap on one host reaches
+  the others within a minute, a host that cannot follow (account blocked or
+  not enrolled there) says so, and pins stay untouched. Needs grazr
+  0.4.7+senad.4.
+
 ## [0.6.18] - 2026-10-17
 
 ### Added

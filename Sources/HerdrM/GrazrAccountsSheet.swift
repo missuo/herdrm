@@ -6,6 +6,8 @@ import SwiftUI
 struct GrazrAccountsSheet: View {
     @ObservedObject var model: AppModel
     let device: Device
+    /// Tests turn this off so the window runs no command.
+    var autoload: Bool = true
     @Environment(\.dismiss) private var dismiss
     @State private var report: GrazrReport?
     @State private var failure: String?
@@ -60,6 +62,10 @@ struct GrazrAccountsSheet: View {
 
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
+            GrazrSyncSection(model: model, device: device)
+
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+
             HStack {
                 Button {
                     Task { await load(askClaude: true) }
@@ -97,7 +103,7 @@ struct GrazrAccountsSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 520)
-        .task { await load() }
+        .task { if autoload { await load() } }
     }
 
     /// grazr moves Claude between accounts but cannot see the Fable limit:
@@ -232,6 +238,7 @@ struct GrazrAccountsSheet: View {
             let output = try await DeviceFileService(device: device).run(Grazr.readerCommand)
             report = try JSONDecoder().decode(GrazrReport.self, from: output)
             failure = nil
+            if model.grazrSync.enabled { model.grazrSync.kick() }
         } catch {
             failure = String(localized: "Could not read grazr's accounts on \(device.name): \(error.localizedDescription)")
         }
