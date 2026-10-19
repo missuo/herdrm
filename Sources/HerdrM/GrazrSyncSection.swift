@@ -41,21 +41,30 @@ struct GrazrSyncSection: View {
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
             ForEach(model.devices.filter { model.sessions[$0.id]?.usesGrazr == true }) { member in
-                Toggle(isOn: Binding(
-                    get: { !excluded.contains(member.id) },
-                    set: { on in
-                        if on { excluded.remove(member.id) } else { excluded.insert(member.id) }
-                        model.grazrSync.setIncluded(on, device: member.id)
-                    }
-                )) {
-                    Text(member.name).font(.system(size: 11))
+                HStack(spacing: 8) {
+                    DeviceIcon(osID: member.osID, isLocal: member.isLocal, size: 12)
+                        .frame(width: 16)
+                    Text(member.name)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer(minLength: 8)
+                    Toggle("", isOn: Binding(
+                        get: { !excluded.contains(member.id) },
+                        set: { on in
+                            if on { excluded.remove(member.id) } else { excluded.insert(member.id) }
+                            model.grazrSync.setIncluded(on, device: member.id)
+                        }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                    .accessibilityLabel(member.name)
+                    .accessibilityIdentifier("grazr.sync.device.\(member.id.uuidString)")
                 }
-                .toggleStyle(.switch)
-                .controlSize(.mini)
-                .accessibilityLabel(member.name)
-                .accessibilityIdentifier("grazr.sync.device.\(member.id.uuidString)")
+                .frame(minHeight: 22)
             }
         }
+        .padding(.top, 2)
         .onAppear {
             excluded = Set(model.devices.map(\.id).filter { !model.grazrSync.isIncluded($0) })
         }
