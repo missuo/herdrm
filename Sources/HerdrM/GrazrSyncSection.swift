@@ -33,38 +33,35 @@ struct GrazrSyncSection: View {
         .onAppear { syncing = model.grazrSync.enabled }
     }
 
-    /// Every device that runs grazr, with a switch to leave it out.
+    /// Every device that runs grazr, with a box to leave it out.
     private var members: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
             Text("Devices in the sync")
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
                 .accessibilityAddTraits(.isHeader)
             ForEach(model.devices.filter { model.sessions[$0.id]?.usesGrazr == true }) { member in
-                HStack(spacing: 8) {
-                    DeviceIcon(osID: member.osID, isLocal: member.isLocal, size: 12)
-                        .frame(width: 16)
-                    Text(member.name)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textSecondary)
-                    Spacer(minLength: 8)
-                    Toggle("", isOn: Binding(
-                        get: { !excluded.contains(member.id) },
-                        set: { on in
-                            if on { excluded.remove(member.id) } else { excluded.insert(member.id) }
-                            model.grazrSync.setIncluded(on, device: member.id)
-                        }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .accessibilityLabel(member.name)
-                    .accessibilityIdentifier("grazr.sync.device.\(member.id.uuidString)")
+                Toggle(isOn: Binding(
+                    get: { !excluded.contains(member.id) },
+                    set: { on in
+                        if on { excluded.remove(member.id) } else { excluded.insert(member.id) }
+                        model.grazrSync.setIncluded(on, device: member.id)
+                    }
+                )) {
+                    HStack(spacing: 4) {
+                        DeviceIcon(osID: member.osID, isLocal: member.isLocal, size: 11)
+                        Text(member.name)
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textSecondary)
                 }
-                .frame(minHeight: 22)
+                .toggleStyle(.checkbox)
+                .controlSize(.small)
+                .accessibilityLabel(member.name)
+                .accessibilityIdentifier("grazr.sync.device.\(member.id.uuidString)")
             }
+            Spacer(minLength: 0)
         }
-        .padding(.top, 2)
         .onAppear {
             excluded = Set(model.devices.map(\.id).filter { !model.grazrSync.isIncluded($0) })
         }
