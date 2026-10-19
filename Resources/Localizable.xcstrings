@@ -5891,18 +5891,18 @@
         }
       }
     },
-    "Order and active account follow the device that changed last. Pins and thresholds stay per device.": {
+    "Last change wins. Pins and thresholds stay per device.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Order and active account follow the device that changed last. Pins and thresholds stay per device."
+            "value": "Last change wins. Pins and thresholds stay per device."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "顺序和当前账户跟随最近更改的设备。固定和阈值保持每台设备各自独立。"
+            "value": "最后更改的设备优先。固定和阈值仍按设备设置。"
           }
         }
       }

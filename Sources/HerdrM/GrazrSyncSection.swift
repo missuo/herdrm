@@ -14,7 +14,7 @@ struct GrazrSyncSection: View {
             Toggle(isOn: $syncing) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Keep accounts in sync across devices")
-                    Text("Order and active account follow the device that changed last. Pins and thresholds stay per device.")
+                    Text("Last change wins. Pins and thresholds stay per device.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(.secondary)
                 }
