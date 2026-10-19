@@ -154,6 +154,56 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         alone.sync.setEnabled(false)
     }
 
+    func testADeviceLeftOutIsNeitherReadNorPushedAndTheNewestOfTheRestLeads() async throws {
+        let world = SyncWorld(defaults: defaults, [
+            ("studio", report(active: work.id, order: ["work", "home"], changedAt: now - 100)),
+            ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 200)),
+            ("desk", report(active: home.id, order: ["home", "work"], changedAt: now - 300)),
+        ])
+        world.sync.setEnabled(true)
+        await world.sync.pendingRound?.value
+        guard case .preview(_, let pushes) = world.model.grazrSyncStatus else {
+            return XCTFail("expected a preview, got \(world.model.grazrSyncStatus)")
+        }
+        XCTAssertEqual(Set(pushes.map(\.device)), [world.id("laptop"), world.id("desk")], "studio leads at first")
+        world.sync.apply()
+        await world.sync.pendingRound?.value
+        XCTAssertEqual(world.sent, ["laptop order work,home", "laptop switch work", "desk order work,home", "desk switch work"])
+
+        // studio, the source, is left out: desk (first by name) leads, nothing moves.
+        world.sent = []
+        world.loads = []
+        world.sync.setIncluded(false, device: world.id("studio"))
+        await world.sync.pendingRound?.value
+        XCTAssertFalse(world.sync.isIncluded(world.id("studio")))
+        XCTAssertEqual(defaults.stringArray(forKey: AppModel.syncAccountsExcludedKey), [world.id("studio").uuidString])
+        XCTAssertFalse(world.loads.contains(world.id("studio")), "a device left out is not read")
+        XCTAssertEqual(world.sent, [])
+        guard case .lines(let lines) = world.model.grazrSyncStatus else {
+            return XCTFail("expected status lines, got \(world.model.grazrSyncStatus)")
+        }
+        XCTAssertTrue(lines.contains { $0.text.hasPrefix("laptop follows desk") }, "\(lines.map(\.text))")
+
+        // desk rotates: laptop follows it, studio is untouched.
+        world.reports[world.id("desk")] = report(active: home.id, order: ["work", "home"], changedAt: now)
+        await world.kick()
+        XCTAssertEqual(world.sent, ["laptop switch home"])
+
+        // The choice survives a restart.
+        world.loads = []
+        await world.restart()
+        XCTAssertFalse(world.loads.contains(world.id("studio")))
+
+        // studio rotated on its own while out, newer than desk. Back in, it
+        // follows rather than takes over.
+        world.reports[world.id("studio")] = report(active: work.id, order: ["work", "home"], changedAt: now + 5)
+        world.sync.setIncluded(true, device: world.id("studio"))
+        await world.sync.pendingRound?.value
+        XCTAssertEqual(world.sent, ["laptop switch home", "studio switch home"])
+        XCTAssertNil(defaults.stringArray(forKey: AppModel.syncAccountsExcludedKey)?.first)
+        world.sync.setEnabled(false)
+    }
+
     // MARK: - Pushes
 
     func testApplyWritesTheOrderThenSwitchesAndNotifiesOnce() async throws {

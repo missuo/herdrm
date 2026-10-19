@@ -22,7 +22,10 @@ final class GrazrAccountsSyncUIUXTests: XCTestCase {
         model.devices = [device]
         model.sessions[device.id] = DeviceSessionState()
         model.grazrSyncStatus = status
-        let sheet = GrazrAccountsSheet(model: model, device: device, autoload: false)
+        return host(GrazrAccountsSheet(model: model, device: device, autoload: false))
+    }
+
+    private func host(_ sheet: GrazrAccountsSheet) -> [AccessibilityProbe.Element] {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 900), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.title = "GrazrAccountsSyncUIUX \(UUID().uuidString)"
@@ -53,6 +56,27 @@ final class GrazrAccountsSyncUIUXTests: XCTestCase {
         let apply = elements.first { $0.identifier == "grazr.sync.apply" }
         XCTAssertEqual(apply?.role, "AXButton")
         XCTAssertEqual(apply?.name, "Apply")
+    }
+
+    func testEachGrazrDeviceHasItsOwnSwitch() {
+        let model = AppModel()
+        let device = Device(name: "cloud-dev", kind: .ssh(target: "me@cloud-dev"))
+        let other = Device(name: "cloud-dev2", kind: .ssh(target: "me@cloud-dev2"))
+        model.devices = [device, other]
+        var state = DeviceSessionState()
+        state.usesGrazr = true
+        model.sessions[device.id] = state
+        model.sessions[other.id] = DeviceSessionState()
+        model.grazrSyncStatus = .lines([])
+        let elements = host(GrazrAccountsSheet(model: model, device: device, autoload: false))
+
+        let row = elements.first { $0.identifier == "grazr.sync.device.\(device.id.uuidString)" }
+        XCTAssertNotNil(row, "no switch for cloud-dev in \(elements.map { "\($0.role)|\($0.identifier ?? "")" })")
+        XCTAssertTrue(["AXCheckBox", "AXSwitch"].contains(row?.role ?? ""), "row role is \(row?.role ?? "nil")")
+        XCTAssertEqual(row?.name, "cloud-dev")
+        XCTAssertEqual(row?.value, "1", "a device starts in the sync")
+        XCTAssertNil(elements.first { $0.identifier == "grazr.sync.device.\(other.id.uuidString)" },
+                     "a device without grazr has no switch")
     }
 
     func testBlockedLineOffersReauthenticate() {

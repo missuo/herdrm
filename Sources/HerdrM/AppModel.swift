@@ -2197,6 +2197,8 @@ final class AppModel: ObservableObject {
     /// The planner's `lastSeen`/`target`, so a restart tells a device's own
     /// change from a push HerdrM made (JSON).
     static let syncAccountsStateKey = "grazr.syncAccounts.state"
+    /// Devices the user left out of the sync (uuid strings). Absent means every device is in.
+    static let syncAccountsExcludedKey = "grazr.syncAccounts.excluded"
 
     /// When the week's Fable allowance is spent, Claude Code stops before its
     /// next request and asks whether to switch to its fallback model or pay

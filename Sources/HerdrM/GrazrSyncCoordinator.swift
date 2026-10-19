@@ -134,6 +134,32 @@ final class GrazrSyncCoordinator {
         }
     }
 
+    /// Every grazr device is in the sync unless the user left it out.
+    func isIncluded(_ id: UUID) -> Bool {
+        !(defaults.stringArray(forKey: AppModel.syncAccountsExcludedKey) ?? []).contains(id.uuidString)
+    }
+
+    /// Leaves a device out of the sync, or lets it back in. One left out is
+    /// neither read nor pushed; if it led, a device already in step takes
+    /// over. One let back in follows: what it did while out is not a change
+    /// that wins. The next round (or preview) shows the result.
+    func setIncluded(_ on: Bool, device id: UUID) {
+        var excluded = Set(defaults.stringArray(forKey: AppModel.syncAccountsExcludedKey) ?? [])
+        if on { excluded.remove(id.uuidString) } else { excluded.insert(id.uuidString) }
+        defaults.set(excluded.sorted(), forKey: AppModel.syncAccountsExcludedKey)
+        if on {
+            // Before Apply the preview plans afresh, so no baseline is needed.
+            if enabled, applied { unsettled.insert(id) }
+        } else {
+            planner.forget(id)
+            problems[id] = nil
+            unsettled.remove(id)
+            unconfirmed[id] = nil
+        }
+        if enabled, applied { save() }
+        kick()
+    }
+
     /// One round now. Before Apply it only refreshes the preview.
     func kick() {
         guard enabled else { return }
@@ -199,7 +225,7 @@ final class GrazrSyncCoordinator {
     }
 
     private func runRound(preview: Bool, generation: Int) async {
-        let group = model.devices.filter { model.sessions[$0.id]?.usesGrazr == true }
+        let group = model.devices.filter { model.sessions[$0.id]?.usesGrazr == true && isIncluded($0.id) }
         // A device that cannot be read sits this round out with its last state.
         var unread: Set<UUID> = []
         for device in group where !(await reportLoader(device.id)) { unread.insert(device.id) }
@@ -267,7 +293,7 @@ final class GrazrSyncCoordinator {
         let pushes = planner.observe(members, now: now)
         let sourceName = planner.target.flatMap { target in members.first { $0.id == target.source }?.name } ?? ""
         for push in pushes where push.device != planner.target?.source {
-            guard generation == self.generation, let device = model.device(push.device) else { continue }
+            guard generation == self.generation, isIncluded(push.device), let device = model.device(push.device) else { continue }
             let problem = await execute(push, on: device, sourceName: sourceName, generation: generation)
             if generation == self.generation { problems[push.device] = problem }
         }

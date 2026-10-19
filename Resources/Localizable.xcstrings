@@ -5859,6 +5859,22 @@
         }
       }
     },
+    "Devices in the sync": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Devices in the sync"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "参与同步的设备"
+          }
+        }
+      }
+    },
     "Keep accounts in sync across devices": {
       "localizations": {
         "en": {
@@ -6099,18 +6115,18 @@
         }
       }
     },
-    "Only %@ runs grazr, nothing to sync yet": {
+    "Only %@ is in the sync, nothing to sync yet": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Only %@ runs grazr, nothing to sync yet"
+            "value": "Only %@ is in the sync, nothing to sync yet"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "只有 %@ 在运行 grazr，暂时没有可同步的内容"
+            "value": "只有 %@ 参与同步，暂时没有可同步的内容"
           }
         }
       }

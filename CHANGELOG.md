@@ -12,7 +12,8 @@ the Sparkle update description — a release without a section here fails CI.
   every device that runs grazr on one account order and one active account.
   The device that changed last wins: a rotation or a swap on one host reaches
   the others within a minute, a host that cannot follow (account blocked or
-  not enrolled there) says so, and pins stay untouched. Needs grazr
+  not enrolled there) says so, and pins stay untouched. Each device has its
+  own switch, so one can keep rotating on its own. Needs grazr
   0.4.7+senad.4.
 
 ## [0.6.18] - 2026-10-17

@@ -214,6 +214,31 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
         self = GrazrSyncPlanner()
     }
 
+    /// A device left out of the sync. If it was the source, a device already
+    /// on the target takes the lead (the first by name); with none, nothing
+    /// moves until a device changes. What the others were seen as stays, so
+    /// a push HerdrM made is not taken for a change of theirs. A pause it
+    /// caused ends with it.
+    public mutating func forget(_ id: UUID) {
+        attempts[id] = nil
+        lastSeen[id] = nil
+        names[id] = nil
+        for (device, attempt) in attempts where attempt.source == id { attempts[device]?.pushedAccount = nil }
+        if let target, target.source == id {
+            let wanted = GrazrSyncState(orderIDs: target.orderIDs, activeID: target.activeID, changedAt: nil)
+            // Only a device seen this run: one that left unasked has no name.
+            let heir = lastSeen.filter { names[$0.key] != nil && Self.equal($0.value, wanted) }.keys
+                .min { names[$0]! < names[$1]! }
+            self.target = heir.map {
+                GrazrSyncTarget(orderIDs: target.orderIDs, activeID: target.activeID, at: target.at, source: $0)
+            }
+        }
+        if bouncing?.source == id || bouncing?.follower == id {
+            bouncing = nil
+            pausedUntil = nil
+        }
+    }
+
     // MARK: - Steps
 
     /// The newest changed device becomes the target when it is newer than

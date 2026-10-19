@@ -350,6 +350,62 @@ final class GrazrSyncTests: XCTestCase {
         XCTAssertEqual(fresh.observe([a, pushed, c], now: 60), [push(A, to: "g"), push(C, to: "g")], "what a restart did before")
     }
 
+    func testForgettingTheSourceLetsTheNewestRemainingLead() {
+        let work = GrazrAccount(id: "id-work", name: "work"), home = GrazrAccount(id: "id-home", name: "home")
+        func device(_ name: String, active: String, order: [String], at: Double) -> GrazrSyncDevice {
+            GrazrSyncDevice(id: UUID(), name: name, report: GrazrReport(
+                active: active, accounts: [work, home], order: order, blocked: [:], changedAt: at
+            ))
+        }
+        let studio = device("studio", active: work.id, order: ["work", "home"], at: 3_000)
+        let laptop = device("laptop", active: home.id, order: ["home", "work"], at: 2_000)
+        let desk = device("desk", active: work.id, order: ["home", "work"], at: 1_000)
+        var planner = GrazrSyncPlanner()
+        let first = planner.observe([studio, laptop, desk], now: 3_000)
+        XCTAssertEqual(planner.target?.source, studio.id)
+        XCTAssertEqual(Set(first.map(\.device)), [laptop.id, desk.id])
+
+        // studio leaves before anyone followed: no lead, and nothing moves
+        // until a device changes of its own.
+        planner.forget(studio.id)
+        XCTAssertNil(planner.target)
+        XCTAssertEqual(planner.observe([laptop, desk], now: 3_100), [])
+        let moved = GrazrSyncDevice(id: laptop.id, name: "laptop", report: GrazrReport(
+            active: home.id, accounts: [work, home], order: ["work", "home"], blocked: [:], changedAt: 3_100
+        ))
+        let next = planner.observe([moved, desk], now: 3_100)
+        XCTAssertEqual(planner.target?.source, laptop.id)
+        XCTAssertEqual(next.map(\.device), [desk.id])
+        XCTAssertEqual(next.first?.orderNames, ["work", "home"])
+        XCTAssertEqual(next.first?.switchTo, home.id)
+
+        // A follower leaving is forgotten: back, it is asked again.
+        planner.forget(desk.id)
+        XCTAssertEqual(planner.target?.source, laptop.id)
+        XCTAssertEqual(planner.observe([moved, desk], now: 3_200).map(\.device), [desk.id])
+    }
+
+    func testForgettingTheSourceHandsTheLeadToADeviceAlreadyInStep() {
+        var planner = GrazrSyncPlanner()
+        let ig = ["icloud", "gmail"]
+        let blocked = GrazrSyncProblem.blocked(accountID: "i", reason: "rate limited")
+        let a = device("a", id: A, order: ig, active: "i", changedAt: 2000)
+        let c = device("c", id: C, order: ig, active: "i", changedAt: 1500)
+        let b = device("b", id: B, order: gi, active: "g", blocked: ["i": "rate limited"], changedAt: 1000)
+        XCTAssertEqual(planner.observe([a, b, c], now: 0), [push(B, order: ig, problem: blocked)])
+        let pushed = device("b", id: B, order: ig, active: "g", blocked: ["i": "rate limited"], changedAt: 3000)
+        planner.settle(pushed)
+        planner.recordResult(device: B, problem: blocked, now: 0)
+
+        // a leaves: c is on the target and leads; b, stamped newest by the
+        // order push, does not drag c to gmail.
+        planner.forget(A)
+        XCTAssertEqual(planner.target?.source, C)
+        let pushes = planner.observe([pushed, c], now: 120)
+        XCTAssertFalse(pushes.contains { $0.device == C }, "\(pushes)")
+        XCTAssertEqual(planner.target?.activeID, "i")
+    }
+
     func testStateMapsOrderNamesToIDsAndEqualityIgnoresUnsharedAccounts() {
         let listed = GrazrSyncState(report: GrazrReport(
             active: "i", accounts: [GrazrAccount(id: "g", name: "gmail"), GrazrAccount(id: "i", name: "icloud")],
