@@ -91,6 +91,16 @@ public enum Grazr {
         if isinstance(entry, dict):
             report["blocked"][identifier] = {"reason": str(entry.get("reason") or ""), "until": entry.get("until")}
 
+    def mtime(path):
+        try:
+            return os.path.getmtime(path)
+        except OSError:
+            return None
+    rotation = load(os.path.join(state, "last_rotation.json"), {}) or {}
+    stamps = [mtime(config), rotation.get("at") if isinstance(rotation, dict) and isinstance(rotation.get("at"), (int, float)) else None]
+    stamps = [stamp for stamp in stamps if stamp is not None]
+    report["changed_at"] = max(stamps) if stamps else None
+
     report["pins"] = {
         pane: {"account": entry.get("account"), "running": entry.get("running")}
         for pane, entry in (load(os.path.join(state, "pins.json"), {}) or {}).items()
@@ -207,6 +217,16 @@ public enum Grazr {
     public static func unpinCommand(paneID: String) -> String {
         pinsCommand(["unpin", paneID])
     }
+
+    /// Sets `ACCOUNTS` in config.env to `names`, in order. Prints a
+    /// `GrazrSwitchResult`.
+    public static func setAccountsCommand(names: [String]) -> String {
+        pinsCommand(["set", "ACCOUNTS", names.joined(separator: " ")])
+    }
+
+    /// What a grazr from before `set ACCOUNTS` answers with, so a caller can
+    /// tell "update grazr" from a real failure.
+    public static let needsUpdateMarker = "can be set this way"
 
     public static let installPinsCommand = pinsCommand(["pins-install"])
 
@@ -375,9 +395,14 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
     public let pins: [String: GrazrPin]
     /// Whether grazr's `claude` shim is installed, without which a pin waits.
     public let pinsInstalled: Bool
+    /// When the device's rotation last changed (epoch seconds): the newer of
+    /// config.env's mtime and grazr's last rotation. Nil on an older grazr or
+    /// when neither exists.
+    public let changedAt: Double?
 
     enum CodingKeys: String, CodingKey {
         case installed, active, accounts, order, settings, blocked, pins
+        case changedAt = "changed_at"
         case pinsInstalled = "pins_installed"
     }
 
@@ -391,6 +416,7 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         blocked = try container.decode([String: GrazrBlock].self, forKey: .blocked)
         pins = try container.decodeIfPresent([String: GrazrPin].self, forKey: .pins) ?? [:]
         pinsInstalled = try container.decodeIfPresent(Bool.self, forKey: .pinsInstalled) ?? false
+        changedAt = try container.decodeIfPresent(Double.self, forKey: .changedAt)
     }
 
     public init(
@@ -401,7 +427,8 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         settings: [String: String] = [:],
         blocked: [String: GrazrBlock] = [:],
         pins: [String: GrazrPin] = [:],
-        pinsInstalled: Bool = false
+        pinsInstalled: Bool = false,
+        changedAt: Double? = nil
     ) {
         self.installed = installed
         self.active = active
@@ -411,6 +438,7 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         self.blocked = blocked
         self.pins = pins
         self.pinsInstalled = pinsInstalled
+        self.changedAt = changedAt
     }
 
     /// grazr's own defaults when config.env does not say.

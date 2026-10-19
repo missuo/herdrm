@@ -11,6 +11,20 @@ final class GrazrAccountsTests: XCTestCase {
         )
     }
 
+    func testReportDecodesChangedAtWhenPresentAndNilWhenAbsent() throws {
+        let with = try JSONDecoder().decode(GrazrReport.self, from: Data(#"{"installed":true,"accounts":[],"order":[],"settings":{},"blocked":{},"changed_at":1760000000.5}"#.utf8))
+        XCTAssertEqual(with.changedAt, 1760000000.5)
+        let without = try JSONDecoder().decode(GrazrReport.self, from: Data(#"{"installed":true,"accounts":[],"order":[],"settings":{},"blocked":{}}"#.utf8))
+        XCTAssertNil(without.changedAt)
+    }
+
+    #if os(macOS)
+    func testSetAccountsCommandPassesTheNamesAsOneArgument() {
+        let command = Grazr.setAccountsCommand(names: ["work", "home"])
+        XCTAssertTrue(command.contains("'set' 'ACCOUNTS' 'work home'"))
+    }
+    #endif
+
     func testOrdersActiveFirstThenTheConfiguredOrder() {
         let report = GrazrReport(
             active: "c",
