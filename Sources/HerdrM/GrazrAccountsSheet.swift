@@ -117,7 +117,7 @@ struct GrazrAccountsSheet: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .toggleStyle(.switch)
+        .toggleStyle(.checkbox)
         .controlSize(.small)
         .help("When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open.")
         .padding(.horizontal, 16)

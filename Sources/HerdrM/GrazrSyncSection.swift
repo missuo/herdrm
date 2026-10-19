@@ -19,14 +19,17 @@ struct GrazrSyncSection: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .toggleStyle(.switch)
+            .toggleStyle(.checkbox)
             .controlSize(.small)
             .accessibilityIdentifier("grazr.sync.toggle")
             .onChange(of: syncing) { _, on in
                 if on != model.grazrSync.enabled { model.grazrSync.setEnabled(on) }
             }
-            if case .off = model.grazrSyncStatus {} else { members }
-            status
+            Group {
+                if case .off = model.grazrSyncStatus {} else { members }
+                status
+            }
+            .padding(.leading, 18)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
