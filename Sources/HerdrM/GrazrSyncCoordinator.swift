@@ -235,7 +235,17 @@ final class GrazrSyncCoordinator {
                 )
                 return
             }
-            // Nothing would move: no Apply to wait for, this round runs as the first.
+            // Nothing would move. The first enable with nothing to move starts at
+            // once; after a preview with moves (or a launch before Apply) the user
+            // still confirms, even when only the devices that agree were read.
+            if heldForApproval {
+                model.grazrSyncStatus = .preview(
+                    lines: Self.lines(planner: copy, pushes: [], results: [:], pushedAnything: pushedAnything,
+                                      devices: members, now: now, device: model.device),
+                    pushes: []
+                )
+                return
+            }
             markApplied()
             startLoop(roundNow: false)
         }

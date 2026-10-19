@@ -84,6 +84,48 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         XCTAssertNil(defaults.data(forKey: AppModel.syncAccountsStateKey))
     }
 
+    func testARestartBeforeApplyDoesNotAutoApplyWhenOnlyAgreeingDevicesAreRead() async throws {
+        let world = SyncWorld(defaults: defaults, [
+            ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 60)),
+            ("desk", report(active: home.id, order: ["home", "work"], changedAt: now - 120)),
+            ("studio", report(active: work.id, order: ["work", "home"], changedAt: now - 600)),
+        ])
+        world.sync.setEnabled(true)
+        await world.sync.pendingRound?.value
+        guard case .preview(_, let first) = world.model.grazrSyncStatus else {
+            return XCTFail("expected a preview, got \(world.model.grazrSyncStatus)")
+        }
+        XCTAssertEqual(first.map(\.device), [world.id("studio")])
+        XCTAssertEqual(world.sent, [])
+
+        // The window closed without Apply; HerdrM starts again and studio cannot be read yet.
+        world.unreadable = [world.id("studio")]
+        await world.restart()
+        XCTAssertEqual(world.sent, [], "a launch before Apply pushes nothing")
+        XCTAssertFalse(defaults.bool(forKey: AppModel.syncAccountsAppliedKey))
+        guard case .preview(let lines, let none) = world.model.grazrSyncStatus else {
+            return XCTFail("expected a preview, got \(world.model.grazrSyncStatus)")
+        }
+        XCTAssertEqual(none, [])
+        XCTAssertTrue(lines.contains { $0.text == "All devices in sync" }, "\(lines.map(\.text))")
+
+        // studio is readable again: the preview shows its move, still nothing sent.
+        world.unreadable = []
+        await world.kick()
+        guard case .preview(_, let again) = world.model.grazrSyncStatus else {
+            return XCTFail("expected a preview, got \(world.model.grazrSyncStatus)")
+        }
+        XCTAssertEqual(again.map(\.device), [world.id("studio")])
+        XCTAssertEqual(world.sent, [])
+        XCTAssertFalse(defaults.bool(forKey: AppModel.syncAccountsAppliedKey))
+
+        world.sync.apply()
+        await world.sync.pendingRound?.value
+        XCTAssertEqual(world.sent, ["studio order home,work", "studio switch home"])
+        XCTAssertTrue(defaults.bool(forKey: AppModel.syncAccountsAppliedKey))
+        world.sync.setEnabled(false)
+    }
+
     func testAPreviewWithNothingToMoveStartsTheSync() async throws {
         let world = SyncWorld(defaults: defaults, [
             ("laptop", report(active: home.id, order: ["home", "work"], changedAt: now - 60)),
