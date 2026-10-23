@@ -116,6 +116,21 @@ enum TerminalDefaults {
 /// view forwards the effective appearance.
 @MainActor
 enum GhosttyRuntime {
+    private static var symbolMappingCache: [String: [String]] = [:]
+
+    private static func symbolMappings(for family: String) -> [String] {
+        if let cached = symbolMappingCache[family] { return cached }
+        let primary = CTFontCreateWithName(family as CFString, 12, nil)
+        let symbols = CTFontCreateWithName(TerminalDefaults.symbolFallbackFamily as CFString, 12, nil)
+        let mappings = TerminalFontFallback.ranges(
+            primary: CTFontCopyCharacterSet(primary), symbols: CTFontCopyCharacterSet(symbols)
+        ).map { range in
+            "U+\(String(range.lowerBound, radix: 16))-U+\(String(range.upperBound, radix: 16))=\(TerminalDefaults.symbolFallbackFamily)"
+        }
+        symbolMappingCache[family] = mappings
+        return mappings
+    }
+
     static let controller = TerminalController(
         configSource: .none,
         theme: makeTheme()
@@ -124,20 +139,22 @@ enum GhosttyRuntime {
     /// Font settings are hot-applied; surfaces pick the change up without a
     /// rebuild, so this runs from every view update — the controller dedupes.
     static func applyFontSettings(
-        fontName: String, fontSize: Double, fontWeight: Double, lineSpacing: Double, copyOnSelect: Bool
+        fontName: String, fontSize: Double, fontWeight: Double, thinStrokes: Bool,
+        lineSpacing: Double, copyOnSelect: Bool
     ) {
         controller.setTerminalConfiguration(
             fontConfiguration(
                 fontName: fontName, fontSize: fontSize, fontWeight: fontWeight,
-                lineSpacing: lineSpacing, copyOnSelect: copyOnSelect
+                thinStrokes: thinStrokes, lineSpacing: lineSpacing, copyOnSelect: copyOnSelect
             )
         )
     }
 
-    private static func fontConfiguration(
+    static func fontConfiguration(
         fontName: String,
         fontSize: Double,
         fontWeight: Double,
+        thinStrokes: Bool,
         lineSpacing: Double,
         copyOnSelect: Bool
     ) -> TerminalConfiguration {
@@ -149,10 +166,7 @@ enum GhosttyRuntime {
             builder.withCustom("copy-on-select", copyOnSelect ? "clipboard" : "false")
             builder.withCursorStyle(.block)
             builder.withCursorStyleBlink(true)
-            // The controller's base config is TerminalConfiguration.default,
-            // which enables font-thicken — counter it; fake bold at terminal
-            // sizes is what the "thin strokes" default exists to avoid.
-            builder.withFontThicken(false)
+            builder.withFontThicken(!thinStrokes)
             // Option-as-Meta: matches what the SwiftTerm embed did, and the
             // readline chords below (⌥⌫ → ESC DEL etc.) assume it.
             builder.withCustom("macos-option-as-alt", "true")
@@ -176,14 +190,11 @@ enum GhosttyRuntime {
                     builder.withCustom("font-style", face)
                 }
             }
-            // Nerd Font icons live in Unicode's Private Use Area, which
-            // CoreText's default cascade never resolves. A second font-family
-            // entry would be Ghostty's fallback list, but Ghostty then derives
-            // cell metrics from the symbols font (square advance == line height),
-            // wrecking the grid — so the PUA ranges are codepoint-mapped instead.
-            builder.withCustom("font-codepoint-map", "U+E000-U+F8FF=\(TerminalDefaults.symbolFallbackFamily)")
-            builder.withCustom("font-codepoint-map", "U+F0000-U+FFFFD=\(TerminalDefaults.symbolFallbackFamily)")
-            builder.withCustom("font-codepoint-map", "U+100000-U+10FFFD=\(TerminalDefaults.symbolFallbackFamily)")
+            // Keep the primary face's icon proportions. Map only missing symbols
+            // without letting a fallback family change the terminal cell metrics.
+            for mapping in symbolMappings(for: fontName.isEmpty ? "SF Mono" : fontName) {
+                builder.withCustom("font-codepoint-map", mapping)
+            }
             if lineSpacing != TerminalDefaults.defaultLineSpacing {
                 let percent = Int(((lineSpacing - 1.0) * 100).rounded())
                 builder.withCustom("adjust-cell-height", "\(percent)%")
@@ -420,8 +431,8 @@ private enum ClipboardFileError: LocalizedError {
 /// press. Turning Mouse Reporting off keeps every gesture local.
 ///
 /// IME: Ghostty implements `NSTextInputClient` itself and renders the marked
-/// text in the grid; the only hook needed here is keeping ⌘/⌃ chords off the
-/// PTY while `hasMarkedText()`.
+/// text in the grid. Host hooks keep ⌘/⌃ chords off the PTY during composition
+/// and expose valid insertion ranges to external input methods.
 final class LineBreakTerminalView: AppTerminalView {
     /// When false, mouse button events always stay local even if the TUI
     /// requested mouse reporting (Shift bypasses it either way).
@@ -1316,6 +1327,28 @@ final class LineBreakTerminalView: AppTerminalView {
 
     // MARK: Accessibility
 
+    // Report the terminal cursor as a valid insertion point when no composition
+    // is active. During IME composition, preserve the marked text's own ranges.
+    override func selectedRange() -> NSRange {
+        hasMarkedText() ? super.selectedRange() : accessibilitySelectedTextRange()
+    }
+
+    override func markedRange() -> NSRange {
+        hasMarkedText() ? super.markedRange() : NSRange(location: 0, length: 0)
+    }
+
+    override func characterIndex(for point: NSPoint) -> Int { 0 }
+
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        var rect = super.firstRect(forCharacterRange: range, actualRange: actualRange)
+        if range.length == 0 {
+            if range.location != NSNotFound { rect.origin.x += rect.width * Double(range.location) }
+            rect.size.width = 0
+        }
+        actualRange?.pointee = range
+        return rect
+    }
+
     // Dictation tools (Typeless and the like) paste with ⌘V and then look for
     // a focused text area to confirm the insert landed. Without an
     // accessibility role the terminal reads as "no text field", and the tool
@@ -2091,8 +2124,7 @@ struct AttachTerminalView: NSViewRepresentable {
     var agentKind: String? = nil
     var fontName: String = ""
     var fontSize: Double = TerminalDefaults.defaultFontSize
-    /// No longer maps to anything: Ghostty's renderer has no font-smoothing
-    /// toggle. The setting stays so existing preferences keep syncing.
+    /// Disable Ghostty's extra stem thickening when thin strokes are requested.
     var thinStrokes: Bool = true
     var fontWeight: Double = TerminalDefaults.defaultFontWeight
     var lineSpacing: Double = TerminalDefaults.defaultLineSpacing
@@ -2269,7 +2301,7 @@ struct AttachTerminalView: NSViewRepresentable {
 @MainActor
 func applyTerminalAppearance(
     _ view: LineBreakTerminalView,
-    fontName: String, fontSize: Double, thinStrokes _: Bool,
+    fontName: String, fontSize: Double, thinStrokes: Bool,
     fontWeight: Double, lineSpacing: Double, dark: Bool, mouseReporting: Bool,
     copyOnSelect: Bool
 ) {
@@ -2277,6 +2309,7 @@ func applyTerminalAppearance(
         fontName: fontName,
         fontSize: fontSize,
         fontWeight: fontWeight,
+        thinStrokes: thinStrokes,
         lineSpacing: lineSpacing,
         copyOnSelect: copyOnSelect
     )

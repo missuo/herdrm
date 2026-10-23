@@ -1361,18 +1361,18 @@
         }
       }
     },
-    "Turns off macOS font smoothing, which thickens glyph stems and makes agent output — Claude Code's bold text especially — look heavy and smudged.": {
+    "Turns off extra font thickening in the terminal, which can make agent output — especially Claude Code's bold text — look heavy and smudged.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Turns off macOS font smoothing, which thickens glyph stems and makes agent output — Claude Code's bold text especially — look heavy and smudged."
+            "value": "Turns off extra font thickening in the terminal, which can make agent output — especially Claude Code's bold text — look heavy and smudged."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "关闭 macOS 字体平滑。字干被加粗后，Agent 输出——尤其是 Claude Code 的粗体——会显得又重又糊。"
+            "value": "关闭终端字体的额外加粗效果，避免 Agent 输出——尤其是 Claude Code 的粗体文字——显得过重、模糊。"
           }
         }
       }

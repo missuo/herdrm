@@ -30,7 +30,7 @@ struct DeviceFileSortTests {
         #expect(sort.sorted(entries).map(\.name) == ["Folder", "file10", "file2", "link"])
     }
 
-    @Test func equalValuesUseNaturalNameOrder() {
+    @Test func equalValuesUseNaturalNameOrderInTheSelectedDirection() {
         var sort = DeviceFileSort()
         let tied = ["report10", "report2"].map {
             DeviceFileEntry(name: $0, path: "/\($0)", kind: .regularFile,
@@ -38,8 +38,10 @@ struct DeviceFileSortTests {
         }
         for column in [DeviceFileSort.Column.size, .modified] {
             sort.select(column)
-            #expect(sort.sorted(tied).map(\.name) == ["report2", "report10"])
+            #expect(!sort.ascending)
+            #expect(sort.sorted(tied).map(\.name) == ["report10", "report2"])
             sort.select(column)
+            #expect(sort.ascending)
             #expect(sort.sorted(tied).map(\.name) == ["report2", "report10"])
         }
     }

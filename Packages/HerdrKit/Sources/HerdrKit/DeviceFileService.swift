@@ -1,5 +1,6 @@
 #if os(macOS)
 import Foundation
+import Darwin
 
 public struct DeviceFileEntry: Identifiable, Hashable, Sendable {
     public enum Kind: String, Hashable, Sendable {
@@ -1056,13 +1057,43 @@ private final class CancellableProcess: @unchecked Sendable {
             return process
         }
         guard let runningProcess, runningProcess.isRunning else { return }
+        let signalTarget = ProcessSignalTarget.capture(pid: runningProcess.processIdentifier)
         runningProcess.terminate()
         // A shell that traps TERM defers it until its foreground command returns,
         // so a hung child would keep waitUntilExit() blocked forever. Escalate.
-        let pid = runningProcess.processIdentifier
+        guard let signalTarget else { return }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
-            if runningProcess.isRunning, runningProcess.processIdentifier == pid { kill(pid, SIGKILL) }
+            signalTarget.send(SIGKILL)
         }
+    }
+}
+
+/// An audit token includes the PID's generation, so a delayed signal cannot
+/// target another process that has since reused the same PID.
+struct ProcessSignalTarget: Sendable {
+    let token: audit_token_t
+
+    static func capture(pid: pid_t) -> Self? {
+        guard pid > 0 else { return nil }
+        var task: mach_port_name_t = 0
+        guard task_name_for_pid(mach_task_self_, pid, &task) == KERN_SUCCESS else { return nil }
+        defer { mach_port_deallocate(mach_task_self_, task) }
+
+        var token = audit_token_t()
+        var count = mach_msg_type_number_t(MemoryLayout<audit_token_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &token) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(task, task_flavor_t(TASK_AUDIT_TOKEN), $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS, token.val.5 == UInt32(pid) else { return nil }
+        return Self(token: token)
+    }
+
+    @discardableResult
+    func send(_ signal: Int32) -> Int32 {
+        var token = token
+        return proc_signal_with_audittoken(&token, signal)
     }
 }
 
