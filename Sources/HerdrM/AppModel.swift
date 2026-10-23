@@ -199,6 +199,7 @@ final class AppModel: ObservableObject {
             }
             noteVisibleAttachSessions()
             if let pane = selectedPane, pane != oldValue {
+                recordRecentPane(pane)
                 snapPaneViewportToBottom(pane)
                 refreshSelectedTabLayout()
             }
@@ -277,6 +278,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var unreadAgents: Set<AgentUnreadKey> = []
     /// New Agent's Recent list: the last launches, newest first.
     @Published private(set) var recentLaunches: [RecentAgentLaunch] = RecentAgentLaunches.load()
+    /// Panes in the order they were last selected, newest first, for ⌃Tab.
+    /// Kept across launches; a device's closed panes drop out when it reports.
+    @Published private(set) var recentPanes: [RecentPane]
+    private let recentPanesDefaults: UserDefaults
+    /// The open ⌃Tab session; nil when no switch is in progress.
+    @Published private(set) var paneSwitcher: RecentSwitcher<PaneRef>?
+    /// The switcher panel is on screen. A quick tap switches without showing it.
+    @Published var paneSwitcherShown = false
 
     @Published var showAddDevice = false
     @Published var showNewAgent = false
@@ -392,7 +401,9 @@ final class AppModel: ObservableObject {
     /// blocked, so a later spell is checked again.
     private var modelSwitchChecked: [UUID: Set<String>] = [:]
 
-    init() {
+    init(recentPanesDefaults: UserDefaults = .standard) {
+        self.recentPanesDefaults = recentPanesDefaults
+        recentPanes = RecentPanes.load(from: recentPanesDefaults)
         let loaded = DeviceStore().load()
         devices = loaded
         // Restore the device filter only if that device still exists;
@@ -1328,6 +1339,92 @@ final class AppModel: ObservableObject {
         if shellSplitAxis != nil, showSearch { pendingSplitAgentFocus = true }
     }
 
+    // MARK: - Recent switcher (⌃Tab)
+
+    private func recordRecentPane(_ pane: PaneRef) {
+        recentPanes = RecentPanes.recording(RecentPane(deviceID: pane.deviceID, paneID: pane.paneID), into: recentPanes)
+        RecentPanes.save(recentPanes, to: recentPanesDefaults)
+    }
+
+    private func pruneRecentPanes(deviceID: UUID, keeping paneIDs: Set<String>) {
+        let pruned = RecentPanes.pruning(recentPanes, deviceID: deviceID, keeping: paneIDs)
+        guard pruned != recentPanes else { return }
+        recentPanes = pruned
+        RecentPanes.save(recentPanes, to: recentPanesDefaults)
+    }
+
+    private func forgetRecentPanes(on deviceID: UUID) {
+        recentPanes = RecentPanes.removingDevice(deviceID, from: recentPanes)
+        RecentPanes.save(recentPanes, to: recentPanesDefaults)
+    }
+
+    /// Every agent and herdr terminal on every device, whatever the device
+    /// filter says (like ⌘K): the most recently selected first, then the rest
+    /// in device and tab order. A disconnected device keeps its last snapshot,
+    /// so its panes stay listed.
+    var switcherEntries: [AttachedEntry] {
+        let all: [AttachedEntry] = devices.flatMap { device in
+            let agents = session(device.id).agents
+                .map { agentEntry(device: device, agent: $0) }
+                .sorted {
+                    let w0 = workspaceRank(deviceID: device.id, workspaceID: $0.agent.workspaceID)
+                    let w1 = workspaceRank(deviceID: device.id, workspaceID: $1.agent.workspaceID)
+                    if w0 != w1 { return w0 < w1 }
+                    return tabRank(deviceID: device.id, tabID: $0.agent.tabID)
+                        < tabRank(deviceID: device.id, tabID: $1.agent.tabID)
+                }
+            return agents.map(AttachedEntry.agent) + terminalEntries(for: device).map(AttachedEntry.terminal)
+        }
+        let byRef = Dictionary(all.map { ($0.ref, $0) }, uniquingKeysWith: { first, _ in first })
+        let recent = recentPanes.map { PaneRef(deviceID: $0.deviceID, paneID: $0.paneID) }
+        return RecentPanes.ordered(all.map(\.ref), recent: recent).compactMap { byRef[$0] }
+    }
+
+    /// The pane the detail area is showing, if any: not while a standalone
+    /// shell or the file manager covers it.
+    private var paneOnScreen: PaneRef? {
+        selectedShellID == nil && !isFileManagerActive ? selectedPane : nil
+    }
+
+    /// ⌃Tab (`backward` for ⌃⇧Tab). The first press opens a session on the
+    /// previous pane; each further press steps through the list and shows it.
+    func paneSwitcherTab(backward: Bool) {
+        if paneSwitcher != nil {
+            paneSwitcher?.step(backward: backward)
+            paneSwitcherShown = true
+            return
+        }
+        paneSwitcher = RecentSwitcher(items: switcherEntries.map(\.ref), current: paneOnScreen, backward: backward)
+    }
+
+    /// ↑/↓ in the open panel.
+    func paneSwitcherStep(backward: Bool) {
+        paneSwitcher?.step(backward: backward)
+    }
+
+    /// Releasing ⌃ (or Return, or a click): go to the highlighted pane.
+    func commitPaneSwitch() {
+        guard let ref = paneSwitcher?.selection else { return }
+        endPaneSwitch()
+        // The list was fixed when it opened; the pane may have closed since.
+        guard attachedEntry(for: ref) != nil else { return }
+        reveal(ref)
+    }
+
+    func choosePaneSwitch(_ ref: PaneRef) {
+        paneSwitcher?.highlight(ref)
+        commitPaneSwitch()
+    }
+
+    func cancelPaneSwitch() {
+        endPaneSwitch()
+    }
+
+    private func endPaneSwitch() {
+        paneSwitcher = nil
+        paneSwitcherShown = false
+    }
+
     // MARK: - Shell terminals
 
     func openFileManager() {
@@ -1452,6 +1549,7 @@ final class AppModel: ObservableObject {
         for device in devices where device.isNamedSession && !discoveredIDs.contains(device.id) {
             stopSession(device.id)
             attachSessions.removeAll { $0.device.id == device.id }
+            forgetRecentPanes(on: device.id)
             devices.removeAll { $0.id == device.id }
             if deviceFilter == device.id { deviceFilter = nil }
             if selectedSpace?.deviceID == device.id { selectedSpace = nil }
@@ -2080,6 +2178,7 @@ final class AppModel: ObservableObject {
         if sshAuthenticationRequest?.deviceID == device.id { sshAuthenticationRequest = nil }
         stopSession(device.id)
         attachSessions.removeAll { $0.device.id == device.id }
+        forgetRecentPanes(on: device.id)
         devices.removeAll { $0.id == device.id }
         store.save(devices)
         if deviceFilter == device.id { deviceFilter = nil }
@@ -2168,6 +2267,7 @@ final class AppModel: ObservableObject {
                 $0.device.id == deviceID
                     && (!paneIDs.contains($0.ref.paneID) || attachedEntry(for: $0.ref)?.id != $0.id)
             }
+            pruneRecentPanes(deviceID: deviceID, keeping: paneIDs)
             if let tabs = snapshot.tabs {
                 let tabIDs = Set(tabs.map(\.tabID))
                 tabLayouts = tabLayouts.filter { $0.key.deviceID != deviceID || tabIDs.contains($0.key.tabID) }

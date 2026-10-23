@@ -5,6 +5,19 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- **⌃Tab switches to recent agents and terminals, like ⌘Tab (#156).** One
+  tap goes back to the agent or terminal you were just in, and tapping again
+  flips back. Hold ⌃ and keep pressing Tab to show the list, most recently
+  used first: each Tab steps one further back, ⇧Tab steps forward, releasing ⌃
+  opens the highlighted pane, and Esc cancels. The list stays in the same order
+  while you choose and covers every device, whatever the device filter is set
+  to (as ⌘K does). Each entry shows its name, status, space and device, and
+  can be clicked. Panes on a disconnected device stay in the list, dimmed. The
+  order is remembered across launches.
+
 ## [0.6.21] - 2026-10-21
 
 ### Fixed

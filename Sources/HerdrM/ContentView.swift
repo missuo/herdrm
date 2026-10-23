@@ -73,6 +73,7 @@ struct RootView: View {
                 )
             }
         }
+        .paneSwitcher(model: model)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: model.showDevicePanel)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: model.showMachineStats)
         .background(

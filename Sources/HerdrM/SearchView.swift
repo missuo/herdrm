@@ -143,10 +143,10 @@ struct SearchSheet: View {
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
             HStack(spacing: 12) {
-                hint("↑↓", "navigate")
-                hint("↩", "open")
+                KeyHint(key: "↑↓", label: "navigate")
+                KeyHint(key: "↩", label: "open")
                 Spacer()
-                hint("esc", "cancel")
+                KeyHint(key: "esc", label: "cancel")
             }
             .padding(.horizontal, 14)
             .frame(height: 28)
@@ -156,64 +156,14 @@ struct SearchSheet: View {
         .onChange(of: query) { _, _ in highlighted = 0 }
     }
 
-    private func hint(_ key: String, _ label: LocalizedStringKey) -> some View {
-        HStack(spacing: 4) {
-            Text(key)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.horizontal, 4)
-                .frame(height: 16)
-                .background(Theme.itemWash, in: RoundedRectangle(cornerRadius: 4))
-            Text(label)
-                .font(.system(size: 10.5))
-                .foregroundStyle(Theme.textGhost)
-        }
-    }
-
     @ViewBuilder
     private func row(_ result: Result, isHighlighted: Bool) -> some View {
         HStack(spacing: 9) {
             switch result {
             case .agent(let entry):
-                if let resource = BrandIconLoader.agentIcon(for: entry.agent.agent) {
-                    BrandIcon(resource: resource, size: 13)
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 16)
-                } else {
-                    Image(systemName: "sparkle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .frame(width: 16)
-                }
-                Text(entry.title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                AgentStatusGlyph(status: entry.agent.status, unreadDone: model.isUnread(entry))
-                Spacer(minLength: 8)
-                if entry.agent.status == .blocked {
-                    Text("needs input")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.warning)
-                }
-                trailing(
-                    "\(entry.agent.agent) · \(model.spaceName(deviceID: entry.device.id, workspaceID: entry.agent.workspaceID))",
-                    device: entry.device
-                )
+                PaneRowLabel(model: model, entry: .agent(entry))
             case .terminal(let entry):
-                Image(systemName: "terminal")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 16)
-                Text(entry.title)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                Spacer(minLength: 8)
-                trailing(
-                    String(localized: "Terminal · \(model.spaceName(deviceID: entry.device.id, workspaceID: entry.pane.workspaceID))"),
-                    device: entry.device
-                )
+                PaneRowLabel(model: model, entry: .terminal(entry))
             case .space(let entry):
                 Image(systemName: "folder")
                     .font(.system(size: 12))
@@ -224,7 +174,11 @@ struct SearchSheet: View {
                     .foregroundStyle(Theme.text)
                     .lineLimit(1)
                 Spacer(minLength: 8)
-                trailing(String(localized: "Space · \(model.agentCount(in: entry)) agents"), device: entry.device)
+                RowTrailing(
+                    model: model,
+                    text: String(localized: "Space · \(model.agentCount(in: entry)) agents"),
+                    device: entry.device
+                )
             }
         }
         .padding(.horizontal, 10)
@@ -234,19 +188,6 @@ struct SearchSheet: View {
                 .fill(isHighlighted ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
         )
         .contentShape(Rectangle())
-    }
-
-    @ViewBuilder
-    private func trailing(_ text: String, device: Device) -> some View {
-        HStack(spacing: 5) {
-            Text(text)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-            if model.showsDeviceBadges {
-                DeviceChip(device: device)
-            }
-        }
     }
 
     private func chooseHighlighted() {
