@@ -8,6 +8,19 @@ import HerdrKit
 final class SidebarSpaceRowMenuUIUXTests: XCTestCase {
     private let remote = Device(name: "test-server", kind: .ssh(target: "test.invalid"))
 
+    func testGlobalNewAgentUsesTheViewedRemoteAgentInAllSpaces() throws {
+        let sidebar = try SidebarHarness(spaces: 3, agents: 3, device: remote, sheets: true, pinnedHeaders: false)
+        try sidebar.clickAgentTitleWithoutSettling("Agent 2")
+        XCTAssertNil(sidebar.model.selectedSpace, "Viewing an agent does not narrow All Spaces")
+        let entry = try XCTUnwrap(sidebar.model.selectedAttachedEntry)
+        let space = try XCTUnwrap(sidebar.model.visibleSpaces.first { $0.workspace.workspaceID == entry.workspaceID })
+
+        try sidebar.clickAction(named: String(localized: "New Agent"))
+
+        XCTAssertTrue(sidebar.sheetTexts.contains { $0.contains(remote.name) }, "\(sidebar.sheetTexts)")
+        XCTAssertTrue(sidebar.sheetTexts.contains { $0.contains(space.workspace.label) }, "\(sidebar.sheetTexts)")
+    }
+
     func testNewTerminalKeepsTheRemoteSpaceFromItsMenu() throws {
         let sidebar = try SidebarHarness(spaces: 3, agents: 0, device: remote, sheets: true, pinnedHeaders: false)
         let spaces = sidebar.model.visibleSpaces

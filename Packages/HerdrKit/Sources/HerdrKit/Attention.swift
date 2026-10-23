@@ -39,9 +39,8 @@ public enum AgentUnread: Sendable {
     /// Apply a live status transition. Initial snapshots pass an empty
     /// `previous` map and must not create unread flags.
     ///
-    /// Finishing while the pane is selected still counts as unread; the GUI
-    /// clears the flag when the user *leaves* that row, not when they happen
-    /// to be sitting on it as the turn ends.
+    /// Completion first marks the pane unread. The GUI acknowledges it when
+    /// opened, or immediately when its terminal is visible in the active window.
     public static func applying(
         previous: [String: AgentStatus],
         agents: [AgentInfo],

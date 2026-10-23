@@ -1841,6 +1841,22 @@
         }
       }
     },
+    "Reconnect device terminals": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reconnect device terminals"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重连此设备的终端"
+          }
+        }
+      }
+    },
     "Connection to %@ dropped": {
       "localizations": {
         "en": {
