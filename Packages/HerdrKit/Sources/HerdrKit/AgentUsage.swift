@@ -121,7 +121,7 @@ public enum UsageSelection {
             guard case .readings(let readings)? = states[device.id]?[provider] else { continue }
             for reading in readings {
                 for window in reading.windows
-                where window.group == "session" && window.isOpen(now: now) {
+                where window.group == "session" {
                     if window.left(now: now) < best?.window.left(now: now) ?? .max {
                         best = (device, window)
                     }
@@ -147,7 +147,7 @@ public enum UsageSelection {
             guard case .readings(let readings)? = states[device.id]?[provider] else { continue }
             for reading in readings {
                 for window in reading.windows
-                where window.group != "session" && window.isOpen(now: now) {
+                where window.group != "session" {
                     let candidate = (device, window)
                     func tighter(_ current: (device: Device, window: GrazrWindow)?) -> Bool {
                         window.left(now: now) < current?.window.left(now: now) ?? .max
@@ -177,7 +177,7 @@ public enum UsageSelection {
                 guard case .readings(let readings) = perProvider[candidate] else { continue }
                 for reading in readings {
                     for window in reading.windows
-                    where window.scope == scope && window.isOpen(now: now) {
+                    where window.scope == scope {
                         if window.left(now: now) < best?.window.left(now: now) ?? .max {
                             best = (device, window)
                         }

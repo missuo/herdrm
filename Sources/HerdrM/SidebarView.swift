@@ -327,17 +327,25 @@ struct SidebarView: View {
         }
     }
 
-    /// Whether `device`'s states call for a read: never read, or any
-    /// provider standing `.failed` or `.unknown` — every window reset, say
-    /// — so the usage row keeps a real picture behind it.
+    /// Whether `device`'s states call for a read: never read, any provider
+    /// standing `.failed` or `.unknown`, or every watched window past its
+    /// reset — a fully-reset reading is stale by definition (the gauges
+    /// show it refilled; the numbers behind it are gone). Plain
+    /// non-forced refreshes; the store's five-minute cache bounds the cost.
     static func needsUsageRead(_ states: [UsageProvider: UsageProviderState]?) -> Bool {
         guard let states else { return true }
-        return states.contains { _, state in
+        if states.contains { _, state in
             switch state {
             case .failed, .unknown: return true
             default: return false
             }
+        } { return true }
+        let now = Date()
+        let windows = states.values.flatMap { state -> [GrazrWindow] in
+            guard case .readings(let readings) = state else { return [] }
+            return readings.flatMap(\.windows)
         }
+        return !windows.isEmpty && windows.allSatisfy { !$0.isOpen(now: now) }
     }
 
     private var terminalsSectionVisible: Bool {

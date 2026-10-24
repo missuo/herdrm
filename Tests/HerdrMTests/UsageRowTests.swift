@@ -238,3 +238,30 @@ final class UsageRowTests: XCTestCase {
         XCTAssertTrue(reads.allSatisfy { !$0.1 })
     }
 }
+
+/// A window past its reset reads as refilled (0% used), never vanishes:
+/// the 5H line stays on the sidebar through a reset, and a device whose
+/// every window has reset asks for a fresh non-forced read.
+extension UsageRowTests {
+    func testResetWindowShowsRefilledInsteadOfVanishing() {
+        let now = Date()
+        let past = GrazrWindow(kind: "quota", group: "session", remaining: 3,
+                               resetsAt: now.addingTimeInterval(-120))
+        let states: [UUID: [UsageProvider: UsageProviderState]] = [
+            Device.local.id: [
+                .claude: .readings([AgentUsageReading(
+                    id: "claude", provider: .claude,
+                    windows: [past],
+                    fetchedAt: now)]),
+            ],
+        ]
+        // The selector returns the window; the meter renders it as refilled.
+        let session = UsageSelection.tightestSession(
+            states: states, devices: [.local], provider: .claude, now: now)
+        XCTAssertEqual(session?.window.group, "session", "the reset session line stays")
+        XCTAssertEqual(session?.window.left(now: now), 100, "a past-reset window reads as full")
+
+        // And a reading whose every window reset requests a re-read.
+        XCTAssertTrue(SidebarView.needsUsageRead(states[Device.local.id]))
+    }
+}
