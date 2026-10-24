@@ -5,6 +5,16 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- **Claude history finds conversations kept outside `~/.claude` (#173).** When
+  `CLAUDE_CONFIG_DIR` is set only on the agent, by an alias, a wrapper or an
+  account switcher, HerdrM now finds the directory from the running processes
+  on the device, so ⇧⌘H and the prompt rail show the conversation instead of
+  nothing. On SSH devices whose login shell is zsh, history no longer reports
+  a disconnect when the conversation isn't in the first directory it checks.
+
 ## [0.6.21] - 2026-10-21
 
 ### Fixed
