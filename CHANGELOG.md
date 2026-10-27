@@ -63,6 +63,7 @@ the Sparkle update description — a release without a section here fails CI.
   first bar sits at the same height, and the header total is tinted to
   read as text, not decoration.
 
+
 D
 
 D
