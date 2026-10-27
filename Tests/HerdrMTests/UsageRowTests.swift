@@ -60,9 +60,9 @@ private final class UsageRowHarness {
 
 /// The sidebar's usage row: one meter per picked agent, in the machine
 /// stats row's visual language, sitting above it. Window-bearing agents
-/// fill a level-tinted bar; tokens-only agents show a compact total over a
-/// dimmed track; nothing read dims to a dash. The whole row opens the
-/// Usage sheet.
+/// fill a level-tinted bar; tokens-only agents show a labeled 7D total
+/// line over a dimmed track; nothing read dims to a dash. The whole row
+/// opens the Usage sheet.
 @MainActor
 final class UsageRowTests: XCTestCase {
     func testRowShowsBothWindowsPerAgent() throws {
@@ -93,8 +93,10 @@ final class UsageRowTests: XCTestCase {
         XCTAssertFalse(harness.labels.contains { $0.contains("CODEX") }, "unpicked codex absent: \(harness.labels)")
     }
 
-    /// Tokens-only agents have no honest percent: a compact total over a
-    /// dimmed track, a dash when even that is missing.
+    /// Tokens-only agents have no honest percent: a labeled line — the
+    /// total over the 7-day period every tokens-only source reads — above
+    /// a dimmed track, level with window columns' first row, and a dash
+    /// when even the total is missing.
     func testTokensOnlyAgentsShowTotalOrDash() throws {
         let harness = try UsageRowHarness(meters: [
             UsageMeterValue(provider: .opencode, windows: [], tokenTotal: "12M"),
@@ -102,6 +104,7 @@ final class UsageRowTests: XCTestCase {
         ])
 
         XCTAssertTrue(harness.labels.contains { $0.contains("OPENCODE") && $0.contains("12M") }, "opencode total: \(harness.labels)")
+        XCTAssertTrue(harness.labels.contains { $0.contains("7D") && $0.contains("12M") }, "opencode labeled line: \(harness.labels)")
         XCTAssertTrue(harness.labels.contains { $0.contains("GEMINI") && $0.contains("—") }, "gemini dimmed: \(harness.labels)")
     }
 

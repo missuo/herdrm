@@ -1343,7 +1343,8 @@ struct UsageMeterValue: Identifiable, Equatable {
 /// The usage row above the machine-stats row, in its visual language: one
 /// meter column per picked agent. Window-bearing agents fill a
 /// level-tinted bar with the percent used; tokens-only agents show a
-/// compact total over a dimmed track. The whole row opens the Usage sheet.
+/// labeled 7D total line over a dimmed track, its first bar level with
+/// window columns' first row. The whole row opens the Usage sheet.
 struct SidebarUsageStats: View {
     let meters: [UsageMeterValue]
     let onOpenSheet: () -> Void
@@ -1396,7 +1397,9 @@ struct SidebarUsageStats: View {
             let windows = meter.windows
                 .map { "\($0.label) \(Int($0.percentUsed.rounded()))%\(($0.untilReset.map { " · \($0)" }) ?? "")" }
                 .joined(separator: " · ")
-            let value = windows.isEmpty ? (meter.tokenTotal ?? "—") : windows
+            let value = windows.isEmpty
+                ? (meter.tokenTotal.map { "7D \($0)" } ?? "—")
+                : windows
             return "\(Self.name(meter.provider)) \(value)"
         }
         return String(localized: "Usage: \(parts.joined(separator: " · "))")
@@ -1414,8 +1417,9 @@ struct SidebarUsageStats: View {
 
 /// One meter column: the agent's brand icon over a line per open window —
 /// label, percent used, time until reset — each above its level-tinted
-/// bar. Tokens-only agents show the compact total over a single dimmed
-/// track. Icons, not names: three-plus meters leave no room for words
+/// bar. Tokens-only agents show one labeled 7D line — the total — above a
+/// single dimmed track, so every column's first bar sits at the same
+/// height. Icons, not names: three-plus meters leave no room for words
 /// ("OPENCODE" wrapped mid-name at this width).
 private struct UsageMeter: View {
     let provider: UsageProvider
@@ -1440,7 +1444,26 @@ private struct UsageMeter: View {
                     .lineLimit(1)
             }
             if windows.isEmpty {
-                track(percent: nil)
+                // A labeled line like the window rows, so the first track
+                // sits level with window columns' first row and the total
+                // reads as text, not a lone bar. "7D" is honest: every
+                // tokens-only source reads a 7-day period (opencode's
+                // `--days 7`, gemini's last-7-days glob).
+                VStack(alignment: .leading, spacing: 1) {
+                    if let total = tokenTotal {
+                        HStack(spacing: 3) {
+                            Text(verbatim: "7D")
+                                .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Theme.textTertiary)
+                            Text(verbatim: total)
+                                .font(.system(size: 9.5).monospacedDigit())
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    track(percent: nil)
+                }
             } else {
                 ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
                     VStack(alignment: .leading, spacing: 1) {
@@ -1461,6 +1484,7 @@ private struct UsageMeter: View {
         }
         .frame(maxWidth: .infinity)
         .animation(.easeOut(duration: 0.35), value: windows)
+        .animation(.easeOut(duration: 0.35), value: tokenTotal)
     }
 
     /// The header value: the tightest window's percent, the token total,
@@ -1470,7 +1494,8 @@ private struct UsageMeter: View {
     }
 
     private var headerTint: Color {
-        windows.map(\.percentUsed).max().map(Self.levelColor) ?? Theme.textGhost
+        windows.map(\.percentUsed).max().map(Self.levelColor)
+            ?? (tokenTotal != nil ? Theme.textSecondary : Theme.textGhost)
     }
 
     private func line(_ window: UsageWindowValue) -> String {
