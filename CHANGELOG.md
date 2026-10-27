@@ -55,6 +55,14 @@ the Sparkle update description — a release without a section here fails CI.
   cover the fetched 30 days, so they cannot be mistaken for a billing
   period.
 
+### Fixed
+- **Tokens-only meters show a labeled line, level with window meters.**
+  OpenCode and Gemini columns in the sidebar's usage row now show a "7D"
+  line — the period every tokens-only source reads — with the compact
+  total above their dimmed track, instead of a bare gauge; every column's
+  first bar sits at the same height, and the header total is tinted to
+  read as text, not decoration.
+
 D
 
 D
