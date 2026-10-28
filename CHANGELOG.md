@@ -56,6 +56,10 @@ the Sparkle update description — a release without a section here fails CI.
   period.
 
 ### Fixed
+- **The usage row's hover wash keeps its distance from the hairlines.**
+  The row gains the same breathing room above and below its highlight as
+  the machine stats row beside it, instead of the wash touching the
+  separators.
 - **The usage row highlights on hover like the machine row.** The
   sidebar's usage meters row now gets the same soft wash on hover as the
   CPU/RAM/DISK row beside it, so both read as clickable.

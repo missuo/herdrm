@@ -194,6 +194,12 @@ struct SidebarView: View {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 SidebarUsageStats(meters: usageMeters, onOpenSheet: openUsage)
                     .padding(.horizontal, 6)
+                    // The machine row below centers ~32pt of content in a
+                    // fixed 44pt frame — 6pt of air above and below its
+                    // wash. The usage row sizes to its content, so it needs
+                    // the same clearance explicitly or its hover wash sits
+                    // flush against the hairlines.
+                    .padding(.vertical, 6)
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 SidebarMachineStats(
                     stats: model.machineStats,
