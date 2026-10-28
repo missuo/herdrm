@@ -1349,6 +1349,8 @@ struct SidebarUsageStats: View {
     let meters: [UsageMeterValue]
     let onOpenSheet: () -> Void
 
+    @State private var hovered = false
+
     /// The picked set's whole algebra: the comma list the sheet's picker
     /// and `AppModel.sidebarAgents` share, toggling one agent in or out.
     static func toggling(_ provider: UsageProvider, in raw: String) -> String {
@@ -1384,10 +1386,15 @@ struct SidebarUsageStats: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hovered ? AnyShapeStyle(Theme.itemWash) : AnyShapeStyle(.clear))
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
+        .onHover { hovered = $0 }
         .help(String(localized: "Usage across your devices — click for details"))
         .accessibilityLabel(summary)
     }

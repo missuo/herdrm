@@ -56,6 +56,9 @@ the Sparkle update description — a release without a section here fails CI.
   period.
 
 ### Fixed
+- **The usage row highlights on hover like the machine row.** The
+  sidebar's usage meters row now gets the same soft wash on hover as the
+  CPU/RAM/DISK row beside it, so both read as clickable.
 - **Tokens-only meters show a labeled line, level with window meters.**
   OpenCode and Gemini columns in the sidebar's usage row now show a "7D"
   line — the period every tokens-only source reads — with the compact
