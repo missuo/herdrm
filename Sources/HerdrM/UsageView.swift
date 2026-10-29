@@ -1,0 +1,854 @@
+import Charts
+import HerdrKit
+import SwiftUI
+
+/// The usage sheet: one section per device, one card per provider, in the
+/// grazr Accounts sheet's visual language. Everything it shows comes
+/// precomputed from `UsageModel` — the view only arranges states, meters,
+/// the history charts and the refresh affordance. Cards describe usage,
+/// never quota: providers without quota windows show token statistics
+/// captioned as usage.
+struct UsageView: View {
+    /// Stands in for `UsageModel.refresh(force:)` in the sheet's UIUX tests,
+    /// so pressing Refresh never runs the providers' real commands. nil
+    /// refreshes for real.
+    typealias Refresh = (UsageModel, Device, _ force: Bool) async -> Void
+
+    /// Stands in for `UsageModel.refreshHistory(_:)` the same way, so the
+    /// history reads stay as stubbed as the quota ones in tests.
+    typealias HistoryRefresh = (UsageModel, Device) async -> Void
+
+    @ObservedObject var model: UsageModel
+    let anchor: Device
+    /// What the presenter knows, in sidebar order; sections sort local first.
+    /// The sheet line passes only the anchor, so this is usually just it.
+    var devices: [Device] = []
+    var refresh: Refresh?
+    /// nil refreshes history for real. Injected together with `refresh`, it
+    /// replaces the history half of a refresh; without it an injected
+    /// `refresh` leaves history untouched, so quota-only test harnesses
+    /// never trigger real history commands.
+    var historyRefresh: HistoryRefresh?
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var isRefreshing = false
+    /// Which agents the sidebar's usage row shows; the same comma list
+    /// `AppModel.sidebarAgents` reads, written through the row's toggling.
+    @AppStorage("usage.sidebarAgents") private var sidebarAgents = "claude,codex,opencode"
+
+    init(
+        model: UsageModel,
+        anchor: Device,
+        devices: [Device] = [],
+        refresh: Refresh? = nil,
+        historyRefresh: HistoryRefresh? = nil
+    ) {
+        _model = ObservedObject(wrappedValue: model)
+        self.anchor = anchor
+        self.devices = devices
+        self.refresh = refresh
+        self.historyRefresh = historyRefresh
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
+                SheetHeader(
+                    systemImage: "chart.bar",
+                    title: String(localized: "Usage"),
+                    subtitle: sectionDevices.map(\.name).joined(separator: " · ")
+                )
+                // The sidebar row's agent picker: one always-visible toggle
+                // chip per agent (brand icon + tick when picked) — the old
+                // menu gave no visible state and read as doing nothing.
+                HStack(spacing: 4) {
+                    ForEach(UsageProvider.allCases, id: \.self) { provider in
+                        sidebarAgentChip(provider)
+                    }
+                }
+                .padding(.trailing, 16)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(String(localized: "Agents in the sidebar row"))
+            }
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    ForEach(sectionDevices) { device in
+                        deviceSection(device)
+                    }
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Rectangle().fill(Theme.hairline).frame(height: 1)
+
+            footer
+        }
+        // Resizable: the sheet opens at its natural 560×640 and can grow or
+        // shrink, but never below that — the opening size is the floor. The
+        // scroll view absorbs extra height; every row stretches with width.
+        .frame(minWidth: 560, idealWidth: 560, maxWidth: .infinity,
+               minHeight: 640, idealHeight: 640, maxHeight: .infinity)
+        .task { await refreshUnknownDevices() }
+    }
+
+    /// Sections in display order: the presenter's list is already sidebar
+    /// order, local devices lead it, and the anchor leads when the list
+    /// omits it (as the sheet line does).
+    private var sectionDevices: [Device] {
+        var list = devices
+        if !list.contains(anchor) { list.insert(anchor, at: 0) }
+        return list.filter(\.isLocal) + list.filter { !$0.isLocal }
+    }
+
+    private func deviceSection(_ device: Device) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(verbatim: device.name)
+                .font(.system(size: 10.5, weight: .medium))
+                .kerning(0.4)
+                .foregroundStyle(Theme.textTertiary)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(device.name)
+            VStack(spacing: 10) {
+                ForEach(UsageProvider.allCases, id: \.self) { provider in
+                    UsageProviderCard(
+                        provider: provider,
+                        state: model.states[device.id]?[provider] ?? .loading,
+                        history: model.histories[device.id],
+                        now: Date()
+                    )
+                }
+                // One history per device once its first read lands; gemini
+                // keeps no transcripts and simply contributes nothing.
+                if let history = model.histories[device.id] {
+                    UsageHistoryBlock(history: history, now: Date())
+                }
+            }
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            Button {
+                refreshVisible()
+            } label: {
+                Label(String(localized: "Refresh"), systemImage: "arrow.clockwise")
+            }
+            // ⌘R re-reads every visible device even when the store's cache is
+            // still fresh — the store's five-minute TTL is for appearances.
+            .keyboardShortcut("r", modifiers: .command)
+            .help(String(localized: "Run every provider's usage command again, even when the last reading is still fresh"))
+            .disabled(isRefreshing)
+            Spacer()
+            if isRefreshing {
+                // Discrete, corner-anchored: the known data stays on screen
+                // while the refresh runs; only this spinner and the age lines
+                // move.
+                HStack(spacing: 5) {
+                    ProgressView().controlSize(.mini)
+                    Text(String(localized: "Updating…"))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.textGhost)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(String(localized: "Updating…"))
+                .padding(.trailing, 12)
+            }
+            Button(String(localized: "Done")) { dismiss() }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.accent)
+                .keyboardShortcut(.defaultAction)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+    }
+
+    private func refreshVisible() {
+        isRefreshing = true
+        Task {
+            for device in sectionDevices {
+                await runRefresh(device, force: true)
+            }
+            isRefreshing = false
+        }
+    }
+
+    /// One always-visible toggle chip: the agent's brand icon, ringed and
+    /// badged when picked for the sidebar row, dim when not.
+    private func sidebarAgentChip(_ provider: UsageProvider) -> some View {
+        let picked = sidebarAgents.split(separator: ",").contains(Substring(provider.rawValue))
+        return Button {
+            sidebarAgents = SidebarUsageStats.toggling(provider, in: sidebarAgents)
+        } label: {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let resource = BrandIconLoader.agentIcon(for: provider.rawValue) {
+                        BrandIcon(resource: resource, size: 13, fallbackSystemName: "terminal")
+                    } else {
+                        Image(systemName: "terminal")
+                            .font(.system(size: 11))
+                    }
+                }
+                .foregroundStyle(picked ? Theme.text : Theme.textGhost)
+                .padding(4)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(picked ? Theme.itemWash : .clear)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 5)
+                        .strokeBorder(picked ? Theme.accent : Theme.hairline, lineWidth: 1)
+                )
+                if picked {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(Theme.accent, Theme.itemWash)
+                        .offset(x: 4, y: -4)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .help(String(localized: "Show \(SidebarUsageStats.name(provider)) in the sidebar's usage row"))
+        .accessibilityLabel(String(localized: "\(SidebarUsageStats.name(provider)) in sidebar row"))
+        .accessibilityAddTraits(picked ? [.isSelected] : [])
+    }
+
+    /// Devices the model knows nothing about get their first read; preloaded
+    /// states (the store's five-minute cache) are left standing, so re-opening
+    /// a device inside the window re-runs nothing.
+    private func refreshUnknownDevices() async {
+        for device in sectionDevices where model.states[device.id] == nil {
+            await runRefresh(device, force: false)
+        }
+    }
+
+    private func runRefresh(_ device: Device, force: Bool) async {
+        if let refresh {
+            await refresh(model, device, force)
+        } else {
+            await model.refresh(device, force: force)
+        }
+        // History rides along on every refresh path — appear and ⌘R. A
+        // quota-only test seam leaves history alone rather than running
+        // real commands behind the stub's back.
+        if let historyRefresh {
+            await historyRefresh(model, device)
+        } else if refresh == nil {
+            await model.refreshHistory(device)
+        }
+    }
+}
+
+/// The chart's span: seven days by default, the whole fetched month as the
+/// alternative.
+private enum HistoryWindow: Int, CaseIterable, Hashable {
+    case seven = 7
+    case thirty = 30
+
+    var label: String {
+        switch self {
+        case .seven: String(localized: "7d")
+        case .thirty: String(localized: "30d")
+        }
+    }
+}
+
+/// One device's history card: stacked daily token bars (claude and codex —
+/// the only providers whose transcripts carry a daily series), a 7d/30d
+/// toggle, the approximate dollar total over every model the history
+/// priced, and a per-model breakdown for all three providers. The chart
+/// stays dumb — data in, bars out; everything it reads is precomputed.
+private struct UsageHistoryBlock: View {
+    let history: UsageHistory
+    let now: Date
+
+    @State private var window: HistoryWindow = .seven
+
+    /// The providers charted, in stack order. OpenCode reports only 30-day
+    /// per-model totals (no daily series), gemini nothing at all.
+    private static let charted: [UsageProvider] = [.claude, .codex, .opencode]
+
+    /// The providers with per-model rows.
+    private static let modeled: [UsageProvider] = [.claude, .codex, .opencode]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(String(localized: "Usage history"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Spacer()
+                Picker(String(localized: "History range"), selection: $window) {
+                    ForEach(HistoryWindow.allCases, id: \.self) { span in
+                        Text(span.label).tag(span)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+            if isEmpty {
+                Text(String(localized: "No history yet"))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(String(localized: "No history yet"))
+            } else {
+                chart
+                legend
+                totalsRow
+                modelRows
+                projectRows
+                ageRow
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.itemWash))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(String(localized: "Usage history"))
+    }
+
+    // MARK: - Chart
+
+    /// Stacked bars of each day's tokens per provider, one accessibility
+    /// child per day so VoiceOver reads "Oct 12 · 1.2M tokens" instead of
+    /// the chart's opaque marks.
+    private var chart: some View {
+        Chart {
+            ForEach(visibleDays) { day in
+                ForEach(Self.charted, id: \.self) { provider in
+                    if let tokens = day.tokens[provider], Self.total(tokens) > 0 {
+                        BarMark(
+                            x: .value(String(localized: "Day"), Self.localStart(of: day.date), unit: .day),
+                            y: .value(String(localized: "Tokens"), Self.total(tokens)),
+                            stacking: .standard
+                        )
+                        .foregroundStyle(Self.color(provider))
+                    }
+                }
+            }
+        }
+        .chartLegend(.hidden)
+        .chartYAxis {
+            AxisMarks(values: .automatic(desiredCount: 4)) { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let tokens = value.as(Int.self) {
+                        Text(verbatim: UsageFormat.compact(tokens))
+                    }
+                }
+            }
+        }
+        .frame(height: 110)
+        .accessibilityChildren {
+            ForEach(visibleDays) { day in
+                Color.clear
+                    .frame(width: 8, height: 8)
+                    .accessibilityElement()
+                    .accessibilityLabel(dayLabel(day))
+            }
+        }
+    }
+
+    /// Dots and names for the stacked series — the chart's own legend is
+    /// hidden so the palette stays the sheet's. Decorative: VoiceOver
+    /// already meets the providers on their cards.
+    private var legend: some View {
+        HStack(spacing: 12) {
+            ForEach(Self.charted, id: \.self) { provider in
+                HStack(spacing: 4) {
+                    Circle().fill(Self.color(provider)).frame(width: 6, height: 6)
+                    Text(Self.name(provider))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            Spacer()
+        }
+        .accessibilityHidden(true)
+    }
+
+    // MARK: - Totals and models
+
+    /// The dollar figure over every model the history priced at its list
+    /// rate — approximate even when every model matched, because list
+    /// rates are themselves the estimate. The model totals span the
+    /// fetched 30-day range however far the chart's toggle reaches back
+    /// (days carry no per-model split), so the row says "(30d)" outright
+    /// and the tooltip spells the span out.
+    private var totalsRow: some View {
+        let dollars = String(localized: "$\(String(format: "%.2f", totalDollars)) (approx.)")
+        return HStack(alignment: .firstTextBaseline) {
+            SheetSectionLabel("Total (30d)")
+            Spacer()
+            Text(dollars)
+                .font(.system(size: 11.5, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.text)
+                .help(String(localized: "Totals span the fetched 30 days; priced at API list rates; table fetched \(UsagePricing.tableUpdated)"))
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Total (30d)") + ", " + dollars)
+    }
+
+    @ViewBuilder
+    private var modelRows: some View {
+        let rows = Self.modelRows(in: history)
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(rows, id: \.id) { row in
+                    let tokens = String(localized: "\(Self.count(Self.total(row.tokens))) tokens")
+                    HStack {
+                        Text(verbatim: row.model)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Text(tokens)
+                            .font(.system(size: 11.5).monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(row.model + ", " + tokens)
+                }
+            }
+        }
+    }
+
+    /// The drilldown: the visible window's sessions grouped by working
+    /// directory — top projects by tokens, each expanding to its sessions
+    /// (title or fallback, provider dot in the chart's color, tokens).
+    @State private var expandedProject: String?
+
+    @ViewBuilder
+    private var projectRows: some View {
+        let projects = Self.projects(in: history, window: window, now: now)
+        if !projects.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                SheetSectionLabel("By project")
+                ForEach(projects, id: \.path) { project in
+                    let tokens = String(localized: "\(UsageFormat.compact(Self.total(project.tokens))) tokens")
+                    DisclosureGroup(isExpanded: Binding(
+                        get: { expandedProject == project.path },
+                        set: { expandedProject = $0 ? project.path : nil })
+                    ) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(project.sessions) { session in
+                                sessionRow(session)
+                            }
+                        }
+                        .padding(.top, 2)
+                    } label: {
+                        HStack {
+                            Text(verbatim: URL(fileURLWithPath: project.path).lastPathComponent)
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Text(tokens)
+                                .font(.system(size: 11.5).monospacedDigit())
+                                .foregroundStyle(Theme.textTertiary)
+                        }
+                        .help(project.path)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("\(project.path), \(tokens)")
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sessionRow(_ session: UsageSession) -> some View {
+        let when = Self.dayText(session.created)
+        let tokens = UsageFormat.compact(Self.total(session.tokens))
+        HStack(spacing: 6) {
+            Circle().fill(Self.color(session.provider)).frame(width: 5, height: 5)
+            Text(verbatim: session.title ?? when)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if session.title != nil {
+                Text(verbatim: when)
+                    .font(.system(size: 10.5).monospacedDigit())
+                    .foregroundStyle(Theme.textGhost)
+            }
+            Spacer()
+            Text(verbatim: tokens)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .help("\(session.path) · \(session.title ?? "")")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(session.title ?? when), \(session.provider.rawValue), \(tokens)")
+    }
+
+    /// The window's sessions grouped by path, top six by tokens, each
+    /// carrying its sessions newest-first (capped at eight per project).
+    static func projects(
+        in history: UsageHistory,
+        window: HistoryWindow,
+        now: Date
+    ) -> [(path: String, tokens: UsageTokens, sessions: [UsageSession])] {
+        let cutoff = localStart(of: now).addingTimeInterval(-Double(window.rawValue - 1) * 86400)
+        let visible = history.sessions.filter { localStart(of: $0.created) >= cutoff }
+        var grouped: [String: (tokens: UsageTokens, sessions: [UsageSession])] = [:]
+        for session in visible {
+            var group = grouped[session.path] ?? (UsageTokens(input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0), [])
+            group.0.input += session.tokens.input
+            group.0.output += session.tokens.output
+            group.0.reasoning += session.tokens.reasoning
+            group.0.cacheRead += session.tokens.cacheRead
+            group.0.cacheWrite += session.tokens.cacheWrite
+            group.1.append(session)
+            grouped[session.path] = group
+        }
+        return grouped
+            .map { (path: $0.key, tokens: $0.value.tokens, sessions: Array($0.value.sessions.sorted { $0.created > $1.created }.prefix(8))) }
+            .sorted { total($0.tokens) > total($1.tokens) }
+            .prefix(6)
+            .map { $0 }
+    }
+
+    /// When the history was generated, so stale data reads as stale — the
+    /// cards' "Read X ago" discipline.
+    private var ageRow: some View {
+        Text(String(localized: "Updated \(Self.age(history.generatedAt, now: now))"))
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textGhost)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(String(localized: "Updated \(Self.age(history.generatedAt, now: now))"))
+    }
+
+    // MARK: - Derived data
+
+    /// Nothing chartable and no model rows: the device ran its history
+    /// commands but has no transcript usage to show.
+    private var isEmpty: Bool {
+        visibleDays.isEmpty && Self.modelRows(in: history).isEmpty
+    }
+
+    /// The days inside the window, oldest first — the chart's whole input,
+    /// every day normalized through `localStart(of:)` so the cutoff counts
+    /// days in the same calendar the bars and labels render in.
+    private var visibleDays: [UsageDay] {
+        let cutoff = Self.localStart(of: now).addingTimeInterval(-Double(window.rawValue - 1) * 86400)
+        return history.days
+            .filter { Self.localStart(of: $0.date) >= cutoff }
+            .sorted { Self.localStart(of: $0.date) < Self.localStart(of: $1.date) }
+    }
+
+    /// "Oct 12 · 1.2M tokens" — the day's label in the device's calendar,
+    /// the same one the chart's axis buckets by, every charted provider
+    /// summed.
+    private func dayLabel(_ day: UsageDay) -> String {
+        let tokens = Self.charted.reduce(0) { $0 + (day.tokens[$1].map(Self.total) ?? 0) }
+        return String(localized: "\(Self.dayText(day.date)) · \(Self.count(tokens)) tokens")
+    }
+
+    private var totalDollars: Double {
+        var dollars = 0.0
+        for provider in Self.modeled {
+            for (model, tokens) in history.modelTotals[provider] ?? [:] where Self.total(tokens) > 0 {
+                dollars += UsagePricing.cost(of: tokens, model: model).dollars
+            }
+        }
+        return dollars
+    }
+
+    // MARK: - Formatting
+
+    /// One model row: provider-scoped identity, the raw tokens, zero-token
+    /// entries omitted.
+    private static func modelRows(in history: UsageHistory) -> [ModelRow] {
+        var out: [ModelRow] = []
+        for provider in modeled {
+            for (model, tokens) in (history.modelTotals[provider] ?? [:]).sorted(by: { $0.key < $1.key })
+            where total(tokens) > 0 {
+                out.append(ModelRow(id: "\(provider.rawValue):\(model)", model: model, tokens: tokens))
+            }
+        }
+        return out
+    }
+
+    private struct ModelRow: Identifiable {
+        let id: String
+        let model: String
+        let tokens: UsageTokens
+    }
+
+    /// A reading's whole size. Reasoning is a subset of output (it prices
+    /// as output for the same reason), so it is not added again.
+    private static func total(_ tokens: UsageTokens) -> Int {
+        tokens.input + tokens.output + tokens.cacheRead + tokens.cacheWrite
+    }
+
+    /// `date`'s start of day in the device's calendar — the one day
+    /// identity the chart's axis buckets by, the window cutoff counts,
+    /// and the labels format, so a bar, its axis tick, and its
+    /// accessibility label never disagree for users west or east of UTC.
+    static func localStart(of date: Date) -> Date {
+        Calendar.current.startOfDay(for: date)
+    }
+
+    /// "Oct 12" — the day's own label, in the device's calendar like
+    /// every other day the block renders.
+    private static func dayText(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = .current
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+        return formatter.string(from: localStart(of: date))
+    }
+
+    /// The K/M style the provider cards' token lines use.
+    private static func count(_ n: Int) -> String {
+        UsageFormat.compact(n)
+    }
+
+    private static func age(_ date: Date, now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
+
+    /// Each provider's series color, from the sheet's palette: claude the
+    /// rust accent, codex the palette's teal (the deliberately
+    /// non-semantic chip tints).
+    private static func color(_ provider: UsageProvider) -> Color {
+        switch provider {
+        case .claude: Theme.accent
+        case .codex: Theme.devicePalette[1]
+        case .opencode: Theme.devicePalette[3]
+        case .gemini: Theme.devicePalette[2]
+        }
+    }
+
+    private static func name(_ provider: UsageProvider) -> String {
+        switch provider {
+        case .claude: String(localized: "Claude")
+        case .codex: String(localized: "Codex")
+        case .opencode: String(localized: "OpenCode")
+        case .gemini: String(localized: "Gemini")
+        }
+    }
+}
+
+/// One provider's card: name header, then either an account row per reading
+/// (grazr windows, token statistics) or the state line — loading, not
+/// installed, no usage, or the failure's localized reason.
+private struct UsageProviderCard: View {
+    let provider: UsageProvider
+    let state: UsageProviderState
+    /// The device's history — the card's token line is its last-7-days
+    /// totals, uniform across providers.
+    var history: UsageHistory?
+    let now: Date
+
+    private var name: String {
+        switch provider {
+        case .claude: String(localized: "Claude")
+        case .codex: String(localized: "Codex")
+        case .opencode: String(localized: "OpenCode")
+        case .gemini: String(localized: "Gemini")
+        }
+    }
+
+    private var statusColor: Color {
+        switch state {
+        case .loading: Theme.textSecondary
+        case .failed: Theme.warning
+        default: Theme.textTertiary
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .lineLimit(1)
+            content
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Theme.itemWash))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(name)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch state {
+        case .readings(let readings):
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(readings) { reading in
+                    accountRow(reading, historyTokens: historyTokens())
+                }
+                if let newest = readings.map(\.fetchedAt).max() {
+                    Text(String(localized: "Read \(Self.age(newest, now: now))"))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.textGhost)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel(String(localized: "Read \(Self.age(newest, now: now))"))
+                }
+            }
+        default:
+            if let text = state.statusText {
+                HStack(spacing: 6) {
+                    if case .loading = state {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(text)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(statusColor)
+                        .lineLimit(3)
+                }
+                .help(text)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(text)
+            }
+        }
+    }
+
+    /// The provider's last-7-days tokens from the device's history — the
+    /// uniform meaning of every card's token line. Nil without history.
+    private func historyTokens() -> UsageTokens? {
+        guard let history else { return nil }
+        let calendar = Calendar.current
+        let cutoff = calendar.startOfDay(for: now).addingTimeInterval(-6 * 86400)
+        var total = UsageTokens(input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0)
+        var any = false
+        for day in history.days where UsageHistoryBlock.localStart(of: day.date) >= cutoff {
+            guard let tokens = day.tokens[provider] else { continue }
+            total.input += tokens.input
+            total.output += tokens.output
+            total.reasoning += tokens.reasoning
+            total.cacheRead += tokens.cacheRead
+            total.cacheWrite += tokens.cacheWrite
+            any = true
+        }
+        return any ? total : nil
+    }
+
+    @ViewBuilder
+    private func accountRow(_ reading: AgentUsageReading, historyTokens: UsageTokens?) -> some View {
+        // The card's token line is uniform across providers: the device's
+        // last-7-days totals from history — Claude's transcripts, Codex's
+        // sessions, OpenCode's database all carry the same buckets. The
+        // reading's own tokens (whatever its source happened to carry) are
+        // only the pre-history fallback, so no card goes blank while the
+        // first history fetch is still in flight.
+        let tokens = historyTokens ?? reading.tokens
+        let row = VStack(alignment: .leading, spacing: 6) {
+            if let account = reading.account {
+                Text(account)
+                    .font(.system(size: 11.5, weight: .medium))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if !reading.windows.isEmpty {
+                VStack(spacing: 5) {
+                    ForEach(Array(reading.windows.enumerated()), id: \.offset) { _, window in
+                        UsageWindowMeter(window: window, now: now)
+                    }
+                }
+            }
+            if let tokens {
+                tokensRow(tokens)
+            }
+        }
+        if let account = reading.account {
+            row
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel(account)
+        } else {
+            row
+        }
+    }
+
+    /// Token statistics, captioned as usage: OpenCode and Gemini publish
+    /// counts, not quotas, and the card says so.
+    private func tokensRow(_ tokens: UsageTokens) -> some View {
+        let line = Self.line(for: tokens)
+        return VStack(alignment: .leading, spacing: 3) {
+            SheetSectionLabel("Usage")
+            Text(line)
+                .font(.system(size: 11.5).monospacedDigit())
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .help(String(localized: "Total = input + output + reasoning + cache read + cache write, from this device's transcripts over the last 7 days. Other devices and clients don't count here."))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(String(localized: "Usage") + ", " + line)
+    }
+
+    /// The card's token line: the TOTAL first — the number comparable to
+    /// Claude's own usage readout — then the breakdown. Uncached input is
+    /// tiny by design when caching works, so leading with "input" made a
+    /// billion-token week read as 25k.
+    private static func line(for tokens: UsageTokens) -> String {
+        let total = tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
+        return String(
+            localized: "\(Self.count(total)) tokens total · \(Self.count(tokens.input)) input · \(Self.count(tokens.output)) output · \(Self.count(tokens.cacheRead + tokens.cacheWrite)) cache"
+        )
+    }
+
+    private static func count(_ n: Int) -> String {
+        UsageFormat.compact(n)
+    }
+
+    private static func age(_ date: Date, now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: now)
+    }
+}
+
+/// One window's meter row: label, bar of what is **used**, the percent
+/// used, and when it resets — matching the sidebar row's headline
+/// convention (percent used everywhere; "left" read in both directions
+/// was confusing). Color still follows how close the window is to empty.
+private struct UsageWindowMeter: View {
+    let window: GrazrWindow
+    let now: Date
+
+    var body: some View {
+        let left = window.left(now: now)
+        let used = 100 - left
+        let color = GrazrStyle.tint(left: left, threshold: 25)
+        return HStack(spacing: 8) {
+            Text(window.label)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(Theme.textSecondary)
+                .frame(width: 84, alignment: .leading)
+                .lineLimit(1)
+            ProgressView(value: Double(used) / 100)
+                .progressViewStyle(.linear)
+                .tint(color)
+            Text(String(localized: "\(used)% used"))
+                .font(.system(size: 11.5).monospacedDigit())
+                .foregroundStyle(color)
+                .frame(width: 62, alignment: .trailing)
+            Text(resetText)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+                .frame(width: 110, alignment: .trailing)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private var resetText: String {
+        guard let resetsAt = window.resetsAt else { return "" }
+        guard window.isOpen(now: now) else { return String(localized: "reset since") }
+        return String(localized: "resets \(GrazrStyle.time(resetsAt, now: now))")
+    }
+}

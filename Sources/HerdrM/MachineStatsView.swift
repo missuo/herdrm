@@ -17,11 +17,12 @@ enum MachineStatsDefaults {
     static let showKey = "sidebar.showMachineStats"
 }
 
-/// CPU / RAM / DISK meters for the selected pane's host, in the sidebar footer
-/// just above the device switcher, plus AGENTS (herdr's panes against herdr's
-/// memory cap) on a Linux host that caps herdr, and a warning when that host has
-/// no room for another agent. Clicking opens `MachineStatsPanel`. Runs the
-/// sampler while it is on screen and the window is visible.
+/// CPU / RAM / DISK meters for the selected pane's host, in the sidebar
+/// footer just above the device switcher, plus AGENTS (herdr's panes
+/// against herdr's memory cap) on a Linux host that caps herdr, and a
+/// warning when that host has no room for another agent. Clicking opens
+/// `MachineStatsPanel`. Runs the sampler while it is on screen and the
+/// window is visible.
 struct SidebarMachineStats: View {
     @ObservedObject var stats: MachineStatsModel
     let device: Device

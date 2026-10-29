@@ -353,6 +353,31 @@ final class AppModel: ObservableObject {
     @Published var terminalToRename: TerminalEntry?
     /// The device whose grazr accounts window is open.
     @Published var grazrAccountsDevice: Device?
+    /// The device whose usage sheet is open.
+    @Published var usageDevice: Device?
+    /// Bumps on every Usage open request — the window-open trigger. The
+    /// anchor alone can't be the trigger: tapping the same device twice
+    /// (after closing the window) wouldn't change it, and the window would
+    /// never come back.
+    @Published var usageOpens: Int = 0
+    /// The model whose weekly window the sidebar's USAGE column watches
+    /// ("Fable"); empty means all models. The sheet's picker writes it and
+    /// the sidebar reads it — both sides share the UserDefaults key.
+    @AppStorage("usage.sidebarWatchedModel") var sidebarWatchedModel: String = ""
+    /// Which agents the sidebar's usage row shows, comma-listed in
+    /// canonical order; the Usage sheet's picker writes it.
+    @AppStorage("usage.sidebarAgents") var sidebarAgents: String = "claude,codex,opencode"
+
+    /// The sidebar usage row's picked agents, in canonical order; junk
+    /// entries drop and an unparsable list falls back to the default pair.
+    var sidebarAgentProviders: [UsageProvider] {
+        let canonical = UsageProvider.allCases.map(\.rawValue)
+        let picked = Set(sidebarAgents.split(separator: ",").map(String.init))
+        let providers = UsageProvider.allCases.filter { picked.contains($0.rawValue) }
+        return providers.isEmpty
+            ? canonical.compactMap(UsageProvider.init(rawValue:)).filter { ["claude", "codex"].contains($0.rawValue) }
+            : providers
+    }
     /// The install's tailcat client public key ("nodekey:…") for hosts' allow
     /// lists. Loaded on demand, so users without tailcat devices never create one.
     @Published var tailcatClientPublicKey: String?
@@ -1839,6 +1864,7 @@ final class AppModel: ObservableObject {
             try await service.sendKeys(paneID: paneID, keys: ["enter"])
             await refresh(device.id)
             grazrAccountsDevice = nil
+            usageDevice = nil
             isFileManagerActive = false
             if let workspaceID {
                 selectedSpace = SpaceRef(deviceID: device.id, workspaceID: workspaceID)
