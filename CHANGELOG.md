@@ -70,6 +70,14 @@ the Sparkle update description — a release without a section here fails CI.
   first bar sits at the same height, and the header total is tinted to
   read as text, not decoration.
 
+### Known Issues
+- **Rare app freeze traced to libghostty's renderer draw mutex.** A hang
+  report (main thread stuck forever in `ghostty_surface_draw`) was
+  diagnosed to a deadlock family inside the pinned GhosttyKit binary —
+  upstream ghostty#14245, fix (PR #14444) not yet in any libghostty-spm
+  release. Nothing in herdrm can prevent it; the bump condition and the
+  one-minute re-diagnosis recipe live in
+  `docs/libghostty-draw-deadlock.md`.
 
 D
 
