@@ -19,7 +19,15 @@ struct HerdrMobileApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-HerdrmChatDemo") {
+                MobileChatDemoView()
+            } else {
+                MobileRootView(model: model)
+            }
+            #else
             MobileRootView(model: model)
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
             // iOS tears sockets down in the background; on return, re-prove the

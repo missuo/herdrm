@@ -1,52 +1,39 @@
 import HerdrKit
 import SwiftUI
 
-/// iPhone: a navigation stack (lists → terminal). iPad: a split view whose
-/// sidebar mirrors the Mac app — Spaces, Agents, and a device switcher footer.
+/// Mirrors the Mac app's information architecture: a Server (device), its
+/// Spaces, then a Space's Agents (the primary thing) and Terminals (side
+/// helpers). Three columns on iPad; on iPhone the same columns collapse into a
+/// push stack (servers and spaces → agents and terminals → agent).
 struct MobileRootView: View {
     @Bindable var model: MobileAppModel
+    /// The sidebar's selection; drives the middle column (and the push on iPhone).
+    @State private var spaceRoute: SpaceRoute?
 
     var body: some View {
         NavigationSplitView {
-            SidebarListView(model: model)
-        } detail: {
-            if let device = model.selectedDevice, device.isTailcat,
-               model.selectedAgentPaneID != nil {
-                // tailcat carries herdr's control plane only — no shell, no
-                // PTY channel — so there is no terminal byte stream to attach
-                // to on iOS. Prompting stays available from the agent's row.
-                ContentUnavailableView(
-                    String(localized: "No Terminal over Tailcat"),
-                    systemImage: "terminal",
-                    description: Text(String(localized: "This device's tunnel reaches herdr's control plane only. Use an SSH device to attach to a live terminal."))
-                )
-            } else if let agent = model.selectedAgent,
-               let transport = model.selectedSession?.transport {
-                MobileTerminalScreen(
-                    transport: transport,
-                    target: .agent(paneID: agent.paneID),
-                    paneID: agent.paneID,
-                    title: agent.title(tabLabel: model.tabLabel(for: agent))
-                )
-                .id(agent.paneID)
-            } else if let pane = model.selectedTerminalPane,
-                      let terminalID = pane.terminalID,
-                      let transport = model.selectedSession?.transport {
-                MobileTerminalScreen(
-                    transport: transport,
-                    target: .terminal(terminalID: terminalID),
-                    paneID: pane.paneID,
-                    title: model.terminalLabel(for: pane)
-                )
-                .id(pane.paneID)
+            SidebarListView(model: model, spaceRoute: $spaceRoute)
+        } content: {
+            if spaceRoute != nil {
+                SpaceContentList(model: model)
             } else {
                 ContentUnavailableView(
-                    String(localized: "No Agent Selected"),
-                    systemImage: "terminal",
-                    description: Text(String(localized: "Pick an agent to attach to its terminal."))
+                    String(localized: "No Space Selected"),
+                    systemImage: "folder",
+                    description: Text(String(localized: "Pick a space to see its agents and terminals."))
                 )
             }
+        } detail: {
+            detail
         }
+        .onChange(of: spaceRoute) { _, route in
+            switch route {
+            case .space(let id): model.selectedSpaceID = id
+            case .all, nil: model.selectedSpaceID = nil
+            }
+            model.selectedAgentPaneID = nil
+        }
+        .onChange(of: model.selectedDeviceID) { _, _ in spaceRoute = nil }
         .sheet(isPresented: $model.showAddDevice) {
             AddDeviceSheet(model: model)
         }
@@ -54,13 +41,62 @@ struct MobileRootView: View {
             if model.selectedDeviceID != nil { model.connectSelected() }
         }
     }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let agent = model.selectedAgent,
+           let transport = model.selectedSession?.transport {
+            // The chat answers choices and sends prompts over herdr RPCs, so it
+            // works over tailcat too; only the Terminal tab needs SSH.
+            MobileAgentDetailView(
+                transport: transport,
+                agent: agent,
+                title: agent.title(tabLabel: model.tabLabel(for: agent)),
+                terminalAvailable: model.selectedDevice?.isTailcat != true
+            )
+            .id(agent.paneID)
+        } else if let device = model.selectedDevice, device.isTailcat,
+                  model.selectedTerminalPane != nil {
+            // tailcat carries herdr's control plane only — no shell, no PTY
+            // channel — so there is no terminal byte stream to attach to on iOS.
+            ContentUnavailableView(
+                String(localized: "No Terminal over Tailcat"),
+                systemImage: "terminal",
+                description: Text(String(localized: "This device's tunnel reaches herdr's control plane only. Use an SSH device to attach to a live terminal."))
+            )
+        } else if let pane = model.selectedTerminalPane,
+                  let terminalID = pane.terminalID,
+                  let transport = model.selectedSession?.transport {
+            MobileTerminalScreen(
+                transport: transport,
+                target: .terminal(terminalID: terminalID),
+                paneID: pane.paneID,
+                title: model.terminalLabel(for: pane)
+            )
+            .id(pane.paneID)
+        } else {
+            ContentUnavailableView(
+                String(localized: "No Agent Selected"),
+                systemImage: "bubble.left.and.text.bubble.right",
+                description: Text(String(localized: "Pick an agent to chat with it, or a terminal to attach to it."))
+            )
+        }
+    }
 }
 
+/// Which spaces the middle column lists: all of the server's, or one.
+enum SpaceRoute: Hashable {
+    case all
+    case space(String)
+}
+
+/// Top level: the servers, then the selected server's spaces.
 private struct SidebarListView: View {
     @Bindable var model: MobileAppModel
+    @Binding var spaceRoute: SpaceRoute?
 
     var body: some View {
-        List(selection: $model.selectedAgentPaneID) {
+        List(selection: $spaceRoute) {
             if model.devices.isEmpty {
                 ContentUnavailableView {
                     Label(String(localized: "No Devices"), systemImage: "desktopcomputer")
@@ -72,28 +108,58 @@ private struct SidebarListView: View {
                 }
                 .listRowSeparator(.hidden)
             } else {
+                serversSection
                 connectionSection
                 spacesSection
-                agentsSection
-                terminalsSection
             }
         }
         .listStyle(.sidebar)
         .navigationTitle("Herdrm")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                DeviceSwitcherMenu(model: model)
-            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     model.showAddDevice = true
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityLabel(String(localized: "Add Device"))
             }
         }
         .refreshable {
             await model.selectedSession?.refresh()
+        }
+    }
+
+    private var serversSection: some View {
+        Section(String(localized: "Servers")) {
+            ForEach(model.devices) { device in
+                let selected = device.id == model.selectedDeviceID
+                Button {
+                    model.selectDevice(device.id)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "desktopcomputer")
+                            .foregroundStyle(selected ? Color.accentColor : .secondary)
+                        Text(device.name)
+                            .fontWeight(selected ? .semibold : .regular)
+                            .lineLimit(1)
+                        Spacer()
+                        if selected {
+                            ConnectionDot(state: model.selectedConnectionState)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(device.name)
+                .accessibilityValue(selected ? String(localized: "Selected") : "")
+                .accessibilityHint(String(localized: "Shows this server's spaces."))
+                .contextMenu {
+                    Button(String(localized: "Remove \(device.name)"), role: .destructive) {
+                        model.removeDevice(device)
+                    }
+                }
+            }
         }
     }
 
@@ -126,30 +192,41 @@ private struct SidebarListView: View {
 
     private var spacesSection: some View {
         Section(String(localized: "Spaces")) {
-            Button {
-                model.selectedSpaceID = nil
-            } label: {
+            NavigationLink(value: SpaceRoute.all) {
                 SpaceRow(
                     label: String(localized: "All Spaces"),
                     systemImage: "square.grid.2x2",
                     count: model.spaces.count,
-                    selected: model.selectedSpaceID == nil
+                    selected: spaceRoute == .all
                 )
             }
-            .buttonStyle(.plain)
             ForEach(model.spaces) { space in
-                Button {
-                    model.selectedSpaceID = space.workspaceID
-                } label: {
+                NavigationLink(value: SpaceRoute.space(space.workspaceID)) {
                     SpaceRow(
                         label: space.label,
                         systemImage: "folder",
                         count: nil,
-                        selected: model.selectedSpaceID == space.workspaceID
+                        selected: spaceRoute == .space(space.workspaceID)
                     )
                 }
-                .buttonStyle(.plain)
             }
+        }
+    }
+}
+
+/// A space's agents first (where the work happens), then its terminals.
+private struct SpaceContentList: View {
+    @Bindable var model: MobileAppModel
+
+    var body: some View {
+        List(selection: $model.selectedAgentPaneID) {
+            agentsSection
+            terminalsSection
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(model.selectedSpaceID.map(model.spaceName(for:)) ?? String(localized: "All Spaces"))
+        .refreshable {
+            await model.selectedSession?.refresh()
         }
     }
 
@@ -271,47 +348,6 @@ private struct StatusGlyph: View {
         case .idle, .unknown:
             Image(systemName: "circle")
                 .foregroundStyle(.secondary)
-        }
-    }
-}
-
-/// Top-left device switcher: a compact chip naming the current device, with
-/// the device list, add, and remove actions in its menu.
-private struct DeviceSwitcherMenu: View {
-    @Bindable var model: MobileAppModel
-
-    var body: some View {
-        if let device = model.selectedDevice {
-            Menu {
-                ForEach(model.devices) { candidate in
-                    Button {
-                        model.selectDevice(candidate.id)
-                    } label: {
-                        if candidate.id == model.selectedDeviceID {
-                            Label(candidate.name, systemImage: "checkmark")
-                        } else {
-                            Text(candidate.name)
-                        }
-                    }
-                }
-                Divider()
-                Button(String(localized: "Add Device…")) { model.showAddDevice = true }
-                if let selected = model.selectedDevice {
-                    Button(String(localized: "Remove \(selected.name)"), role: .destructive) {
-                        model.removeDevice(selected)
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    ConnectionDot(state: model.selectedConnectionState)
-                    Text(device.name)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
         }
     }
 }
