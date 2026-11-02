@@ -65,6 +65,26 @@ public final class SSHConnection: Sendable {
         return SSHConnection(driver: driver, hostKey: hostKey)
     }
 
+    /// Runs the SSH handshake over a stream the caller already has, such as one
+    /// end of a socketpair whose other end a relay session pumps. The
+    /// connection takes ownership of `descriptor` (it is made non-blocking) and
+    /// closes it on close.
+    public static func connect(
+        overDescriptor descriptor: Int32,
+        timeout: Duration
+    ) async throws -> SSHConnection {
+        let transport = try DescriptorByteTransport(descriptor: descriptor)
+        let driver = SessionDriver()
+        do {
+            let hostKey = try await driver.handshake(transport: transport, timeout: timeout)
+            return SSHConnection(driver: driver, hostKey: hostKey, byteTransport: transport)
+        } catch {
+            await driver.invalidate()
+            transport.abort()
+            throw error
+        }
+    }
+
     /// Opens an SSH connection to `endpoint` through this authenticated Jump
     /// Host. The returned connection owns both hops and closes them in target,
     /// forwarding-channel, Jump Host order.

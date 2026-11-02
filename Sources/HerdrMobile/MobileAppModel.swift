@@ -38,7 +38,7 @@ final class MobileDeviceSession {
             do {
                 let transport: MobileTransport
                 switch device.kind {
-                case .ssh:
+                case .ssh, .relay:
                     transport = try await SSHDirectTransport.connect(device: device)
                 case .tailcat:
                     transport = try await TailcatMobileTransport.connect(device: device)
@@ -242,6 +242,15 @@ final class MobileAppModel {
     var selectedSpaceID: String?
     var selectedAgentPaneID: String?
     var showAddDevice = false
+    /// A herdr pairing link the system opened Herdrm with (the iPhone Camera
+    /// scanned the Mac's code); Add Device pairs with it right away.
+    var pendingPairingLink: RelayPairingLink?
+
+    func openPairingURL(_ url: URL) {
+        guard let link = RelayPairingLink(url: url) else { return }
+        pendingPairingLink = link
+        showAddDevice = true
+    }
     /// Bumped by sessions to publish nested (non-Observable) state changes.
     private(set) var revision = 0
 
@@ -336,6 +345,17 @@ final class MobileAppModel {
         selectDevice(device.id)
     }
 
+    /// A Mac paired by QR code through the relay (`MobileRelay.pair`). If it
+    /// was paired before, the old entry is replaced so the Mac appears once.
+    func addRelayDevice(_ device: MobileDevice) {
+        if let old = devices.first(where: { $0.kind == .relay && $0.relay?.hostID == device.relay?.hostID }) {
+            removeDevice(old)
+        }
+        devices.append(device)
+        store.save(devices)
+        selectDevice(device.id)
+    }
+
     /// The line to enroll on a Mac: `echo '<line>' >> ~/.ssh/authorized_keys`.
     var deviceKeyAuthorizedLine: String {
         DeviceKey.authorizedKeysLine(DeviceKey.ensure())
@@ -397,6 +417,10 @@ final class MobileAppModel {
             Task { await TailcatBridgeManager.shared.tearDown(deviceID: device.id) }
         }
         KnownHostsStore.unpin(host: device.host, port: device.port)
+        if device.kind == .relay {
+            MobileRelay.forget(device.id)
+            if let hostID = device.relay?.hostID { KnownHostsStore.unpin(host: "relay:\(hostID)", port: 0) }
+        }
         devices.removeAll { $0.id == device.id }
         store.save(devices)
         if selectedDeviceID == device.id {

@@ -58,34 +58,60 @@ enum MobileTransportError: LocalizedError {
 final class SSHDirectTransport: MobileTransport {
     private let connection: SSHConnection
     private let socketPath: String
+    /// A relay device's encrypted session; closed with the connection.
+    private let relayStream: RelayStream?
 
     private static let requestTimeout: Duration = .seconds(15)
 
-    private init(connection: SSHConnection, socketPath: String) {
+    private init(connection: SSHConnection, socketPath: String, relayStream: RelayStream?) {
         self.connection = connection
         self.socketPath = socketPath
+        self.relayStream = relayStream
     }
 
     /// Connects, verifies the pinned host key (TOFU on first contact),
     /// authenticates (device key or Keychain password), and resolves the
-    /// remote herdr socket path against the remote $HOME.
+    /// remote herdr socket path against the remote $HOME. A relay device
+    /// reaches its Mac's sshd inside an end-to-end encrypted relay session.
     static func connect(device: MobileDevice) async throws -> SSHDirectTransport {
-        let connection = try await SSHConnection.connect(
-            to: SSHEndpoint(host: device.host, port: device.port),
-            timeout: .seconds(10)
-        )
+        let connection: SSHConnection
+        var relayStream: RelayStream?
+        // The Mac's SSH host key as it reported it inside the Noise session.
+        var expectedHostKey: Data?
+        let pinHost: String
+        let pinPort: UInt16
+        if device.kind == .relay {
+            let relayed = try await MobileRelay.openSSH(device: device)
+            connection = relayed.connection
+            relayStream = relayed.stream
+            expectedHostKey = relayed.hostKeyBlob
+            pinHost = "relay:\(device.relay?.hostID ?? device.id.uuidString)"
+            pinPort = 0
+        } else {
+            connection = try await SSHConnection.connect(
+                to: SSHEndpoint(host: device.host, port: device.port),
+                timeout: .seconds(10)
+            )
+            pinHost = device.host
+            pinPort = device.port
+        }
         do {
             let hostKey = connection.hostKey
             let fingerprint = Self.fingerprint(hostKey.key)
+            if let expectedHostKey, expectedHostKey != hostKey.key {
+                // The Mac vouched for another key over the authenticated
+                // channel: something between it and its sshd is not right.
+                throw MobileTransportError.hostKeyChanged(fingerprint: fingerprint)
+            }
             if let pinned = KnownHostsStore.fingerprint(
-                host: device.host, port: device.port, algorithm: hostKey.algorithm
+                host: pinHost, port: pinPort, algorithm: hostKey.algorithm
             ) {
                 guard pinned == fingerprint else {
                     throw MobileTransportError.hostKeyChanged(fingerprint: fingerprint)
                 }
             } else {
                 KnownHostsStore.pin(
-                    host: device.host, port: device.port,
+                    host: pinHost, port: pinPort,
                     algorithm: hostKey.algorithm, fingerprint: fingerprint
                 )
             }
@@ -125,9 +151,10 @@ final class SSHDirectTransport: MobileTransport {
                 else { throw MobileTransportError.homeProbeFailed }
                 socketPath = home + "/.config/herdr/herdr.sock"
             }
-            return SSHDirectTransport(connection: connection, socketPath: socketPath)
+            return SSHDirectTransport(connection: connection, socketPath: socketPath, relayStream: relayStream)
         } catch {
             try? await connection.close(timeout: .seconds(2))
+            relayStream?.close()
             throw error
         }
     }
@@ -261,6 +288,7 @@ final class SSHDirectTransport: MobileTransport {
 
     func close() async {
         try? await connection.close(timeout: .seconds(3))
+        relayStream?.close()
     }
 }
 

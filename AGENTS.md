@@ -30,7 +30,9 @@ Design canvas (waku-style sidebar, light/dark): `design/` — published as the
   password; TOFU host keys); RPC over `HerdrSSH`; terminal is the same libghostty
   `InMemoryTerminalSession`, fed by the SSH PTY channel, display-first behind an
   APC bootstrap marker + native composer (`agent.prompt`) + key bar
-  (`pane.send_input` keys). No relay yet — a second `MobileTransport` later.
+  (`pane.send_input` keys). Macs without a public IP pair by QR code and are
+  reached through Herdrm's relay: SSH inside an end-to-end encrypted Noise
+  session ([docs/RELAY.md](docs/RELAY.md); the relay server is a private repo).
 - `design/` — design canvas working files (`*.dc.html` artboards + `canvas.json`).
 
 ## Build & test

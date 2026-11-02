@@ -129,6 +129,12 @@ targets:
         NSLocalNetworkUsageDescription: >-
           Herdrm connects to your Macs over SSH on your local network to reach
           the herdr session running on them.
+        NSCameraUsageDescription: >-
+          Herdrm uses the camera to scan the pairing code shown on your Mac.
+        CFBundleURLTypes:
+          - CFBundleURLName: dev.bybee.herdrm.pair
+            CFBundleURLSchemes:
+              - herdrm
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm.ios

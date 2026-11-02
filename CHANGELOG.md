@@ -5,6 +5,17 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Added
+- **Reach your Mac from iPhone on any network.** Turn on Settings → iPhone on
+  the Mac and scan the code with Herdrm on iPhone (or the Camera app): the
+  phone pairs and connects through Herdrm's relay, without a public IP, port
+  forwarding or SSH setup on the phone. The session is end-to-end encrypted
+  (Noise IKpsk2); the relay can't read it. Pairing installs the phone's SSH key
+  restricted to connections through the relay, and Settings → iPhone lists and
+  removes paired phones. See docs/RELAY.md.
+
 ## [0.6.25] - 2026-11-02
 
 > **Herdrm may be discontinued.** herdr has released its own official GUI app,

@@ -11,6 +11,18 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         /// Control plane only on iOS: the tunnel carries the herdr API and
         /// client sockets but no shell, so terminal attach stays SSH-only.
         case tailcat
+        /// A Mac paired by QR code: SSH to its own sshd, inside an end-to-end
+        /// encrypted session through Herdrm's relay. Works without a public IP.
+        case relay
+    }
+
+    /// Where a relay device waits and how to recognize it. The PSK and this
+    /// phone's relay key live in the Keychain (`MobileRelay`).
+    struct Relay: Codable, Hashable {
+        var url: URL
+        var hostID: String
+        /// The Mac's Noise static public key, from the QR code.
+        var hostStatic: Data
     }
 
     enum AuthMethod: String, Codable, CaseIterable {
@@ -28,6 +40,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
     var authMethod: AuthMethod
     /// Socket path override; nil means ~/.config/herdr/herdr.sock on the host.
     var socketPath: String?
+    /// Set for `.relay` devices.
+    var relay: Relay?
 
     init(
         id: UUID = UUID(),
@@ -37,7 +51,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         port: UInt16 = 22,
         username: String = "",
         authMethod: AuthMethod = .deviceKey,
-        socketPath: String? = nil
+        socketPath: String? = nil,
+        relay: Relay? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -47,6 +62,7 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         self.username = username
         self.authMethod = authMethod
         self.socketPath = socketPath
+        self.relay = relay
     }
 
     /// Devices stored before the tailcat kind existed decode as SSH.
@@ -60,6 +76,7 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
         authMethod = try container.decodeIfPresent(AuthMethod.self, forKey: .authMethod) ?? .deviceKey
         socketPath = try container.decodeIfPresent(String.self, forKey: .socketPath)
+        relay = try container.decodeIfPresent(Relay.self, forKey: .relay)
     }
 
     var isTailcat: Bool { kind == .tailcat }
@@ -70,6 +87,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
             return port == 22 ? "\(username)@\(host)" : "\(username)@\(host):\(port)"
         case .tailcat:
             return String(localized: "Tailcat tunnel")
+        case .relay:
+            return String(localized: "\(username) · through the relay")
         }
     }
 }

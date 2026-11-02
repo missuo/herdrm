@@ -1,6 +1,630 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "iPhone" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone"
+          }
+        }
+      }
+    },
+    "Allow Herdrm on iPhone" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Allow Herdrm on iPhone"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "允许 iPhone 上的 Herdrm 连接"
+          }
+        }
+      }
+    },
+    "Your iPhone reaches this Mac from any network, even without a public IP. The connection goes through Herdrm's relay and is end-to-end encrypted: the relay can't read it." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your iPhone reaches this Mac from any network, even without a public IP. The connection goes through Herdrm's relay and is end-to-end encrypted: the relay can't read it."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你的 iPhone 可以在任何网络下连到这台 Mac，即使没有公网 IP。连接经过 Herdrm 的中继，并且是端到端加密的：中继无法读取内容。"
+          }
+        }
+      }
+    },
+    "Remote Login is off" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remote Login is off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "远程登录未开启"
+          }
+        }
+      }
+    },
+    "Herdrm on iPhone signs in to this Mac over SSH. Turn on Remote Login in System Settings → General → Sharing." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Herdrm on iPhone signs in to this Mac over SSH. Turn on Remote Login in System Settings → General → Sharing."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone 上的 Herdrm 通过 SSH 登录这台 Mac。请在“系统设置 → 通用 → 共享”中打开“远程登录”。"
+          }
+        }
+      }
+    },
+    "Open Sharing Settings" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Open Sharing Settings"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "打开共享设置"
+          }
+        }
+      }
+    },
+    "Check Again" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Check Again"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新检查"
+          }
+        }
+      }
+    },
+    "Pair iPhone…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pair iPhone…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对 iPhone…"
+          }
+        }
+      }
+    },
+    "Shows a code to scan with Herdrm on iPhone. It works once and expires after 10 minutes." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Shows a code to scan with Herdrm on iPhone. It works once and expires after 10 minutes."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示一个二维码，用 iPhone 上的 Herdrm 扫描。只能用一次，10 分钟后失效。"
+          }
+        }
+      }
+    },
+    "Paired iPhones" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paired iPhones"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已配对的 iPhone"
+          }
+        }
+      }
+    },
+    "No iPhones yet." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "No iPhones yet."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "还没有配对的 iPhone。"
+          }
+        }
+      }
+    },
+    "Paired %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paired %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配对于 %@"
+          }
+        }
+      }
+    },
+    "Relay" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relay"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中继"
+          }
+        }
+      }
+    },
+    "Mac ID" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac ID"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac ID"
+          }
+        }
+      }
+    },
+    "Connected to the relay" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connected to the relay"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已连接到中继"
+          }
+        }
+      }
+    },
+    "Connecting to the relay…" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Connecting to the relay…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在连接中继…"
+          }
+        }
+      }
+    },
+    "Off" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Off"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭"
+          }
+        }
+      }
+    },
+    "Paired with %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Paired with %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已与 %@ 配对"
+          }
+        }
+      }
+    },
+    "Your iPhone can now reach this Mac from anywhere." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Your iPhone can now reach this Mac from anywhere."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "现在你的 iPhone 可以在任何地方连到这台 Mac 了。"
+          }
+        }
+      }
+    },
+    "Scan with Herdrm on iPhone" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Scan with Herdrm on iPhone"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "用 iPhone 上的 Herdrm 扫描"
+          }
+        }
+      }
+    },
+    "In Herdrm on your iPhone, tap Add Device → Pair with Mac → Scan. The iPhone Camera app works too." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In Herdrm on your iPhone, tap Add Device → Pair with Mac → Scan. The iPhone Camera app works too."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 iPhone 的 Herdrm 中点“添加设备 → 与 Mac 配对 → 扫描”。用 iPhone 自带的相机扫也可以。"
+          }
+        }
+      }
+    },
+    "Pairing code for %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pairing code for %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 的配对二维码"
+          }
+        }
+      }
+    },
+    "Expires in %lld:%@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Expires in %lld:%@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld:%@ 后失效"
+          }
+        }
+      }
+    },
+    "This code has expired." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "This code has expired."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个二维码已失效。"
+          }
+        }
+      }
+    },
+    "Copy Link" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Link"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拷贝链接"
+          }
+        }
+      }
+    },
+    "New Code" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "New Code"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新的二维码"
+          }
+        }
+      }
+    },
+    "Anyone with this code can pair once, so only show it to your own phone." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Anyone with this code can pair once, so only show it to your own phone."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拿到这个二维码的人都能配对一次，所以只给自己的手机看。"
+          }
+        }
+      }
+    },
+    "The Mac isn't connected to the relay. Open Herdrm on the Mac and make sure iPhone access is on." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Mac isn't connected to the relay. Open Herdrm on the Mac and make sure iPhone access is on."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 没有连到中继。请在 Mac 上打开 Herdrm，并确认已允许 iPhone 连接。"
+          }
+        }
+      }
+    },
+    "The Mac didn't answer through the relay." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Mac didn't answer through the relay."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 没有通过中继回应。"
+          }
+        }
+      }
+    },
+    "The Mac has too many phones connected." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Mac has too many phones connected."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "连到这台 Mac 的手机太多了。"
+          }
+        }
+      }
+    },
+    "The relay couldn't verify this Mac." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The relay couldn't verify this Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中继无法验证这台 Mac。"
+          }
+        }
+      }
+    },
+    "Another copy of Herdrm on this Mac took over the relay connection." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Another copy of Herdrm on this Mac took over the relay connection."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 上的另一个 Herdrm 接管了中继连接。"
+          }
+        }
+      }
+    },
+    "Relay protocol error: %@" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Relay protocol error: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中继协议错误：%@"
+          }
+        }
+      }
+    },
+    "The relay connection closed." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The relay connection closed."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "中继连接已关闭。"
+          }
+        }
+      }
+    },
+    "The Mac refused the connection." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Mac refused the connection."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 拒绝了连接。"
+          }
+        }
+      }
+    },
+    "The Mac didn't accept this pairing. Scan a new code on the Mac." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The Mac didn't accept this pairing. Scan a new code on the Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 没有接受这次配对。请在 Mac 上重新生成二维码再扫。"
+          }
+        }
+      }
+    },
+    "Couldn't save the pairing in the Keychain." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Couldn't save the pairing in the Keychain."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法把配对信息存入钥匙串。"
+          }
+        }
+      }
+    },
+    "The phone sent an unusable SSH key." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The phone sent an unusable SSH key."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "手机发来的 SSH 密钥无法使用。"
+          }
+        }
+      }
+    },
+    "Remote Login is off on this Mac. Turn it on in System Settings → General → Sharing." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Remote Login is off on this Mac. Turn it on in System Settings → General → Sharing."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这台 Mac 没有开启远程登录。请在“系统设置 → 通用 → 共享”中打开。"
+          }
+        }
+      }
+    },
     "Files Already Exist": {
       "localizations": {
         "en": {

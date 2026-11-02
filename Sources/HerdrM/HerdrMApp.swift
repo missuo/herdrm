@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before any session starts, so a reaped socket can never be one of ours.
         SSHTunnel.reapOrphanedForwards()
 
+        // Herdrm on iPhone reaches this Mac through the relay while it's on.
+        MainActor.assumeIsolated { RelayHostController.shared.startIfEnabled() }
+
         // `pkill herdrm` (and launchd) send SIGTERM, whose default action ends the
         // process on the spot: this delegate never hears of it and every ssh child
         // survives. Route it through the normal quit; a second SIGTERM still ends a
@@ -368,6 +371,8 @@ struct SettingsView: View {
                 .tabItem { Label("Agents", systemImage: "sparkles") }
             NotificationSettingsView()
                 .tabItem { Label("Notifications", systemImage: "bell") }
+            RelaySettingsView()
+                .tabItem { Label("iPhone", systemImage: "iphone") }
             TailcatSettingsView(model: model)
                 .tabItem { Label("Tailcat", systemImage: "key") }
             AboutSettingsView()

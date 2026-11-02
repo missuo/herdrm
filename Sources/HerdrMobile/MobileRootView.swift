@@ -338,7 +338,7 @@ private struct ConnectionDot: View {
 struct AddDeviceSheet: View {
     @Bindable var model: MobileAppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var kind: MobileDevice.Kind = .ssh
+    @State private var kind: MobileDevice.Kind = .relay
     @State private var name = ""
     @State private var host = ""
     @State private var port = "22"
@@ -359,6 +359,8 @@ struct AddDeviceSheet: View {
                 && UInt16(port) != nil
         case .tailcat:
             return !tailcatToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .relay:
+            return false // pairing adds the device itself
         }
     }
 
@@ -367,11 +369,15 @@ struct AddDeviceSheet: View {
             Form {
                 Section {
                     Picker(String(localized: "Connection"), selection: $kind) {
+                        Text(String(localized: "Pair with Mac")).tag(MobileDevice.Kind.relay)
                         Text(String(localized: "SSH")).tag(MobileDevice.Kind.ssh)
                         Text(String(localized: "Tailcat")).tag(MobileDevice.Kind.tailcat)
                     }
                 }
 
+                if kind == .relay {
+                    RelayPairingSections(model: model, onPaired: { dismiss() })
+                } else {
                 Section(String(localized: "Device")) {
                     TextField(String(localized: "Name (optional)"), text: $name)
                     if kind == .ssh {
@@ -399,6 +405,7 @@ struct AddDeviceSheet: View {
                 } else {
                     sshSections
                 }
+                }
             }
             .navigationTitle(String(localized: "Add Device"))
             .navigationBarTitleDisplayMode(.inline)
@@ -420,10 +427,13 @@ struct AddDeviceSheet: View {
                             )
                         case .tailcat:
                             model.addTailcatDevice(name: name, token: tailcatToken)
+                        case .relay:
+                            break
                         }
                         dismiss()
                     }
                     .disabled(!canAdd)
+                    .opacity(kind == .relay ? 0 : 1)
                 }
             }
         }
