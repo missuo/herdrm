@@ -19,19 +19,23 @@ struct HerdrMobileApp: App {
 
     var body: some Scene {
         WindowGroup {
-            MobileRootView(model: model)
-                // herdrm://pair?… from the system Camera scanning a Mac's code.
-                .onOpenURL { model.openPairingURL($0) }
-                #if DEBUG
-                // UI tests: `-HerdrmPairingURL herdrm://pair?…` takes the same
-                // path as the system opening the link, without its prompt.
-                .task {
-                    if let link = UserDefaults.standard.string(forKey: "HerdrmPairingURL"),
-                       let url = URL(string: link) {
-                        model.openPairingURL(url)
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-HerdrmChatDemo") {
+                MobileChatDemoView()
+            } else {
+                root
+                    // UI tests: `-HerdrmPairingURL herdrm://pair?…` takes the
+                    // same path as the system opening the link, without its prompt.
+                    .task {
+                        if let link = UserDefaults.standard.string(forKey: "HerdrmPairingURL"),
+                           let url = URL(string: link) {
+                            model.openPairingURL(url)
+                        }
                     }
-                }
-                #endif
+            }
+            #else
+            root
+            #endif
         }
         .onChange(of: scenePhase) { _, phase in
             // iOS tears sockets down in the background; on return, re-prove the
@@ -40,5 +44,11 @@ struct HerdrMobileApp: App {
                 model.connectSelected()
             }
         }
+    }
+
+    private var root: some View {
+        MobileRootView(model: model)
+            // herdrm://pair?… from the system Camera scanning a Mac's code.
+            .onOpenURL { model.openPairingURL($0) }
     }
 }

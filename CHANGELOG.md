@@ -15,6 +15,21 @@ the Sparkle update description — a release without a section here fails CI.
   (Noise IKpsk2); the relay can't read it. Pairing installs the phone's SSH key
   restricted to connections through the relay, and Settings → iPhone lists and
   removes paired phones. See docs/RELAY.md.
+- **iOS: agents open as a chat.** An agent's screen on the phone defaults to a
+  Chat tab: your prompts, the agent's replies, and each tool call as a compact
+  row you can expand for its input and result. The live Terminal is one tap
+  away in the same screen. Works for Claude Code and (best effort) Codex, read
+  from the agent's own transcript on the device over SSH.
+- **iOS: answer an agent's questions with a tap.** When Claude Code stops on a
+  permission prompt, an AskUserQuestion question, or plan approval, the chat
+  shows the question with one button per option; options that take words
+  ("Type something.", "Tell Claude what to change") open a text field.
+  Tapping sends the keys the agent's terminal expects, and the card goes away
+  once the agent moves on. Codex approval prompts get the same card.
+
+### Changed
+- **iOS: Server → Space → Agent.** The phone follows the Mac's layout: pick a
+  server, then one of its spaces, then an agent (or a terminal) in it.
 
 ## [0.6.25] - 2026-11-02
 

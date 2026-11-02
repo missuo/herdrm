@@ -379,3 +379,14 @@ enum MobileAttach {
         return "/bin/sh -c \(ShellQuoting.quoted(script))"
     }
 }
+
+// MARK: - Short remote commands (agent chat)
+
+/// The chat reads agent transcripts with one short command per poll
+/// (`MobileCommandRunning`, in MobileAgentChat.swift). Only SSH has a shell.
+extension SSHDirectTransport: MobileCommandRunning {
+    func runCommand(_ command: String, timeout: Duration) async throws -> (stdout: Data, status: Int32) {
+        let result = try await connection.execute(command, timeout: timeout)
+        return (result.stdout, result.exitStatus)
+    }
+}
