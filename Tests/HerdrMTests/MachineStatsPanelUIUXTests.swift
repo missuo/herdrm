@@ -62,21 +62,16 @@ final class MachineStatsPanelUIUXTests: XCTestCase {
         scroll.reflectScrolledClipView(scroll.contentView)
         XCTAssertGreaterThan(scroll.contentView.bounds.origin.y, 0, "bottom rows are reachable")
 
+        // A hover panel: nothing outside it catches clicks meant for the window.
         let point = NSPoint(x: 700, y: 300)
-        let target = try XCTUnwrap(root.hitTest(root.superview?.convert(point, from: nil) ?? point))
-        let down = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
-        let up = try XCTUnwrap(NSEvent.mouseEvent(with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime + 0.05, windowNumber: window.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
-        if target.acceptsFirstMouse(for: down) {
-            window.sendEvent(down)
-            settle(root)
-            window.sendEvent(up)
-        } else {
-            target.mouseDown(with: down)
-            settle(root)
-            target.mouseUp(with: up)
-        }
-        settle(root)
-        XCTAssertFalse(model.showMachineStats, "clicking outside dismisses the panel")
+        let target = root.hitTest(root.superview?.convert(point, from: nil) ?? point)
+        XCTAssertFalse(target.map { $0 === scroll || $0.isDescendant(of: scroll) } ?? false,
+                       "a click outside the panel must not land in it")
+
+        model.setMachineStatsHover(card: true, immediately: true)
+        XCTAssertTrue(model.showMachineStats, "known-yes: hovering the card shows the panel")
+        model.setMachineStatsHover(card: false, panel: false, immediately: true)
+        XCTAssertFalse(model.showMachineStats, "leaving the card and the panel hides it")
     }
 
     func testShortPanelKeepsItsOwnHeight() throws {

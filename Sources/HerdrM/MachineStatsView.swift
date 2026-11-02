@@ -17,11 +17,11 @@ enum MachineStatsDefaults {
     static let showKey = "sidebar.showMachineStats"
 }
 
-/// CPU / RAM / DISK meters for the selected pane's host, the top line of the
-/// sidebar's device card, plus AGENTS (herdr's panes against herdr's memory
-/// cap) on a Linux host that caps herdr, and a warning when that host has no
-/// room for another agent. Not a control of its own: the card it sits in opens
-/// the device switcher, whose Machine Details item opens `MachineStatsPanel`.
+/// The selected pane's host at a glance, one small line under the device name
+/// on the sidebar's device card: `CPU 12%  RAM 48%  DISK 63%`, plus AGENTS
+/// (herdr's panes against herdr's memory cap) on a Linux host that caps herdr,
+/// and a warning when that host has no room for another agent. Not a control:
+/// hovering the card shows `MachineStatsPanel`, clicking it switches devices.
 /// Runs the sampler while it is on screen and the window is visible.
 struct SidebarMachineStats: View {
     @ObservedObject var stats: MachineStatsModel
@@ -34,26 +34,27 @@ struct SidebarMachineStats: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            SidebarMeter(label: "CPU", percent: snapshot?.cpuPercent)
-            SidebarMeter(label: "RAM", percent: snapshot.map { $0.memFraction * 100 })
-            SidebarMeter(label: "DISK", percent: snapshot?.fullestDisk.map { $0.fraction * 100 })
+        HStack(spacing: 7) {
+            SidebarFigure(label: "CPU", percent: snapshot?.cpuPercent)
+            SidebarFigure(label: "RAM", percent: snapshot.map { $0.memFraction * 100 })
+            SidebarFigure(label: "DISK", percent: snapshot?.fullestDisk.map { $0.fraction * 100 })
             if let agents = snapshot?.agentsMemFraction {
-                SidebarMeter(label: "AGENTS", percent: agents * 100)
+                SidebarFigure(label: "AGENTS", percent: agents * 100)
             }
             if let capacity = snapshot?.capacity, capacity.level == .critical {
                 Image(systemName: "exclamationmark.octagon.fill")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 9.5))
                     .foregroundStyle(Theme.danger)
                     .help(HostCapacityFormat.summary(capacity, device: device.name))
             } else if case .failed(let message) = stats.state, snapshot == nil {
                 Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 9.5))
                     .foregroundStyle(Theme.warning)
                     .help(message)
             }
         }
-        .frame(maxWidth: .infinity)
+        .lineLimit(1)
+        .fixedSize()
         .background(WindowVisibilityReader(isVisible: $windowVisible))
         .task(id: WatchKey(device: device, visible: windowVisible)) {
             guard windowVisible else { return }
@@ -65,7 +66,7 @@ struct SidebarMachineStats: View {
         stats.deviceID == device.id ? stats.snapshot : nil
     }
 
-    /// What VoiceOver reads for the meters, as part of the device card's name.
+    /// What VoiceOver reads for the figures, as part of the device card's name.
     static func accessibilityText(stats: MachineStatsModel, device: Device) -> String {
         guard stats.deviceID == device.id, let snapshot = stats.snapshot else {
             return String(localized: "\(device.name) health")
@@ -77,38 +78,22 @@ struct SidebarMachineStats: View {
     }
 }
 
-/// One compact meter column: `CPU … 34%` over a level-tinted bar that fills its
-/// share of the row. Equal-width columns so the block adapts to the sidebar width.
-private struct SidebarMeter: View {
+/// `CPU 12%`: a small label and its figure, tinted once the resource runs low.
+private struct SidebarFigure: View {
     let label: String
     let percent: Double?
 
     var body: some View {
         let value = percent.map { min(100, max(0, $0)) }
-        let tint = value.map(levelColor) ?? Theme.textGhost
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                Text(label)
-                    .font(.system(size: 9, weight: .semibold))
-                    .kerning(0.2)
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer(minLength: 2)
-                Text(value.map(MachineStatsFormat.percent) ?? "—")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(value.map { $0 >= 75 ? tint : Theme.textSecondary } ?? Theme.textGhost)
-                    .lineLimit(1)
-            }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.textGhost.opacity(0.22))
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max((value ?? 0) > 0 ? 3 : 0, proxy.size.width * (value ?? 0) / 100))
-                }
-            }
-            .frame(height: 4)
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .kerning(0.2)
+                .foregroundStyle(Theme.textTertiary)
+            Text(value.map(MachineStatsFormat.percent) ?? "—")
+                .font(.system(size: 10.5).monospacedDigit())
+                .foregroundStyle(value.map { $0 >= 75 ? levelColor($0) : Theme.textSecondary } ?? Theme.textGhost)
         }
-        .frame(maxWidth: .infinity)
         .animation(.easeOut(duration: 0.35), value: value ?? -1)
     }
 }

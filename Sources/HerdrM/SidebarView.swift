@@ -490,6 +490,7 @@ struct SidebarView: View {
                 onRename: { model.terminalToRename = entry },
                 onOpenProject: { model.openProject(for: .terminal(entry)) },
                 onClose: { model.requestClosePane(entry.ref, name: entry.title) },
+                onCloseAll: { model.requestCloseAllTerminals() },
                 onDragStart: { draggingTerminalID = $0 },
                 onDragEnd: {
                     draggingTerminalID = nil
@@ -695,6 +696,7 @@ struct SidebarView: View {
                 },
                 onMenuOpen: { Task { await model.loadPluginActions(deviceID: entry.device.id) } },
                 onClose: { model.requestClosePane(entry.ref, name: entry.title) },
+                onCloseAll: { model.requestCloseAllAgents() },
                 onDragStart: { draggingAgentID = $0 },
                 onDragEnd: {
                     draggingAgentID = nil
@@ -764,44 +766,51 @@ struct SidebarView: View {
 
     // MARK: - Footer (device filter)
 
-    /// The device card: the selected host's meters over the device switcher,
-    /// one control that opens the device panel. Settings sits beside it.
+    /// The device card: the device's icon beside its name, with the selected
+    /// host's figures on a small line under it. Clicking switches devices;
+    /// hovering shows the machine stats panel. Settings sits beside it.
     private var footer: some View {
         let metersDevice = showsMachineStats ? model.statsDevice : nil
         return HStack(spacing: 6) {
             Button {
                 model.showDevicePanel.toggle()
             } label: {
-                VStack(alignment: .leading, spacing: 7) {
-                    if let device = metersDevice {
-                        SidebarMachineStats(stats: model.machineStats, device: device)
-                    }
-                    HStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Group {
                         if let device = model.filteredDevice {
-                            DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 10)
-                                .foregroundStyle(Theme.textSecondary)
+                            DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 16)
                         } else {
                             Image(systemName: "square.stack.3d.up")
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(Theme.textSecondary)
+                                .font(.system(size: 15))
                         }
-                        Text(model.filteredDevice?.name ?? "All Devices")
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(Theme.text)
-                            .lineLimit(1)
-                        Circle()
-                            .fill(connectionDotColor)
-                            .frame(width: 6, height: 6)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 8.5, weight: .semibold))
-                            .foregroundStyle(Theme.textGhost)
                     }
-                    .frame(height: 16)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(model.filteredDevice?.name ?? "All Devices")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .layoutPriority(1)
+                            Circle()
+                                .fill(connectionDotColor)
+                                .frame(width: 6, height: 6)
+                        }
+                        if let device = metersDevice {
+                            SidebarMachineStats(stats: model.machineStats, device: device)
+                        }
+                    }
+                    // Without this the column gets only its figures' width and
+                    // the name is cut short while the card still has room.
+                    .layoutPriority(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 8.5, weight: .semibold))
+                        .foregroundStyle(Theme.textGhost)
                 }
                 .padding(.horizontal, 9)
-                .padding(.vertical, 7)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
                 .contentShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
@@ -816,10 +825,21 @@ struct SidebarView: View {
                     .strokeBorder(Theme.hairline, lineWidth: deviceButtonHovered ? 1 : 0)
             )
             .animation(.easeOut(duration: 0.15), value: deviceButtonHovered)
-            .onHover { deviceButtonHovered = $0 }
+            .onHover { inside in
+                deviceButtonHovered = inside
+                if metersDevice != nil { model.setMachineStatsHover(card: inside) }
+            }
             .help(String(localized: "Switch device"))
             .accessibilityLabel(deviceCardAccessibilityText(meters: metersDevice))
             .accessibilityIdentifier(metersDevice == nil ? "sidebar.deviceCard" : "sidebar.machineStats")
+            .accessibilityAction(named: Text("Show machine details")) {
+                if metersDevice != nil { model.showMachineStats = true }
+            }
+            // The card takes the width its name needs before the spacer does;
+            // only a name too long for the sidebar is shortened.
+            .layoutPriority(1)
+
+            Spacer(minLength: 0)
 
             SettingsLink {
                 Image(systemName: "gearshape")
@@ -932,7 +952,6 @@ struct TitlebarIconButton: View {
 struct DevicePopover: View {
     @ObservedObject var model: AppModel
     @Binding var isPresented: Bool
-    @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -1003,14 +1022,6 @@ struct DevicePopover: View {
                 .padding(.vertical, 4)
                 .padding(.horizontal, 6)
 
-            // The meters on the device card are part of its one control, so
-            // their details open from here.
-            if showsMachineStats, model.statsDevice != nil {
-                actionRow(icon: "gauge.with.dots.needle.50percent", label: "Machine Details…") {
-                    isPresented = false
-                    model.showMachineStats = true
-                }
-            }
             actionRow(icon: "plus", label: "Add Device…") {
                 isPresented = false
                 model.showAddDevice = true
@@ -1221,6 +1232,7 @@ private struct SpaceRowView: View {
                     onOpenProject: { model.openProject(entry.ref) },
                     onRename: { model.spaceToRename = entry },
                     onClose: { model.requestCloseSpace(entry) },
+                    onCloseAll: { model.requestCloseAllSpaces() },
                     onDragStart: { draggingSpaceID = $0 },
                     onDragEnd: {
                         draggingSpaceID = nil

@@ -10,9 +10,15 @@ the Sparkle update description — a release without a section here fails CI.
 ### Changed
 - **The app is now named Herdrm.** The menu bar, Dock, About window and every
   message use the capitalized name.
-- **Machine stats live on the device card.** The CPU, RAM and disk meters sit
-  above the device name in one card at the bottom of the sidebar; clicking it
-  opens the device switcher, which now has Machine Details… for the full panel.
+- **Machine stats live on the device card.** The bottom of the sidebar is one
+  compact card: a larger device icon, the device name, and CPU, RAM and disk
+  figures on a small line under it. Click the card to switch devices; hover it
+  to see the full machine stats panel.
+
+### Added
+- **Close all from the sidebar.** Right-click a space, agent or terminal to
+  close all spaces, all agents or all terminals the sidebar lists (the device
+  filter and the selected space set the scope), after one confirmation.
 
 ### Fixed
 - **Panes inside a space line up under its name.** Agents and terminals in a

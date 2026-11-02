@@ -22,42 +22,28 @@ private struct NewItemSheets: ViewModifier {
     }
 }
 
-/// Window-sized dismissal layer, with the panel anchored above the sidebar meters.
+/// The machine stats panel, anchored above the sidebar's device card. It is a
+/// hover panel: the card and the panel keep it open, leaving both hides it, so
+/// nothing covers the window to catch clicks.
 struct MachineStatsOverlay: View {
     @ObservedObject var model: AppModel
     let device: Device
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .bottomLeading) {
-                MachineStatsDismissLayer { model.showMachineStats = false }
-                MachineStatsPanel(
-                    model: model,
-                    stats: model.machineStats,
-                    device: device,
-                    isPresented: $model.showMachineStats
-                )
-                .frame(maxHeight: max(0, geometry.size.height - SidebarFooterMetrics.deviceSwitcherHeight - SidebarFooterMetrics.statsHeight - 6 - TitlebarMetrics.height - 10), alignment: .bottom)
-                .padding(.leading, 10)
-                .padding(.bottom, SidebarFooterMetrics.deviceSwitcherHeight + SidebarFooterMetrics.statsHeight + 6)
-            }
+            let bottom = SidebarFooterMetrics.height(showsStats: true) + 6
+            MachineStatsPanel(
+                model: model,
+                stats: model.machineStats,
+                device: device,
+                isPresented: $model.showMachineStats
+            )
+            .onHover { model.setMachineStatsHover(panel: $0) }
+            .frame(maxHeight: max(0, geometry.size.height - bottom - TitlebarMetrics.height - 10), alignment: .bottom)
+            .padding(.leading, 10)
+            .padding(.bottom, bottom)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
         }
-    }
-}
-
-private struct MachineStatsDismissLayer: NSViewRepresentable {
-    let dismiss: () -> Void
-
-    func makeNSView(context: Context) -> DismissView { DismissView() }
-
-    func updateNSView(_ view: DismissView, context: Context) {
-        view.dismiss = dismiss
-    }
-
-    final class DismissView: NSView {
-        var dismiss: (() -> Void)?
-
-        override func mouseDown(with event: NSEvent) { dismiss?() }
     }
 }
 
@@ -208,8 +194,8 @@ struct RootView: View {
 enum SidebarFooterMetrics {
     /// The footer with the device card's switcher line alone.
     static let deviceSwitcherHeight: CGFloat = 40
-    /// What the meters line adds to the device card.
-    static let statsHeight: CGFloat = 28
+    /// What the figures line under the device name adds to the footer.
+    static let statsHeight: CGFloat = 14
 
     static func height(showsStats: Bool) -> CGFloat {
         deviceSwitcherHeight + (showsStats ? statsHeight : 0)

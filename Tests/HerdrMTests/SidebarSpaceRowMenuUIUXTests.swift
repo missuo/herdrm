@@ -81,6 +81,29 @@ final class SidebarSpaceRowMenuUIUXTests: XCTestCase {
         XCTAssertTrue(items.contains(String(localized: "Project…")), "\(items)")
     }
 
+    func testCloseAllAsksOnceForWhatTheSidebarLists() throws {
+        let sidebar = try SidebarHarness(spaces: 3, agents: 4, terminals: 2, pinnedHeaders: false)
+        let items = try sidebar.spaceMenu("Space 1")
+        XCTAssertTrue(items.contains(String(localized: "Close All Spaces…")), "\(items)")
+
+        let model = sidebar.model
+        model.requestCloseAllAgents()
+        XCTAssertEqual(model.closeRequest?.title,
+                       String(localized: "Close all \(model.visibleAgents.count) agents?"))
+        model.closeRequest = nil
+        model.requestCloseAllTerminals()
+        XCTAssertEqual(model.closeRequest?.title,
+                       String(localized: "Close all \(model.visibleTerminals.count) terminals?"))
+        model.closeRequest = nil
+
+        model.selectSpace(model.visibleSpaces[1].ref)
+        model.requestCloseAllAgents()
+        XCTAssertEqual(model.closeRequest?.title,
+                       String(localized: "Close all \(model.visibleAgents.count) agents in Space 2?"),
+                       "a space filter narrows what closes")
+        model.closeRequest = nil
+    }
+
     func testProjectFromASpaceOpensTheProjectPaneOnThatSpace() throws {
         let sidebar = try SidebarHarness(spaces: 3, agents: 4, pinnedHeaders: false)
         let spaces = sidebar.model.visibleSpaces

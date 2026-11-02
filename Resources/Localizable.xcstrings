@@ -577,6 +577,182 @@
         }
       }
     },
+    "Close All Spaces…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close All Spaces…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭所有 Space…"
+          }
+        }
+      }
+    },
+    "Close All Agents…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close All Agents…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭所有 Agent…"
+          }
+        }
+      }
+    },
+    "Close All Terminals…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close All Terminals…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭所有终端…"
+          }
+        }
+      }
+    },
+    "Close all %lld spaces%@?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close all %lld spaces%@?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭全部 %lld 个 Space%@？"
+          }
+        }
+      }
+    },
+    "Close all %lld agents%@?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close all %lld agents%@?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭全部 %lld 个 Agent%@？"
+          }
+        }
+      }
+    },
+    "Close all %lld terminals%@?": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Close all %lld terminals%@?"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "关闭全部 %lld 个终端%@？"
+          }
+        }
+      }
+    },
+    "Every terminal and agent in them will be closed.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Every terminal and agent in them will be closed."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "其中的所有终端和 Agent 都会被关闭。"
+          }
+        }
+      }
+    },
+    "Each agent and whatever it is running will be terminated. A space left with no panes closes too.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Each agent and whatever it is running will be terminated. A space left with no panes closes too."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每个 Agent 及其正在运行的内容都会被终止。没有剩余窗格的 Space 也会一并关闭。"
+          }
+        }
+      }
+    },
+    "Each terminal and whatever it is running will be terminated. A space left with no panes closes too.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Each terminal and whatever it is running will be terminated. A space left with no panes closes too."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "每个终端及其正在运行的内容都会被终止。没有剩余窗格的 Space 也会一并关闭。"
+          }
+        }
+      }
+    },
+    " in %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " in %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（%@ 中）"
+          }
+        }
+      }
+    },
+    " on %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": " on %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "（%@ 上）"
+          }
+        }
+      }
+    },
     "Close Agent…": {
       "localizations": {
         "en": {
@@ -3921,12 +4097,12 @@
         }
       }
     },
-    "Machine Details…": {
+    "Show machine details": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Machine Details…"
+            "value": "Show machine details"
           }
         },
         "zh-Hans": {

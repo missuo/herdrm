@@ -358,13 +358,39 @@ final class AppModel: ObservableObject {
         didSet { synchronizeConversationHistory() }
     }
     /// In-window device panel (NSPopover crashes in ViewBridge on macOS 26+ betas).
-    @Published var showDevicePanel = false
+    @Published var showDevicePanel = false {
+        // Switching devices takes over the card; the hover details step aside.
+        didSet { if showDevicePanel { setMachineStatsHover(card: false, panel: false, immediately: true) } }
+    }
     /// Machine stats under the terminal: the sampler state lives in its own object so its
     /// two-second ticks don't republish the whole app model.
     let machineStats = MachineStatsModel()
     /// Per-Space project probes behind the Project detail view.
     let projects = ProjectInspectorModel()
     @Published var showMachineStats = false
+    private var machineStatsHoverCard = false
+    private var machineStatsHoverPanel = false
+    private var machineStatsHoverTask: Task<Void, Never>?
+
+    /// Hovering the device card shows the machine stats panel above it, after a
+    /// short pause so passing over the card to click it doesn't flash it. The
+    /// pointer may cross the gap into the panel; leaving both hides it.
+    func setMachineStatsHover(card: Bool? = nil, panel: Bool? = nil, immediately: Bool = false) {
+        if let card { machineStatsHoverCard = card }
+        if let panel { machineStatsHoverPanel = panel }
+        machineStatsHoverTask?.cancel()
+        let wanted = (machineStatsHoverCard || machineStatsHoverPanel) && !showDevicePanel
+        guard wanted != showMachineStats else { return }
+        if immediately {
+            showMachineStats = wanted
+            return
+        }
+        machineStatsHoverTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: wanted ? 450_000_000 : 250_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.showMachineStats = wanted && !self.showDevicePanel
+        }
+    }
     @Published var deviceToEdit: Device?
     @Published var sshAuthenticationRequest: SSHAuthenticationRequest?
     @Published var spaceToRename: SpaceEntry?
@@ -2743,6 +2769,89 @@ final class AppModel: ObservableObject {
                     self.actionError = self.actionErrorMessage(error, device: device)
                 }
             }
+        }
+    }
+
+    /// Closes every space the sidebar lists (the device filter's scope).
+    func requestCloseAllSpaces() {
+        let spaces = visibleSpaces
+        guard !spaces.isEmpty else { return }
+        closeRequest = CloseRequest(
+            title: String(localized: "Close all \(spaces.count) spaces\(closeAllScope)?"),
+            message: String(localized: "Every terminal and agent in them will be closed.")
+        ) { [weak self] in
+            guard let self else { return }
+            self.closeAll(spaces.map { ($0.device, $0.workspace.workspaceID) }) { service, workspaceID in
+                try await service.closeWorkspace(workspaceID: workspaceID)
+            }
+            if let selected = self.selectedSpace, spaces.contains(where: { $0.ref == selected }) {
+                self.selectedSpace = nil
+            }
+        }
+    }
+
+    /// Closes every agent the Agents section lists.
+    func requestCloseAllAgents() {
+        let agents = visibleAgents
+        guard !agents.isEmpty else { return }
+        closeRequest = CloseRequest(
+            title: String(localized: "Close all \(agents.count) agents\(closeAllScope)?"),
+            message: String(localized: "Each agent and whatever it is running will be terminated. A space left with no panes closes too.")
+        ) { [weak self] in
+            self?.closeAll(agents.map { ($0.device, $0.agent.paneID) }) { service, paneID in
+                try await service.closePane(paneID: paneID)
+            }
+        }
+    }
+
+    /// Closes every terminal the Terminals section lists.
+    func requestCloseAllTerminals() {
+        let terminals = visibleTerminals
+        guard !terminals.isEmpty else { return }
+        closeRequest = CloseRequest(
+            title: String(localized: "Close all \(terminals.count) terminals\(closeAllScope)?"),
+            message: String(localized: "Each terminal and whatever it is running will be terminated. A space left with no panes closes too.")
+        ) { [weak self] in
+            self?.closeAll(terminals.map { ($0.device, $0.pane.paneID) }) { service, paneID in
+                try await service.closePane(paneID: paneID)
+            }
+        }
+    }
+
+    /// " in Space 3", " on Mac Studio", or nothing for every device.
+    private var closeAllScope: String {
+        if let space = selectedSpace {
+            return String(localized: " in \(spaceName(deviceID: space.deviceID, workspaceID: space.workspaceID))")
+        }
+        if let device = filteredDevice, devices.count > 1 {
+            return String(localized: " on \(device.name)")
+        }
+        return ""
+    }
+
+    /// Runs `close` for each target, device by device, then refreshes each
+    /// device once. The first failure is shown; the rest still run.
+    private func closeAll(_ targets: [(Device, String)], close: @escaping (HerdrService, String) async throws -> Void) {
+        Task {
+            var firstError: String?
+            var devices: [Device] = []
+            for (device, _) in targets where !devices.contains(where: { $0.id == device.id }) {
+                devices.append(device)
+            }
+            for device in devices {
+                let service = service(for: device)
+                for target in targets where target.0.id == device.id {
+                    do {
+                        try await close(service, target.1)
+                    } catch HerdrError.rpc(let code, _) where code == "pane_not_found" || code == "workspace_not_found" {
+                        // Closed already, along with a pane or space closed before it.
+                    } catch {
+                        if firstError == nil { firstError = actionErrorMessage(error, device: device) }
+                    }
+                }
+                await refresh(device.id)
+            }
+            if let firstError { actionError = firstError }
         }
     }
 

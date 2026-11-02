@@ -67,6 +67,7 @@ struct SpaceRowDragHost: View {
     let onOpenProject: () -> Void
     let onRename: () -> Void
     let onClose: () -> Void
+    let onCloseAll: () -> Void
     let onDragStart: (String) -> Void
     let onDragEnd: () -> Void
     let onDropHover: (Bool) -> Void
@@ -85,6 +86,7 @@ struct SpaceRowDragHost: View {
                 .item(title: String(localized: "Rename Space…"), action: onRename),
                 .separator,
                 .destructive(title: String(localized: "Close Space \"\(label)\"…"), action: onClose),
+                .destructive(title: String(localized: "Close All Spaces…"), action: onCloseAll),
             ],
             onClick: onClick,
             onDoubleClick: onRename,
@@ -117,6 +119,7 @@ struct AgentRowDragHost: View {
     let onPinGrazrAccount: (GrazrAccount?) -> Void
     let onMenuOpen: () -> Void
     let onClose: () -> Void
+    let onCloseAll: () -> Void
     let onDragStart: (String) -> Void
     let onDragEnd: () -> Void
     let onDropHover: (Bool) -> Void
@@ -171,6 +174,7 @@ struct AgentRowDragHost: View {
         }
         items.append(.separator)
         items.append(.destructive(title: String(localized: "Close Agent…"), action: onClose))
+        items.append(.destructive(title: String(localized: "Close All Agents…"), action: onCloseAll))
         return items
     }
 
@@ -245,6 +249,7 @@ struct TerminalRowDragHost: View {
     let onRename: () -> Void
     let onOpenProject: () -> Void
     let onClose: () -> Void
+    let onCloseAll: () -> Void
     let onDragStart: (String) -> Void
     let onDragEnd: () -> Void
     let onDropHover: (Bool) -> Void
@@ -260,6 +265,7 @@ struct TerminalRowDragHost: View {
                 .item(title: String(localized: "Project…"), action: onOpenProject),
                 .separator,
                 .destructive(title: String(localized: "Close Terminal…"), action: onClose),
+                .destructive(title: String(localized: "Close All Terminals…"), action: onCloseAll),
             ],
             onClick: onClick,
             onDoubleClick: onRename,
