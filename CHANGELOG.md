@@ -5,7 +5,12 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
-## [Unreleased]
+## [0.6.25] - 2026-11-02
+
+> **Herdrm may be discontinued.** herdr has released its own official GUI app,
+> which covers what Herdrm set out to do. Herdrm still works with official
+> herdr today, but new development may stop and further releases aren't
+> guaranteed. See [herdr.dev](https://herdr.dev) for the official app.
 
 ### Changed
 - **The app is now named Herdrm.** The menu bar, Dock, About window and every
