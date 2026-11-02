@@ -686,6 +686,9 @@ final class AppModel: ObservableObject {
 
     private func markSelectedAgentRead() {
         guard let pane = selectedPane else { return }
+        // The tracker already holds the incoming snapshot, while sessions may
+        // still hold the previous one when a visible result is auto-read.
+        completionTrackers[pane.deviceID]?.acknowledge(paneID: pane.paneID)
         unreadAgents.remove(AgentUnreadKey(deviceID: pane.deviceID, paneID: pane.paneID))
     }
 

@@ -5,6 +5,76 @@ import XCTest
 
 @MainActor
 final class AgentUnreadUIUXTests: XCTestCase {
+    func testOpenedCompletionStaysReadAfterReconnectRebuildsItsObservation() throws {
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let deviceID = entry.device.id
+        let working = entry.agent.updatingStatus(.working)
+        model.sessions[deviceID]?.agents = [working]
+        model.updateSnapshotAttention(agents: [working], deviceID: deviceID)
+        var done = working.updatingStatus(.done)
+        done.completionSeq = 41
+        model.sessions[deviceID]?.agents = [done]
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertTrue(model.isUnread(entry))
+
+        try sidebar.clickAgentTitleWithoutSettling(entry.title)
+        XCTAssertFalse(model.isUnread(entry))
+
+        model.updateSnapshotAttention(agents: [], deviceID: deviceID)
+        var recovering = done.updatingStatus(.unknown)
+        recovering.completionSeq = nil
+        model.updateSnapshotAttention(agents: [recovering], deviceID: deviceID)
+        XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty)
+        XCTAssertFalse(model.isUnread(entry), "Rebuilt observations must retain the user's acknowledgement")
+
+        done.completionSeq = 42
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertTrue(model.isUnread(entry), "A new result still needs to be read")
+        XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty)
+    }
+
+    func testVisibleCompletionAcknowledgesTheIncomingSnapshotBeforeSessionAssignment() throws {
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let deviceID = entry.device.id
+        var working = entry.agent.updatingStatus(.working)
+        working.completionSeq = 40
+        model.sessions[deviceID]?.agents = [working]
+        model.updateSnapshotAttention(agents: [working], deviceID: deviceID)
+        model.selectAgent(entry.ref)
+        let id = AppModel.AttachedEntry.agent(entry).id
+        let terminal = LineBreakTerminalView(frame: .zero)
+        AttachViewRegistry.register(terminal, for: id)
+        defer { AttachViewRegistry.unregister(id) }
+        sidebar.mountTerminal(terminal, focus: true)
+        sidebar.activateWindow()
+        XCTAssertTrue(NSApp.isActive && terminal.window?.isKeyWindow == true)
+
+        var done = working.updatingStatus(.done)
+        done.completionSeq = 41
+        // refresh confirms attention before replacing sessions[deviceID].agents.
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertEqual(model.session(deviceID).agents.first?.completionSeq, 40)
+        XCTAssertFalse(model.isUnread(entry), "The visible result is immediately acknowledged")
+        model.sessions[deviceID]?.agents = [done]
+
+        model.detailMode = .files
+        model.updateSnapshotAttention(agents: [], deviceID: deviceID)
+        var recovering = done.updatingStatus(.unknown)
+        recovering.completionSeq = nil
+        model.updateSnapshotAttention(agents: [recovering], deviceID: deviceID)
+        XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty,
+                      "Automatic acknowledgement records sequence 41, not the stale session's 40")
+        XCTAssertFalse(model.isUnread(entry))
+
+        done.completionSeq = 42
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertTrue(model.isUnread(entry), "A newer result covered by Files remains unread")
+    }
+
     func testReconnectDoesNotReplayOldCompletionsButKeepsAnOfflineCompletion() throws {
         let sidebar = try SidebarHarness(spaces: 1, agents: 24, pinnedHeaders: false)
         let model = sidebar.model

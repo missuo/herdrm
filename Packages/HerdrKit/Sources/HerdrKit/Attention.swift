@@ -44,9 +44,25 @@ public struct AgentCompletionTracker: Sendable {
         let status: AgentStatus
     }
 
+    private struct AcknowledgedCompletion: Sendable {
+        let terminalID: String?
+        let completionSeq: UInt64
+    }
+
     private var observations: [String: Observation] = [:]
+    private var acknowledgedCompletions: [String: AcknowledgedCompletion] = [:]
 
     public init() {}
+
+    /// Remember the result the user read independently of snapshot baselines.
+    /// A reconnect can briefly omit the pane or its completion sequence.
+    public mutating func acknowledge(paneID: String) {
+        guard let observed = observations[paneID],
+              let sequence = observed.completionSeq else { return }
+        acknowledgedCompletions[paneID] = AcknowledgedCompletion(
+            terminalID: observed.terminalID, completionSeq: sequence
+        )
+    }
 
     /// Events can expose a short-lived active state between snapshots on
     /// older servers. Only a later snapshot may confirm its completion.
@@ -85,6 +101,12 @@ public struct AgentCompletionTracker: Sendable {
             } else if previous.completionSeq == nil,
                       isLegacyCompletion(from: previous.status, to: agent.status) {
                 completed.insert(agent.paneID)
+            }
+
+            if let read = acknowledgedCompletions[agent.paneID],
+               read.terminalID == agent.terminalID,
+               read.completionSeq == agent.completionSeq {
+                completed.remove(agent.paneID)
             }
 
             observations[agent.paneID] = Observation(

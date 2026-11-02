@@ -132,6 +132,60 @@ final class AttentionTests: XCTestCase {
         XCTAssertEqual(tracker.update(agents: try snapshot("done", 13)), [pane])
     }
 
+    func testAcknowledgedCompletionSurvivesARebuiltObservation() throws {
+        var tracker = AgentCompletionTracker()
+        let pane = "w1:p1"
+        let done = try decodeAgent(paneID: pane, status: "done", completionSeq: 41)
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "working")]), [])
+        XCTAssertEqual(tracker.update(agents: [done]), [pane])
+        tracker.acknowledge(paneID: pane)
+
+        XCTAssertEqual(tracker.update(agents: []), [])
+        tracker.acknowledge(paneID: pane)
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "unknown")]), [])
+        tracker.acknowledge(paneID: pane)
+        XCTAssertEqual(tracker.update(agents: [done]), [],
+                       "A temporary absence and sequence-less snapshot must not revive a read result")
+
+        let next = try decodeAgent(paneID: pane, status: "done", completionSeq: 42)
+        XCTAssertEqual(tracker.update(agents: [next]), [pane], "A new offline result still notifies")
+        XCTAssertEqual(tracker.update(agents: [next]), [])
+    }
+
+    func testAcknowledgedCompletionSurvivesALowerSequenceBaseline() throws {
+        var tracker = AgentCompletionTracker()
+        let pane = "w1:p1"
+        let done = try decodeAgent(paneID: pane, status: "done", completionSeq: 41)
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "working")]), [])
+        XCTAssertEqual(tracker.update(agents: [done]), [pane])
+        tracker.acknowledge(paneID: pane)
+
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", completionSeq: 2)]), [])
+        XCTAssertEqual(tracker.update(agents: [done]), [],
+                       "Replaying a read result must not notify after the observation counter moves back")
+        let next = try decodeAgent(paneID: pane, status: "done", completionSeq: 42)
+        XCTAssertEqual(tracker.update(agents: [next]), [pane])
+        XCTAssertEqual(tracker.update(agents: [next]), [])
+    }
+
+    func testAcknowledgementDoesNotSuppressAReplacementTerminalOrLegacyTurn() throws {
+        var tracker = AgentCompletionTracker()
+        let pane = "w1:p1"
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", completionSeq: 41)]), [])
+        tracker.acknowledge(paneID: pane)
+
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "working", terminalID: "new")]), [])
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", completionSeq: 41, terminalID: "new")]), [pane],
+                       "A replacement terminal owns its own completion sequence")
+
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "working", terminalID: "legacy")]), [])
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", terminalID: "legacy")]), [pane])
+        tracker.acknowledge(paneID: pane)
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "working", terminalID: "legacy")]), [])
+        XCTAssertEqual(tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", terminalID: "legacy")]), [pane],
+                       "Servers without completion sequences retain activity-based notifications")
+    }
+
     func testServerReadCompletionAdvancesBaselineWithoutReminder() throws {
         var tracker = AgentCompletionTracker()
         let pane = "w1:p1"

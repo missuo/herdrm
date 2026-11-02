@@ -5,6 +5,15 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Fixed
+- **Read completion dots stay cleared after reconnecting.** Opening a result,
+  or viewing it in the active terminal, remembers its terminal and completion
+  sequence even if a snapshot temporarily omits the agent or restores an older
+  sequence. Replaying that result cannot restore its dot or notification;
+  new completion sequences and replacement terminals still notify normally.
+
 ## [0.6.23] - 2026-10-30
 
 ### Fixed
