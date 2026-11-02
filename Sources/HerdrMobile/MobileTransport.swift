@@ -90,9 +90,10 @@ final class SSHDirectTransport: MobileTransport {
         let pinHost: String
         let pinPort: UInt16
         if device.kind == .relay {
+            let relayPin = "relay:\(device.relay?.hostID ?? device.id.uuidString)"
             // Direct first when the Mac has a public address; the relay is the
             // fallback for when it doesn't answer.
-            if let direct = await MobileRelay.openDirect(device: device) {
+            if let direct = await MobileRelay.openDirect(device: device, pinHost: relayPin) {
                 connection = direct
                 expectedHostKey = MobileRelay.expectedHostKey(for: device.id)
             } else {

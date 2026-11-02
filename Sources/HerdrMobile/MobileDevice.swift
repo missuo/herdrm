@@ -181,6 +181,11 @@ enum KnownHostsStore {
         UserDefaults.standard.set(map, forKey: key)
     }
 
+    /// Whether any host key is pinned for `host:port`.
+    static func hasPins(host: String, port: UInt16) -> Bool {
+        store().keys.contains { $0.hasPrefix("\(host):\(port)|") }
+    }
+
     static func unpin(host: String, port: UInt16) {
         var map = store()
         for entryKey in map.keys where entryKey.hasPrefix("\(host):\(port)|") {

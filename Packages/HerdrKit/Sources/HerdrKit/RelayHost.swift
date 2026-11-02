@@ -158,6 +158,8 @@ public actor RelayHost {
     /// The user's public address for this Mac (`host` or `host:port`), sent
     /// to phones so they connect directly when they can.
     private let directAddress: String?
+    /// The SSH host key reported to phones; nil reads this Mac's own.
+    private let sshHostKeyLine: String?
     private let onEvent: @Sendable (Event) -> Void
 
     public enum Event: Sendable {
@@ -182,6 +184,7 @@ public actor RelayHost {
         userName: String = NSUserName(),
         authorizedKeys: URL? = RelayAuthorizedKeys.defaultFile,
         directAddress: String? = nil,
+        sshHostKey: String? = nil,
         forward: (@Sendable () throws -> Int32)? = nil,
         onEvent: @escaping @Sendable (Event) -> Void = { _ in }
     ) {
@@ -193,6 +196,7 @@ public actor RelayHost {
         self.authorizedKeys = authorizedKeys
         let direct = directAddress?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.directAddress = (direct?.isEmpty ?? true) ? nil : direct
+        self.sshHostKeyLine = sshHostKey
         self.forward = forward ?? { try RelayHost.connectLocalSSH() }
         self.onEvent = onEvent
     }
@@ -357,7 +361,7 @@ public actor RelayHost {
                 socket.close() // unknown phone and no code showing
                 return
             }
-            let info = RelayMessage.HostInfo(name: hostName, user: userName, sshHostKey: Self.sshHostKey(),
+            let info = RelayMessage.HostInfo(name: hostName, user: userName, sshHostKey: sshHostKeyLine ?? Self.sshHostKey(),
                                              direct: directAddress)
             let (message2, noiseSession) = try noise.writeMessage2(payload: try JSONEncoder().encode(info), psk: psk)
             try await socket.send(message2)

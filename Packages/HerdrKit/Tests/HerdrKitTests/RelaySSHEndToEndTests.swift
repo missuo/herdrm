@@ -126,9 +126,25 @@ struct RelayHostHarness {
         let port = try #require(env["HERDRM_RELAY_SSHD_PORT"].flatMap(UInt16.init))
         let keys = URL(fileURLWithPath: try #require(env["HERDRM_RELAY_SSHD_AUTHKEYS"]))
         let linkFile = URL(fileURLWithPath: try #require(env["HERDRM_RELAY_HARNESS_LINK"]))
+        // HERDRM_RELAY_HARNESS_DIRECT: the public address to report;
+        // HERDRM_RELAY_HARNESS_SESSIONS: a file that gets a line per relayed session.
+        let sessionLog = env["HERDRM_RELAY_HARNESS_SESSIONS"].map { URL(fileURLWithPath: $0) }
         let host = RelayHost(relay: RelayEndToEndTests.relay, store: RelayMemoryHostStore(),
                              hostName: "Harness Mac", authorizedKeys: keys,
-                             forward: { try RelayHost.connectLocalSSH(port: port) })
+                             directAddress: env["HERDRM_RELAY_HARNESS_DIRECT"],
+                             // HERDRM_RELAY_HARNESS_HOSTKEY: the disposable sshd's .pub
+                             sshHostKey: env["HERDRM_RELAY_HARNESS_HOSTKEY"].flatMap {
+                                 try? String(contentsOfFile: $0, encoding: .utf8)
+                                     .split(separator: " ").prefix(2).joined(separator: " ")
+                             },
+                             forward: {
+                                 if let sessionLog, let h = try? FileHandle(forWritingTo: sessionLog) {
+                                     h.seekToEndOfFile()
+                                     h.write(Data("relayed\n".utf8))
+                                     try? h.close()
+                                 }
+                                 return try RelayHost.connectLocalSSH(port: port)
+                             })
         await host.start()
         try await RelayEndToEndTests.waitOnline(host)
         let pairing = await host.beginPairing()

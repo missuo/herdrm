@@ -161,6 +161,55 @@ struct RelayEndToEndTests {
         #expect(store.phones().isEmpty)
     }
 
+    @Test func aDirectAddressIsReportedAndOpensThePhonesKeyLine() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let keys = dir.appendingPathComponent(".ssh/authorized_keys")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = RelayMemoryHostStore()
+        let port = try Self.echoServer()
+        func host(direct: String?) -> RelayHost {
+            RelayHost(relay: Self.relay, store: store, hostName: "Test Mac", userName: "tester",
+                      authorizedKeys: keys, directAddress: direct,
+                      forward: { try RelayHost.connectLocalSSH(port: port) })
+        }
+
+        // Relay only: the key line is restricted to this Mac.
+        let relayOnly = host(direct: nil)
+        await relayOnly.start()
+        try await Self.waitOnline(relayOnly)
+        let link = await relayOnly.beginPairing().link
+        let phoneKey = Curve25519.KeyAgreement.PrivateKey()
+        let hello = RelayMessage.Hello(name: "Test iPhone", sshKey: Self.phoneSSHKey)
+        let first = try await RelayClient.connect(relay: link.relay, hostID: link.hostID, hostStatic: link.hostStatic,
+                                                  psk: link.psk, phoneKey: phoneKey, hello: hello, pairing: true)
+        #expect(first.host.direct == nil)
+        first.stream.close()
+        #expect(try String(contentsOf: keys, encoding: .utf8).contains(#"from="127.0.0.1,::1" "#))
+        await relayOnly.stop()
+
+        // With a public address: it reaches the phone inside the session, and
+        // the existing line is opened on start, since direct SSH comes from
+        // anywhere.
+        let direct = host(direct: "  203.0.113.7:2222 ")
+        await direct.start()
+        try await Self.waitOnline(direct)
+        let second = try await RelayClient.connect(relay: link.relay, hostID: link.hostID, hostStatic: link.hostStatic,
+                                                   psk: link.psk, phoneKey: phoneKey, hello: hello)
+        #expect(second.host.direct == "203.0.113.7:2222")
+        second.stream.close()
+        var text = try String(contentsOf: keys, encoding: .utf8)
+        #expect(!text.contains("from="))
+        #expect(text.split(separator: "\n").count == 1, "still one line for the phone")
+        await direct.stop()
+
+        // Back to relay only: restricted again.
+        let again = host(direct: "")
+        await again.start()
+        text = try String(contentsOf: keys, encoding: .utf8)
+        #expect(text.contains(#"from="127.0.0.1,::1" "#))
+        await again.stop()
+    }
+
     @Test func aPhoneForAMacThatIsNotOnlineIsToldSo() async throws {
         let id = RelayProtocol.hostID(for: Curve25519.Signing.PrivateKey().publicKey)
         await #expect(throws: RelayError.hostOffline) {

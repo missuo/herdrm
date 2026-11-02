@@ -455,6 +455,9 @@ struct AddDeviceSheet: View {
                 }
             }
             .navigationTitle(String(localized: "Add Device"))
+            // A herdrm://pair link (the Camera scanned a Mac's code) goes
+            // straight to pairing, whatever the default connection is.
+            .onAppear { if model.pendingPairingLink != nil { kind = .relay } }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

@@ -58,15 +58,21 @@ enum MobileRelay {
     static func expectedHostKey(for id: UUID) -> Data? { UserDefaults.standard.data(forKey: hostKeyKey(id)) }
 
     /// Direct SSH to a paired Mac's public address, accepted only when sshd
-    /// presents the host key the Mac vouched for over the relay. Nil when
-    /// there is no address, it doesn't answer quickly, or the key differs:
-    /// then the relay carries the session.
-    static func openDirect(device: MobileDevice) async -> SSHConnection? {
-        guard let endpoint = directEndpoint(for: device.id),
-              let expected = expectedHostKey(for: device.id),
+    /// presents the host key the Mac vouched for over the relay, or, when the
+    /// Mac had none to report, the one this phone pinned on its first relayed
+    /// sign-in. Nil when there is no address, it doesn't answer quickly, or the
+    /// key differs: then the relay carries the session.
+    static func openDirect(device: MobileDevice, pinHost: String) async -> SSHConnection? {
+        guard let endpoint = directEndpoint(for: device.id) else { return nil }
+        let vouched = expectedHostKey(for: device.id)
+        guard vouched != nil || KnownHostsStore.hasPins(host: pinHost, port: 0),
               let connection = try? await SSHConnection.connect(to: endpoint, timeout: .seconds(4))
         else { return nil }
-        guard connection.hostKey.key == expected else {
+        let key = connection.hostKey
+        let trusted = vouched.map { $0 == key.key }
+            ?? (KnownHostsStore.fingerprint(host: pinHost, port: 0, algorithm: key.algorithm)
+                == SSHDirectTransport.fingerprint(key.key))
+        guard trusted else {
             try? await connection.close(timeout: .seconds(1))
             return nil
         }
