@@ -16,7 +16,7 @@
   <a href="https://github.com/missuo/herdrm/releases/latest"><img src="https://img.shields.io/github/v/release/missuo/herdrm" alt="Latest release" /></a>
   <a href="#-requirements"><img src="https://img.shields.io/badge/macOS-14%2B-brightgreen" alt="macOS 14+" /></a>
   <a href="https://github.com/missuo/herdrm/releases"><img src="https://img.shields.io/github/downloads/missuo/herdrm/total" alt="Downloads" /></a>
-  <a href="#-status"><img src="https://img.shields.io/badge/status-early--stage-f59e0b" alt="Status: early stage" /></a>
+  <a href="#-status"><img src="https://img.shields.io/badge/status-may%20be%20discontinued-f59e0b" alt="Status: may be discontinued" /></a>
   <a href="#-contributing"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome" /></a>
 </p>
 
@@ -27,6 +27,12 @@
   <a href="#-quick-start">Quick Start</a> ·
   <a href="#-architecture">Architecture</a>
 </p>
+
+> [!IMPORTANT]
+> **herdrm may be discontinued.** herdr has released its own official GUI app, which
+> covers what herdrm set out to do. herdrm still works with official herdr today, but new
+> development may stop and further releases aren't guaranteed. See
+> [herdr.dev](https://herdr.dev) for the official app.
 
 ---
 
@@ -235,7 +241,9 @@ the maintainer. Contributions are accepted under the same terms.
 
 ## <a name="-status"></a>⚠️ Status
 
-**Early stage**, without full test coverage — expect bugs. Issues and PRs are very welcome.
+**May be discontinued.** herdr now ships its own official GUI app, so herdrm may stop
+being developed. Existing releases keep working with official herdr, but new features and
+fixes aren't guaranteed.
 
 ## ⭐ Star History
 
