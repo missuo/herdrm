@@ -204,21 +204,9 @@ struct SidebarView: View {
             }
 
             Spacer(minLength: 0)
-            if showsMachineStats, let device = model.statsDevice {
-                Rectangle().fill(Theme.hairline).frame(height: 1)
-                SidebarMachineStats(
-                    stats: model.machineStats,
-                    device: device,
-                    isOpen: model.showMachineStats
-                ) {
-                    model.showMachineStats.toggle()
-                }
-                .padding(.horizontal, 6)
-                .frame(height: SidebarFooterMetrics.statsHeight)
-            }
             footer
         }
-        // The details panel opens from the meters; with them gone it has no anchor.
+        // The details panel belongs to the meters; with them gone it has no anchor.
         .onChange(of: showsMachineStats) { _, shown in
             if !shown { model.showMachineStats = false }
         }
@@ -283,6 +271,8 @@ struct SidebarView: View {
 
     @ViewBuilder
     private func paneRow(_ row: AppModel.SidebarRow, showsSpace: Bool, draggable: Bool) -> some View {
+        // Inside a space's tree (no space line) the rows are one-line outline rows.
+        let compact = !showsSpace
         switch row.entry {
         case .agent(let entry):
             AgentRowView(
@@ -291,6 +281,7 @@ struct SidebarView: View {
                 indent: row.indent,
                 showsPaneGlyph: row.isChild,
                 showsSpace: showsSpace,
+                compact: compact,
                 draggable: draggable,
                 draggingAgentID: $draggingAgentID,
                 agentDrop: $agentDrop
@@ -302,6 +293,7 @@ struct SidebarView: View {
                 indent: row.indent,
                 showsPaneGlyph: row.isChild,
                 showsSpace: showsSpace,
+                compact: compact,
                 draggable: draggable,
                 draggingTerminalID: $draggingTerminalID,
                 terminalDrop: $terminalDrop
@@ -410,6 +402,8 @@ struct SidebarView: View {
         var showsPaneGlyph = false
         /// Off inside a space's tree, where the space is the parent row.
         var showsSpace = true
+        /// One line, indented under the space's name (a space's tree).
+        var compact = false
         var draggable = true
         @Binding var draggingTerminalID: String?
         @Binding var terminalDrop: (id: String, after: Bool)?
@@ -419,18 +413,53 @@ struct SidebarView: View {
             let selected = !model.isDetailCovered
                 && model.selectedPane == entry.ref
                 && model.selectedShellID == nil
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    if showsPaneGlyph { PaneChildGlyph() }
-                    Image(systemName: "terminal")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.textTertiary)
-                    Text(entry.title)
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+            Group {
+                if compact { compactBody } else { cardBody }
+            }
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
+            )
+            .onHover { hovered = $0 }
+            .sidebarDragChrome(
+                isDragging: draggingTerminalID == entry.id,
+                dropAfter: terminalDrop?.after,
+                isTarget: terminalDrop?.id == entry.id
+            )
+            .overlay { dragHost }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.selectAgent(entry.ref, revealInSidebar: false) }
+            .accessibilityLabel(entry.title)
+        }
+
+        private var titleLine: some View {
+            HStack(spacing: 6) {
+                if showsPaneGlyph { PaneChildGlyph() }
+                Image(systemName: "terminal")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(entry.title)
+                    .font(.system(size: compact ? 13 : 13.5))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if compact, model.showsRowDeviceBadges {
+                    DeviceChip(device: entry.device)
                 }
+            }
+        }
+
+        private var compactBody: some View {
+            titleLine
+                .padding(.leading, SidebarDefaults.treeInset + SidebarDefaults.indentWidth * CGFloat(max(0, indent - 1)))
+                .padding(.horizontal, 8)
+                .frame(height: SidebarDefaults.treeRowHeight)
+        }
+
+        private var cardBody: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                titleLine
                 HStack(spacing: 5) {
                     if showsSpace {
                         Image(systemName: "folder")
@@ -451,52 +480,39 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
             .frame(height: 51)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
+        }
+
+        private var dragHost: some View {
+            TerminalRowDragHost(
+                entryID: entry.id,
+                allowsDrag: draggable,
+                onClick: { model.selectAgent(entry.ref, revealInSidebar: false) },
+                onRename: { model.terminalToRename = entry },
+                onOpenProject: { model.openProject(for: .terminal(entry)) },
+                onClose: { model.requestClosePane(entry.ref, name: entry.title) },
+                onDragStart: { draggingTerminalID = $0 },
+                onDragEnd: {
+                    draggingTerminalID = nil
+                    terminalDrop = nil
+                },
+                onDropHover: { after in
+                    // Top-level rows stand for tabs; "after" one means before
+                    // the next top-level row, skipping that tab's children.
+                    terminalDrop = sidebarDropTarget(
+                        onto: entry.id, after: after, items: model.draggableTerminals
+                    )
+                },
+                onHoverExit: {
+                    if terminalDrop?.id == entry.id { terminalDrop = nil }
+                },
+                onDrop: { sourceID, after in
+                    draggingTerminalID = nil
+                    terminalDrop = nil
+                    guard let source = model.visibleTerminals.first(where: { $0.id == sourceID })
+                    else { return }
+                    model.moveTerminal(source, onto: entry, placeAfter: after)
+                }
             )
-            .onHover { hovered = $0 }
-            .sidebarDragChrome(
-                isDragging: draggingTerminalID == entry.id,
-                dropAfter: terminalDrop?.after,
-                isTarget: terminalDrop?.id == entry.id
-            )
-            .overlay {
-                TerminalRowDragHost(
-                    entryID: entry.id,
-                    allowsDrag: draggable,
-                    onClick: { model.selectAgent(entry.ref, revealInSidebar: false) },
-                    onRename: { model.terminalToRename = entry },
-                    onOpenProject: { model.openProject(for: .terminal(entry)) },
-                    onClose: { model.requestClosePane(entry.ref, name: entry.title) },
-                    onDragStart: { draggingTerminalID = $0 },
-                    onDragEnd: {
-                        draggingTerminalID = nil
-                        terminalDrop = nil
-                    },
-                    onDropHover: { after in
-                        // Top-level rows stand for tabs; "after" one means before
-                        // the next top-level row, skipping that tab's children.
-                        terminalDrop = sidebarDropTarget(
-                            onto: entry.id, after: after, items: model.draggableTerminals
-                        )
-                    },
-                    onHoverExit: {
-                        if terminalDrop?.id == entry.id { terminalDrop = nil }
-                    },
-                    onDrop: { sourceID, after in
-                        draggingTerminalID = nil
-                        terminalDrop = nil
-                        guard let source = model.visibleTerminals.first(where: { $0.id == sourceID })
-                        else { return }
-                        model.moveTerminal(source, onto: entry, placeAfter: after)
-                    }
-                )
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { model.selectAgent(entry.ref, revealInSidebar: false) }
-            .accessibilityLabel(entry.title)
         }
     }
 
@@ -548,6 +564,8 @@ struct SidebarView: View {
     var showsPaneGlyph = false
     /// Off inside a space's tree, where the space is the parent row.
     var showsSpace = true
+    /// One line, indented under the space's name (a space's tree).
+    var compact = false
     var draggable = true
     @Binding var draggingAgentID: String?
     @Binding var agentDrop: (id: String, after: Bool)?
@@ -561,65 +579,87 @@ struct SidebarView: View {
             && model.selectedPane == entry.ref
             && model.selectedShellID == nil
         let unread = model.isUnread(entry)
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                if showsPaneGlyph { PaneChildGlyph() }
-                Text(entry.title)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                AgentStatusGlyph(status: agent.status, unreadDone: unread)
-            }
-            HStack(spacing: 5) {
-                AgentKindBadge(kind: agent.agent)
-                    .lineLimit(1)
-                if showsSpace {
-                    Text("·")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textGhost)
-                    Image(systemName: "folder")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(Theme.textTertiary)
-                    Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textTertiary)
+        Group {
+            if compact {
+                HStack(spacing: 6) {
+                    if showsPaneGlyph { PaneChildGlyph() }
+                    Text(entry.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text)
                         .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if agent.status == .blocked {
-                    Text("needs input")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.warning)
-                }
-                if model.showsRowDeviceBadges {
-                    DeviceChip(device: entry.device)
-                }
-            }
-            .padding(.trailing, supportsHistory && statsLines.isEmpty ? 24 : 0)
-            // Plugin stats (grazr account, Claude model / context / usage),
-            // one line each, only for the tokens the pane actually carries.
-            ForEach(statsLines, id: \.kind) { line in
-                HStack(spacing: 3) {
-                    // An agent on an account of its own, not the shared rotation.
-                    if line.isPinnedAccount {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 8.5))
-                            .help("Pinned to this account; grazr's rotation leaves it alone")
+                    AgentKindBadge(kind: agent.agent)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if model.showsRowDeviceBadges {
+                        DeviceChip(device: entry.device)
                     }
-                    Text(line.displayText)
-                        .font(.system(size: 11, weight: line.kind == .model ? .semibold : .regular))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    AgentStatusGlyph(status: agent.status, unreadDone: unread)
                 }
-                .foregroundStyle(AgentStatsStyle.color(for: line.kind))
-                .padding(.trailing, supportsHistory && line.kind == statsLines.last?.kind ? 24 : 0)
+                .padding(.leading, SidebarDefaults.treeInset + SidebarDefaults.indentWidth * CGFloat(max(0, indent - 1)))
+                .padding(.horizontal, 8)
+                .frame(height: SidebarDefaults.treeRowHeight)
+            } else {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if showsPaneGlyph { PaneChildGlyph() }
+                    Text(entry.title)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    AgentStatusGlyph(status: agent.status, unreadDone: unread)
+                }
+                HStack(spacing: 5) {
+                    AgentKindBadge(kind: agent.agent)
+                        .lineLimit(1)
+                    if showsSpace {
+                        Text("·")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textGhost)
+                        Image(systemName: "folder")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.textTertiary)
+                        Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    if agent.status == .blocked {
+                        Text("needs input")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.warning)
+                    }
+                    if model.showsRowDeviceBadges {
+                        DeviceChip(device: entry.device)
+                    }
+                }
+                .padding(.trailing, supportsHistory && statsLines.isEmpty ? 24 : 0)
+                // Plugin stats (grazr account, Claude model / context / usage),
+                // one line each, only for the tokens the pane actually carries.
+                ForEach(statsLines, id: \.kind) { line in
+                    HStack(spacing: 3) {
+                        // An agent on an account of its own, not the shared rotation.
+                        if line.isPinnedAccount {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 8.5))
+                                .help("Pinned to this account; grazr's rotation leaves it alone")
+                        }
+                        Text(line.displayText)
+                            .font(.system(size: 11, weight: line.kind == .model ? .semibold : .regular))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .foregroundStyle(AgentStatsStyle.color(for: line.kind))
+                    .padding(.trailing, supportsHistory && line.kind == statsLines.last?.kind ? 24 : 0)
+                }
+            }
+            .padding(.leading, SidebarDefaults.indentWidth * CGFloat(indent))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(minHeight: 51)
             }
         }
-        .padding(.leading, SidebarDefaults.indentWidth * CGFloat(indent))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .frame(minHeight: 51)
         .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 7)
@@ -685,7 +725,8 @@ struct SidebarView: View {
         // The drag host covers the row. Place this control above it so a
         // footer click opens this agent's history instead of selecting alone.
         .overlay(alignment: .bottomTrailing) {
-            if supportsHistory {
+            // The one-line tree row has no footer; ⇧⌘H still opens history.
+            if supportsHistory, !compact {
                 Button { model.toggleConversationHistory(for: entry.ref, revealInSidebar: false) } label: {
                     Image(systemName: "text.bubble")
                         .font(.system(size: 11.5))
@@ -723,50 +764,62 @@ struct SidebarView: View {
 
     // MARK: - Footer (device filter)
 
+    /// The device card: the selected host's meters over the device switcher,
+    /// one control that opens the device panel. Settings sits beside it.
     private var footer: some View {
-        HStack(spacing: 6) {
+        let metersDevice = showsMachineStats ? model.statsDevice : nil
+        return HStack(spacing: 6) {
             Button {
                 model.showDevicePanel.toggle()
             } label: {
-                HStack(spacing: 6) {
-                    if let device = model.filteredDevice {
-                        DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 10)
-                            .foregroundStyle(Theme.textSecondary)
-                    } else {
-                        Image(systemName: "square.stack.3d.up")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 7) {
+                    if let device = metersDevice {
+                        SidebarMachineStats(stats: model.machineStats, device: device)
                     }
-                    Text(model.filteredDevice?.name ?? "All Devices")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                    Circle()
-                        .fill(connectionDotColor)
-                        .frame(width: 6, height: 6)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 8.5, weight: .semibold))
-                        .foregroundStyle(Theme.textGhost)
+                    HStack(spacing: 6) {
+                        if let device = model.filteredDevice {
+                            DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 10)
+                                .foregroundStyle(Theme.textSecondary)
+                        } else {
+                            Image(systemName: "square.stack.3d.up")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        Text(model.filteredDevice?.name ?? "All Devices")
+                            .font(.system(size: 12.5, weight: .medium))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                        Circle()
+                            .fill(connectionDotColor)
+                            .frame(width: 6, height: 6)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 8.5, weight: .semibold))
+                            .foregroundStyle(Theme.textGhost)
+                    }
+                    .frame(height: 16)
                 }
-                .padding(.horizontal, 8)
-                .frame(height: 28)
-                .contentShape(RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(deviceButtonHovered || model.showDevicePanel
                           ? AnyShapeStyle(Theme.itemWashSelected)
                           : AnyShapeStyle(Theme.itemWash))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Theme.hairline, lineWidth: deviceButtonHovered ? 1 : 0)
             )
-            .scaleEffect(deviceButtonHovered ? 1.04 : 1.0)
-            .animation(.spring(response: 0.28, dampingFraction: 0.55), value: deviceButtonHovered)
+            .animation(.easeOut(duration: 0.15), value: deviceButtonHovered)
             .onHover { deviceButtonHovered = $0 }
-
-            Spacer()
+            .help(String(localized: "Switch device"))
+            .accessibilityLabel(deviceCardAccessibilityText(meters: metersDevice))
+            .accessibilityIdentifier(metersDevice == nil ? "sidebar.deviceCard" : "sidebar.machineStats")
 
             SettingsLink {
                 Image(systemName: "gearshape")
@@ -779,7 +832,13 @@ struct SidebarView: View {
             .accessibilityLabel(Text("Settings"))
         }
         .padding(.horizontal, 10)
-        .frame(height: SidebarFooterMetrics.deviceSwitcherHeight)
+        .frame(height: SidebarFooterMetrics.height(showsStats: metersDevice != nil))
+    }
+
+    private func deviceCardAccessibilityText(meters device: Device?) -> String {
+        let name = model.filteredDevice?.name ?? String(localized: "All Devices")
+        guard let device else { return name }
+        return name + ", " + SidebarMachineStats.accessibilityText(stats: model.machineStats, device: device)
     }
 
     private var connectionDotColor: Color {
@@ -800,6 +859,11 @@ enum SidebarDefaults {
     static let groupBySpaceKey = "sidebar.groupBySpace"
     /// Leading inset per level of the pane tree.
     static let indentWidth: CGFloat = 14
+    /// A space's own panes start under its name: the chevron column (20),
+    /// the folder icon (14) and the gap after it (8).
+    static let treeInset: CGFloat = 42
+    /// One-line rows inside a space's tree, as tall as the space row itself.
+    static let treeRowHeight: CGFloat = 30
 }
 
 /// Marks a row as a secondary pane of its tab, split off the pane above it.
@@ -868,6 +932,7 @@ struct TitlebarIconButton: View {
 struct DevicePopover: View {
     @ObservedObject var model: AppModel
     @Binding var isPresented: Bool
+    @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
@@ -938,6 +1003,14 @@ struct DevicePopover: View {
                 .padding(.vertical, 4)
                 .padding(.horizontal, 6)
 
+            // The meters on the device card are part of its one control, so
+            // their details open from here.
+            if showsMachineStats, model.statsDevice != nil {
+                actionRow(icon: "gauge.with.dots.needle.50percent", label: "Machine Details…") {
+                    isPresented = false
+                    model.showMachineStats = true
+                }
+            }
             actionRow(icon: "plus", label: "Add Device…") {
                 isPresented = false
                 model.showAddDevice = true

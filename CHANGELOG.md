@@ -5,6 +5,22 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
+## [Unreleased]
+
+### Changed
+- **The app is now named Herdrm.** The menu bar, Dock, About window and every
+  message use the capitalized name.
+- **Machine stats live on the device card.** The CPU, RAM and disk meters sit
+  above the device name in one card at the bottom of the sidebar; clicking it
+  opens the device switcher, which now has Machine Details… for the full panel.
+
+### Fixed
+- **Panes inside a space line up under its name.** Agents and terminals in a
+  space's tree start under the space's name instead of left of its folder icon.
+- **Panes inside a space are one line tall.** They match the space rows above
+  them; the full cards with model, account and history stay in the Agents and
+  Terminals sections.
+
 ## [0.6.24] - 2026-11-02
 
 ### Fixed

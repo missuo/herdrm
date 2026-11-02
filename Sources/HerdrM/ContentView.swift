@@ -66,6 +66,7 @@ struct RootView: View {
     @ObservedObject var model: AppModel
     // Deliberately not persisted: the app always launches with the sidebar visible.
     @State private var sidebarCollapsed = false
+    @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -82,7 +83,8 @@ struct RootView: View {
                     .onTapGesture { model.showDevicePanel = false }
                 DevicePopover(model: model, isPresented: $model.showDevicePanel)
                     .padding(.leading, 10)
-                    .padding(.bottom, 46)
+                    .padding(.bottom, SidebarFooterMetrics.height(
+                        showsStats: showsMachineStats && model.statsDevice != nil) + 6)
                     .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
                     .background(
                         Button("") { model.showDevicePanel = false }
@@ -204,8 +206,14 @@ struct RootView: View {
 /// Sidebar footer metrics. The device switcher is 40pt; the machine-stats block
 /// sits just above it, and the stats panel opens upward from there.
 enum SidebarFooterMetrics {
+    /// The footer with the device card's switcher line alone.
     static let deviceSwitcherHeight: CGFloat = 40
-    static let statsHeight: CGFloat = 44
+    /// What the meters line adds to the device card.
+    static let statsHeight: CGFloat = 28
+
+    static func height(showsStats: Bool) -> CGFloat {
+        deviceSwitcherHeight + (showsStats ? statsHeight : 0)
+    }
 }
 
 /// Titlebar metrics: 28pt matches the system traffic-light centerline (14pt) exactly.
@@ -1659,7 +1667,7 @@ struct NewTerminalSheet: View {
                     .fixedSize()
                 }
                 if isStandalone && allowsStandalone {
-                    Text("Runs in this app only; closing herdrm ends the shell.")
+                    Text("Runs in this app only; closing Herdrm ends the shell.")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textTertiary)
                 }
