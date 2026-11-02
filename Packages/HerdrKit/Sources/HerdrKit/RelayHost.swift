@@ -83,10 +83,13 @@ public final class RelayKeychainHostStore: RelayHostStore, @unchecked Sendable {
 public enum RelayAuthorizedKeys {
     public static func tag(phoneID: String) -> String { "herdrm-relay:\(phoneID)" }
 
-    public static func line(sshKey: String, phoneID: String) -> String {
+    /// `localOnly`: the key logs in only from this Mac itself, i.e. through
+    /// the relay. Off when the Mac also accepts the phone directly.
+    public static func line(sshKey: String, phoneID: String, localOnly: Bool = true) -> String {
         let parts = sshKey.split(separator: " ")
         let keyPart = parts.prefix(2).joined(separator: " ")
-        return #"from="127.0.0.1,::1" \#(keyPart) \#(tag(phoneID: phoneID))"#
+        let restriction = localOnly ? #"from="127.0.0.1,::1" "# : ""
+        return "\(restriction)\(keyPart) \(tag(phoneID: phoneID))"
     }
 
     /// Only well-formed Ed25519 keys are accepted from a phone.
@@ -98,7 +101,7 @@ public enum RelayAuthorizedKeys {
         return true
     }
 
-    public static func add(sshKey: String, phoneID: String, file: URL = defaultFile) throws {
+    public static func add(sshKey: String, phoneID: String, localOnly: Bool = true, file: URL = defaultFile) throws {
         try FileManager.default.createDirectory(
             at: file.deletingLastPathComponent(), withIntermediateDirectories: true,
             attributes: [.posixPermissions: 0o700])
@@ -107,7 +110,7 @@ public enum RelayAuthorizedKeys {
         text = text.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.hasSuffix(" " + tag) }.joined(separator: "\n")
         if !text.isEmpty, !text.hasSuffix("\n") { text += "\n" }
-        text += line(sshKey: sshKey, phoneID: phoneID) + "\n"
+        text += line(sshKey: sshKey, phoneID: phoneID, localOnly: localOnly) + "\n"
         try write(text, to: file)
     }
 
@@ -152,6 +155,9 @@ public actor RelayHost {
     /// Opens the connection a session is forwarded to (sshd by default).
     private let forward: @Sendable () throws -> Int32
     private let authorizedKeys: URL?
+    /// The user's public address for this Mac (`host` or `host:port`), sent
+    /// to phones so they connect directly when they can.
+    private let directAddress: String?
     private let onEvent: @Sendable (Event) -> Void
 
     public enum Event: Sendable {
@@ -175,6 +181,7 @@ public actor RelayHost {
         hostName: String = Host.current().localizedName ?? "Mac",
         userName: String = NSUserName(),
         authorizedKeys: URL? = RelayAuthorizedKeys.defaultFile,
+        directAddress: String? = nil,
         forward: (@Sendable () throws -> Int32)? = nil,
         onEvent: @escaping @Sendable (Event) -> Void = { _ in }
     ) {
@@ -184,6 +191,8 @@ public actor RelayHost {
         self.hostName = hostName
         self.userName = userName
         self.authorizedKeys = authorizedKeys
+        let direct = directAddress?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.directAddress = (direct?.isEmpty ?? true) ? nil : direct
         self.forward = forward ?? { try RelayHost.connectLocalSSH() }
         self.onEvent = onEvent
     }
@@ -192,7 +201,19 @@ public actor RelayHost {
 
     public func start() {
         guard runTask == nil else { return }
+        syncAuthorizedKeys()
         runTask = Task { await self.runLoop() }
+    }
+
+    /// Keeps every paired phone's key line in step with the direct address:
+    /// restricted to this Mac while the relay is the only way in, open once
+    /// the phone may also connect directly.
+    private func syncAuthorizedKeys() {
+        guard let authorizedKeys else { return }
+        for phone in store.phones() {
+            try? RelayAuthorizedKeys.add(sshKey: phone.sshKey, phoneID: phone.id,
+                                         localOnly: directAddress == nil, file: authorizedKeys)
+        }
     }
 
     public func stop() {
@@ -218,6 +239,21 @@ public actor RelayHost {
                 control = socket
                 setStatus(.online)
                 delay = 1
+                // Two missed pongs close the socket, which ends the read
+                // below with an error and so reconnects.
+                let heartbeat = Task {
+                    var missed = 0
+                    while !Task.isCancelled {
+                        try? await Task.sleep(nanoseconds: 25_000_000_000)
+                        if Task.isCancelled { return }
+                        missed = await socket.ping() ? 0 : missed + 1
+                        if missed >= 2 {
+                            socket.close()
+                            return
+                        }
+                    }
+                }
+                defer { heartbeat.cancel() }
                 while !Task.isCancelled {
                     let message = try await socket.receiveControl()
                     if message.t == "incoming", let session = message.session {
@@ -321,7 +357,8 @@ public actor RelayHost {
                 socket.close() // unknown phone and no code showing
                 return
             }
-            let info = RelayMessage.HostInfo(name: hostName, user: userName, sshHostKey: Self.sshHostKey())
+            let info = RelayMessage.HostInfo(name: hostName, user: userName, sshHostKey: Self.sshHostKey(),
+                                             direct: directAddress)
             let (message2, noiseSession) = try noise.writeMessage2(payload: try JSONEncoder().encode(info), psk: psk)
             try await socket.send(message2)
             let stream = RelayStream(socket: socket, session: noiseSession)
@@ -341,7 +378,8 @@ public actor RelayHost {
                     id: known?.id ?? UUID().uuidString.lowercased(), name: String(hello.name.prefix(80)),
                     staticKey: phoneStatic, sshKey: hello.sshKey, pairedAt: Date())
                 if let authorizedKeys {
-                    try RelayAuthorizedKeys.add(sshKey: hello.sshKey, phoneID: phone.id, file: authorizedKeys)
+                    try RelayAuthorizedKeys.add(sshKey: hello.sshKey, phoneID: phone.id,
+                                                localOnly: directAddress == nil, file: authorizedKeys)
                 }
                 try store.add(phone, psk: psk)
                 pending = nil

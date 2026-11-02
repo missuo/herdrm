@@ -16,7 +16,62 @@ enum MobileRelay {
 
     static func psk(for deviceID: UUID) -> Data? { keychain.data("psk.\(deviceID.uuidString)") }
 
-    static func forget(_ deviceID: UUID) { keychain.remove("psk.\(deviceID.uuidString)") }
+    static func forget(_ deviceID: UUID) {
+        keychain.remove("psk.\(deviceID.uuidString)")
+        UserDefaults.standard.removeObject(forKey: directKey(deviceID))
+        UserDefaults.standard.removeObject(forKey: hostKeyKey(deviceID))
+    }
+
+    // What the Mac last reported over the encrypted channel: its direct
+    // address (if the user set one) and its SSH host key.
+    private static func directKey(_ id: UUID) -> String { "relay.direct.\(id.uuidString)" }
+    private static func hostKeyKey(_ id: UUID) -> String { "relay.sshHostKey.\(id.uuidString)" }
+
+    private static func remember(_ host: RelayMessage.HostInfo, for id: UUID) {
+        UserDefaults.standard.set(host.direct, forKey: directKey(id))
+        if let blob = hostKeyBlob(host.sshHostKey) {
+            UserDefaults.standard.set(blob, forKey: hostKeyKey(id))
+        }
+    }
+
+    private static func hostKeyBlob(_ line: String?) -> Data? {
+        guard let parts = line?.split(separator: " "), parts.count >= 2 else { return nil }
+        return Data(base64Encoded: String(parts[1]))
+    }
+
+    /// The Mac's public address, as `SSHEndpoint`, when it has one.
+    static func directEndpoint(for id: UUID) -> SSHEndpoint? {
+        guard let text = UserDefaults.standard.string(forKey: directKey(id)), !text.isEmpty else { return nil }
+        if let colon = text.lastIndex(of: ":"), !text.hasPrefix("["), text.filter({ $0 == ":" }).count == 1,
+           let port = UInt16(text[text.index(after: colon)...]) {
+            return SSHEndpoint(host: String(text[..<colon]), port: port)
+        }
+        if text.hasPrefix("["), let close = text.firstIndex(of: "]") {
+            let host = String(text[text.index(after: text.startIndex)..<close])
+            let rest = text[text.index(after: close)...]
+            let port = rest.hasPrefix(":") ? UInt16(rest.dropFirst()) ?? 22 : 22
+            return SSHEndpoint(host: host, port: port)
+        }
+        return SSHEndpoint(host: text, port: 22)
+    }
+
+    static func expectedHostKey(for id: UUID) -> Data? { UserDefaults.standard.data(forKey: hostKeyKey(id)) }
+
+    /// Direct SSH to a paired Mac's public address, accepted only when sshd
+    /// presents the host key the Mac vouched for over the relay. Nil when
+    /// there is no address, it doesn't answer quickly, or the key differs:
+    /// then the relay carries the session.
+    static func openDirect(device: MobileDevice) async -> SSHConnection? {
+        guard let endpoint = directEndpoint(for: device.id),
+              let expected = expectedHostKey(for: device.id),
+              let connection = try? await SSHConnection.connect(to: endpoint, timeout: .seconds(4))
+        else { return nil }
+        guard connection.hostKey.key == expected else {
+            try? await connection.close(timeout: .seconds(1))
+            return nil
+        }
+        return connection
+    }
 
     /// What the phone introduces itself with: its name and the SSH key the
     /// Mac installs for it.
@@ -44,6 +99,7 @@ enum MobileRelay {
         guard keychain.set(link.psk, for: "psk.\(device.id.uuidString)") else {
             throw RelayError.refused(String(localized: "Couldn't save the pairing in the Keychain."))
         }
+        remember(connection.host, for: device.id)
         return device
     }
 
@@ -64,16 +120,13 @@ enum MobileRelay {
         let connection = try await RelayClient.connect(
             relay: relay.url, hostID: relay.hostID, hostStatic: relay.hostStatic,
             psk: psk, phoneKey: phoneKey, hello: hello)
+        remember(connection.host, for: device.id)
         let (sshEnd, pumpEnd) = try RelayPump.socketPair()
         let stream = connection.stream
         Task.detached { await RelayPump.run(descriptor: pumpEnd, stream: stream) }
         do {
             let ssh = try await SSHConnection.connect(overDescriptor: sshEnd, timeout: .seconds(15))
-            let blob = connection.host.sshHostKey.flatMap { key -> Data? in
-                let parts = key.split(separator: " ")
-                return parts.count >= 2 ? Data(base64Encoded: String(parts[1])) : nil
-            }
-            return RelayedSSH(connection: ssh, stream: stream, hostKeyBlob: blob)
+            return RelayedSSH(connection: ssh, stream: stream, hostKeyBlob: hostKeyBlob(connection.host.sshHostKey))
         } catch {
             stream.close()
             throw error

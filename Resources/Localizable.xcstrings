@@ -1,6 +1,70 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Public address (optional)" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Public address (optional)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "公网地址（可选）"
+          }
+        }
+      }
+    },
+    "Direct Connection" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Direct Connection"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "直接连接"
+          }
+        }
+      }
+    },
+    "If this Mac has a public IP or hostname that reaches its SSH port, enter it: the iPhone then connects directly and uses the relay only when that fails." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "If this Mac has a public IP or hostname that reaches its SSH port, enter it: the iPhone then connects directly and uses the relay only when that fails."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "如果这台 Mac 有能访问到 SSH 端口的公网 IP 或域名，请填在这里：iPhone 会优先直接连接，连不上时才走中继。"
+          }
+        }
+      }
+    },
+    "The iPhone connects to this address first and falls back to the relay. Paired iPhones' keys may sign in from any address, as direct SSH requires." : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "The iPhone connects to this address first and falls back to the relay. Paired iPhones' keys may sign in from any address, as direct SSH requires."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "iPhone 会先连这个地址，连不上再走中继。已配对 iPhone 的密钥可以从任何地址登录，这是直接 SSH 连接所必需的。"
+          }
+        }
+      }
+    },
     "iPhone" : {
       "localizations" : {
         "en" : {

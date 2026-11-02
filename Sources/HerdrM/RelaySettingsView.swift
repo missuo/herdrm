@@ -12,6 +12,7 @@ final class RelayHostController: ObservableObject {
 
     static let enabledKey = "relay.enabled"
     static let urlKey = "relay.url"
+    static let directKey = "relay.direct"
 
     @Published private(set) var status: RelayHost.Status = .stopped
     @Published private(set) var pairing: RelayHost.PendingPairing?
@@ -32,12 +33,19 @@ final class RelayHostController: ObservableObject {
         didSet { UserDefaults.standard.set(relayURL, forKey: Self.urlKey) }
     }
 
+    /// This Mac's public IP or hostname (optional): phones connect to it
+    /// directly and use the relay only when that fails.
+    @Published var directAddress: String {
+        didSet { UserDefaults.standard.set(directAddress, forKey: Self.directKey) }
+    }
+
     private let store = RelayKeychainHostStore()
     private var host: RelayHost?
 
     private init() {
         enabled = UserDefaults.standard.bool(forKey: Self.enabledKey)
         relayURL = UserDefaults.standard.string(forKey: Self.urlKey) ?? RelayProtocol.defaultRelayURL.absoluteString
+        directAddress = UserDefaults.standard.string(forKey: Self.directKey) ?? ""
         phones = store.phones()
     }
 
@@ -61,7 +69,7 @@ final class RelayHostController: ObservableObject {
         }
         let url = URL(string: relayURL.trimmingCharacters(in: .whitespacesAndNewlines))
             .flatMap { ["wss", "ws"].contains($0.scheme ?? "") ? $0 : nil } ?? RelayProtocol.defaultRelayURL
-        let host = RelayHost(relay: url, store: store) { [weak self] event in
+        let host = RelayHost(relay: url, store: store, directAddress: directAddress) { [weak self] event in
             Task { @MainActor in self?.handle(event) }
         }
         self.host = host
@@ -115,6 +123,7 @@ struct RelaySettingsView: View {
     @ObservedObject var controller = RelayHostController.shared
     @State private var showPairing = false
     @State private var editingURL = ""
+    @State private var editingDirect = ""
 
     var body: some View {
         Form {
@@ -170,6 +179,26 @@ struct RelaySettingsView: View {
                 }
             }
 
+            if controller.enabled {
+                Section {
+                    HStack {
+                        TextField("Public address (optional)", text: $editingDirect, prompt: Text(verbatim: "203.0.113.7 or mac.example.com:2222"))
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit(applyDirect)
+                        Button("Apply", action: applyDirect)
+                            .disabled(editingDirect == controller.directAddress)
+                    }
+                } header: {
+                    Text("Direct Connection")
+                } footer: {
+                    Text(controller.directAddress.isEmpty
+                         ? "If this Mac has a public IP or hostname that reaches its SSH port, enter it: the iPhone then connects directly and uses the relay only when that fails."
+                         : "The iPhone connects to this address first and falls back to the relay. Paired iPhones' keys may sign in from any address, as direct SSH requires.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
             Section("Paired iPhones") {
                 if controller.phones.isEmpty {
                     Text("No iPhones yet.")
@@ -215,11 +244,18 @@ struct RelaySettingsView: View {
         .frame(minHeight: 420)
         .onAppear {
             editingURL = controller.relayURL
+            editingDirect = controller.directAddress
             controller.refreshRemoteLogin()
         }
         .sheet(isPresented: $showPairing, onDismiss: { controller.cancelPairing() }) {
             RelayPairingSheet(controller: controller)
         }
+    }
+
+    private func applyDirect() {
+        controller.directAddress = editingDirect.trimmingCharacters(in: .whitespacesAndNewlines)
+        editingDirect = controller.directAddress
+        controller.restart()
     }
 
     private func applyURL() {

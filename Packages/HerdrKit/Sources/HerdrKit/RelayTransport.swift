@@ -58,6 +58,21 @@ final class RelaySocket: @unchecked Sendable {
         return error
     }
 
+    /// A WebSocket ping that must be answered within `timeout`. A dead
+    /// connection (sleep, network change) otherwise only shows up when TCP
+    /// gives up, long after the relay has forgotten this host.
+    func ping(timeout: TimeInterval = 10) async -> Bool {
+        await withCheckedContinuation { (done: CheckedContinuation<Bool, Never>) in
+            let once = OnceFlag()
+            task.sendPing { error in
+                if once.claim() { done.resume(returning: error == nil) }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                if once.claim() { done.resume(returning: false) }
+            }
+        }
+    }
+
     func close() {
         task.cancel(with: .normalClosure, reason: nil)
         session.invalidateAndCancel()
@@ -118,6 +133,13 @@ public final class RelayStream: @unchecked Sendable {
     }
 
     public func close() { socket.close() }
+}
+
+/// True exactly once, from whichever caller gets there first.
+final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    func claim() -> Bool { lock.withLock { defer { claimed = true }; return !claimed } }
 }
 
 /// Runs async blocks one at a time, in order.

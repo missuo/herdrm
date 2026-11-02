@@ -105,9 +105,11 @@ struct RelaySSHEndToEndTests {
         #expect(big.status == 0, "\(big.out)")
         #expect(big.out.trimmingCharacters(in: .whitespacesAndNewlines).hasSuffix("3000000"), "3 MB through the relay: \(big.out)")
 
-        // Removing the phone takes the key away again.
-        await host.removePhone(try #require(store.phones().first).id)
-        #expect(try !String(contentsOf: authorizedKeys, encoding: .utf8).contains("herdrm-relay:"))
+        // Removing the phone takes its key away again.
+        let phone = try #require(store.phones().first)
+        await host.removePhone(phone.id)
+        #expect(try !String(contentsOf: authorizedKeys, encoding: .utf8)
+            .contains(RelayAuthorizedKeys.tag(phoneID: phone.id)))
     }
 }
 #endif

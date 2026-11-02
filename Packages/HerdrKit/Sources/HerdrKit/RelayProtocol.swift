@@ -138,11 +138,16 @@ public enum RelayMessage {
         public var user: String
         /// The Mac's `ssh-ed25519 AAAA…` host key, so the phone pins it.
         public var sshHostKey: String?
+        /// Where the Mac's sshd is reachable without the relay (a public IP or
+        /// hostname the user entered), as `host` or `host:port`. The phone
+        /// tries it first; the relay is the fallback.
+        public var direct: String?
 
-        public init(name: String, user: String, sshHostKey: String?) {
+        public init(name: String, user: String, sshHostKey: String?, direct: String? = nil) {
             self.name = name
             self.user = user
             self.sshHostKey = sshHostKey
+            self.direct = direct
         }
     }
 
