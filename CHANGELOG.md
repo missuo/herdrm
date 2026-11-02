@@ -5,7 +5,7 @@ on [Keep a Changelog](https://keepachangelog.com); versions follow semver.
 Release automation extracts the matching section for GitHub release notes and
 the Sparkle update description — a release without a section here fails CI.
 
-## [Unreleased]
+## [0.6.24] - 2026-11-02
 
 ### Fixed
 - **Read completion dots stay cleared after reconnecting.** Opening a result,
