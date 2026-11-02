@@ -18,7 +18,7 @@ final class ConversationHistoryDrawerTests: XCTestCase {
         XCTAssertEqual(ConversationMessageView.speaker(for: "unknown"), String(localized: "Other message"))
         XCTAssertNotEqual(ConversationHistoryNotice.text(for: "unsupported_server"), "unsupported_server")
         XCTAssertNotEqual(ConversationHistoryNotice.text(for: "permission_denied"), ConversationHistoryNotice.text(for: "retention_expired"))
-        XCTAssertEqual(ConversationHistoryNotice.text(for: "access_denied"), String(localized: "HerdrM does not have permission to read this saved conversation."))
+        XCTAssertEqual(ConversationHistoryNotice.text(for: "access_denied"), String(localized: "Herdrm does not have permission to read this saved conversation."))
         XCTAssertEqual(ConversationHistoryNotice.text(for: "not_recorded"), String(localized: "No saved transcript was recorded for this Claude session."))
         XCTAssertNil(ConversationHistoryNotice.quality(for: "source_available"))
         XCTAssertEqual(ConversationHistoryNotice.quality(for: "partial_unsupported_records"), String(localized: "Some saved records could not be displayed."))

@@ -51,8 +51,8 @@ targets:
     info:
       path: Sources/HerdrM/Info.plist
       properties:
-        CFBundleName: herdrm
-        CFBundleDisplayName: herdrm
+        CFBundleName: Herdrm
+        CFBundleDisplayName: Herdrm
         CFBundleIconName: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -110,8 +110,8 @@ targets:
     info:
       path: Sources/HerdrMobile/Info.plist
       properties:
-        CFBundleName: herdrm
-        CFBundleDisplayName: herdrm
+        CFBundleName: Herdrm
+        CFBundleDisplayName: Herdrm
         CFBundleIconName: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -127,7 +127,7 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSLocalNetworkUsageDescription: >-
-          herdrm connects to your Macs over SSH on your local network to reach
+          Herdrm connects to your Macs over SSH on your local network to reach
           the herdr session running on them.
     settings:
       base:

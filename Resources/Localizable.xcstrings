@@ -1137,18 +1137,18 @@
         }
       }
     },
-    "Finder-launched apps don’t inherit your terminal PATH. herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary.": {
+    "Finder-launched apps don’t inherit your terminal PATH. Herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Finder-launched apps don’t inherit your terminal PATH. herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary."
+            "value": "Finder-launched apps don’t inherit your terminal PATH. Herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "通过 Finder 启动的应用不会继承终端 PATH。herdrm 会从登录 + 交互式 shell 捕获一次，再按这些名称查找。检测结果不对时，可在此填写路径作为兜底。"
+            "value": "通过 Finder 启动的应用不会继承终端 PATH。Herdrm 会从登录 + 交互式 shell 捕获一次，再按这些名称查找。检测结果不对时，可在此填写路径作为兜底。"
           }
         }
       }
@@ -1521,18 +1521,18 @@
         }
       }
     },
-    "Quit and reopen herdrm so the new language takes effect.": {
+    "Quit and reopen Herdrm so the new language takes effect.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Quit and reopen herdrm so the new language takes effect."
+            "value": "Quit and reopen Herdrm so the new language takes effect."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "退出并重新打开 herdrm，新语言才会生效。"
+            "value": "退出并重新打开 Herdrm，新语言才会生效。"
           }
         }
       }
@@ -1665,18 +1665,18 @@
         }
       }
     },
-    "herdrm — a native macOS console for herdr.": {
+    "Herdrm — a native macOS console for herdr.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "herdrm — a native macOS console for herdr."
+            "value": "Herdrm — a native macOS console for herdr."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "herdrm — 面向 herdr 的原生 macOS 控制台。"
+            "value": "Herdrm — 面向 herdr 的原生 macOS 控制台。"
           }
         }
       }
@@ -3281,18 +3281,18 @@
         }
       }
     },
-    "Runs in this app only; closing herdrm ends the shell.": {
+    "Runs in this app only; closing Herdrm ends the shell.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Runs in this app only; closing herdrm ends the shell."
+            "value": "Runs in this app only; closing Herdrm ends the shell."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "仅在本应用内运行；退出 herdrm 时该 Shell 会结束。"
+            "value": "仅在本应用内运行；退出 Herdrm 时该 Shell 会结束。"
           }
         }
       }
@@ -3921,18 +3921,34 @@
         }
       }
     },
-    "%@ health — click for details": {
+    "Machine Details…": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ health — click for details"
+            "value": "Machine Details…"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ 运行状况 — 点击查看详情"
+            "value": "机器详情…"
+          }
+        }
+      }
+    },
+    "Switch device": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Switch device"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "切换设备"
           }
         }
       }
@@ -5373,19 +5389,19 @@
         }
       }
     },
-    "HerdrM does not have permission to read this saved conversation.": {
+    "Herdrm does not have permission to read this saved conversation.": {
       "extractionState": "manual",
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "HerdrM does not have permission to read this saved conversation."
+            "value": "Herdrm does not have permission to read this saved conversation."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "HerdrM 没有权限读取此已保存的对话。"
+            "value": "Herdrm 没有权限读取此已保存的对话。"
           }
         }
       }
@@ -6211,18 +6227,18 @@
         }
       }
     },
-    "When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open.": {
+    "When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. Herdrm answers “Switch to … and continue”. Applies to every device with grazr, while Herdrm is open.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open."
+            "value": "When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. Herdrm answers “Switch to … and continue”. Applies to every device with grazr, while Herdrm is open."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "当某个账号本周的 Fable 额度用完且未开启使用额度时，Claude 会停下来询问。herdrm 会选择“Switch to … and continue”。对所有运行 grazr 的设备生效，前提是 herdrm 处于打开状态。"
+            "value": "当某个账号本周的 Fable 额度用完且未开启使用额度时，Claude 会停下来询问。Herdrm 会选择“Switch to … and continue”。对所有运行 grazr 的设备生效，前提是 Herdrm 处于打开状态。"
           }
         }
       }

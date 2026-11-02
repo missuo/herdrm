@@ -347,7 +347,7 @@ enum ConversationHistoryNotice {
         case "not_recorded": return String(localized: "No saved transcript was recorded for this Claude session.")
         case "persistence_disabled", "disabled": return String(localized: "Claude conversation saving is disabled.")
         case "retention_expired", "expired": return String(localized: "This saved conversation has expired.")
-        case "access_denied", "permission_denied", "source_unreadable": return String(localized: "HerdrM does not have permission to read this saved conversation.")
+        case "access_denied", "permission_denied", "source_unreadable": return String(localized: "Herdrm does not have permission to read this saved conversation.")
         case "unsupported_format", "unsupported_schema": return String(localized: "This Claude conversation format is not supported yet.")
         case "session_changed": return String(localized: "The Claude session changed. Select the agent again to reload history.")
         case "disconnected": return String(localized: "Reconnect this device to read saved conversation history.")

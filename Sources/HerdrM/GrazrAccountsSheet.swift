@@ -135,7 +135,7 @@ struct GrazrAccountsSheet: View {
         }
         .toggleStyle(.switch)
         .controlSize(.small)
-        .help("When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open.")
+        .help("When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. Herdrm answers “Switch to … and continue”. Applies to every device with grazr, while Herdrm is open.")
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }

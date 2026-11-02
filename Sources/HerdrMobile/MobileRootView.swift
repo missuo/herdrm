@@ -79,7 +79,7 @@ private struct SidebarListView: View {
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("herdrm")
+        .navigationTitle("Herdrm")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 DeviceSwitcherMenu(model: model)
@@ -502,7 +502,7 @@ struct AddDeviceSheet: View {
                     UIPasteboard.general.string = model.deviceKeyAuthorizedLine
                     copiedKey = true
                 }
-                Text(String(localized: "On the Mac, run: echo '<key>' >> ~/.ssh/authorized_keys — or paste the line into herdrm's upcoming pairing screen."))
+                Text(String(localized: "On the Mac, run: echo '<key>' >> ~/.ssh/authorized_keys — or paste the line into Herdrm's upcoming pairing screen."))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

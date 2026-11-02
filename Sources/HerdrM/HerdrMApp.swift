@@ -477,7 +477,7 @@ struct AgentsSettingsView: View {
             } header: {
                 Text("Binaries on This Mac")
             } footer: {
-                Text("Finder-launched apps don’t inherit your terminal PATH. herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary.")
+                Text("Finder-launched apps don’t inherit your terminal PATH. Herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -649,7 +649,7 @@ struct TerminalSettingsView: View {
                         importMessage = nil
                     }
                     Button("Import from Ghostty…") { importFromGhostty() }
-                        .help("Reads font-family and font-size from ~/.config/ghostty/config. A one-time copy — herdrm's settings stay in charge afterward.")
+                        .help("Reads font-family and font-size from ~/.config/ghostty/config. A one-time copy — Herdrm's settings stay in charge afterward.")
                 }
 
                 if let importMessage {
@@ -773,7 +773,7 @@ struct AppearanceSettingsView: View {
                         Button("Relaunch") {
                             AppLanguage.relaunch()
                         }
-                        .help("Quit and reopen herdrm so the new language takes effect.")
+                        .help("Quit and reopen Herdrm so the new language takes effect.")
                     }
                 }
             }
@@ -889,7 +889,7 @@ struct TailcatSettingsView: View {
 struct AboutSettingsView: View {
     var body: some View {
         Form {
-            Text("herdrm — a native macOS console for herdr.")
+            Text("Herdrm — a native macOS console for herdr.")
                 .font(.system(size: 12.5))
             Text("Devices are managed from the switcher in the sidebar footer.")
                 .font(.system(size: 11.5))
