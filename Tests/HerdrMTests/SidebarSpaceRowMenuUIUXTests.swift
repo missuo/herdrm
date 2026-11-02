@@ -96,12 +96,19 @@ final class SidebarSpaceRowMenuUIUXTests: XCTestCase {
                        String(localized: "Close all \(model.visibleTerminals.count) terminals?"))
         model.closeRequest = nil
 
-        model.selectSpace(model.visibleSpaces[1].ref)
+        let agent = try XCTUnwrap(model.visibleAgents.first)
+        let space = try XCTUnwrap(model.visibleSpaces.first { $0.workspace.workspaceID == agent.agent.workspaceID })
+        model.selectSpace(space.ref)
+        XCTAssertGreaterThan(model.visibleAgents.count, 0, "known-yes: the selected space has agents")
         model.requestCloseAllAgents()
         XCTAssertEqual(model.closeRequest?.title,
-                       String(localized: "Close all \(model.visibleAgents.count) agents in Space 2?"),
+                       String(localized: "Close all \(model.visibleAgents.count) agents in \(space.workspace.label)?"),
                        "a space filter narrows what closes")
         model.closeRequest = nil
+
+        model.selectSpace(try XCTUnwrap(model.visibleSpaces.first { $0.ref != space.ref && model.agentCount(in: $0) == 0 }).ref)
+        model.requestCloseAllAgents()
+        XCTAssertNil(model.closeRequest, "nothing to close asks nothing")
     }
 
     func testProjectFromASpaceOpensTheProjectPaneOnThatSpace() throws {
