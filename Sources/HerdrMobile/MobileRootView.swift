@@ -94,6 +94,7 @@ enum SpaceRoute: Hashable {
 private struct SidebarListView: View {
     @Bindable var model: MobileAppModel
     @Binding var spaceRoute: SpaceRoute?
+    @State private var showKeys = false
 
     var body: some View {
         List(selection: $spaceRoute) {
@@ -118,6 +119,14 @@ private struct SidebarListView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
+                    showKeys = true
+                } label: {
+                    Image(systemName: "key.horizontal")
+                }
+                .accessibilityLabel(String(localized: "Keys"))
+            }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
                     model.showAddDevice = true
                 } label: {
                     Image(systemName: "plus")
@@ -125,6 +134,7 @@ private struct SidebarListView: View {
                 .accessibilityLabel(String(localized: "Add Device"))
             }
         }
+        .sheet(isPresented: $showKeys) { IdentitiesView() }
         .refreshable {
             await model.selectedSession?.refresh()
         }
@@ -374,12 +384,13 @@ private struct ConnectionDot: View {
 struct AddDeviceSheet: View {
     @Bindable var model: MobileAppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var kind: MobileDevice.Kind = .relay
+    @State private var kind: MobileDevice.Kind = .ssh
     @State private var name = ""
     @State private var host = ""
     @State private var port = "22"
     @State private var username = ""
-    @State private var authMethod: MobileDevice.AuthMethod = .deviceKey
+    @State private var authMethod: MobileDevice.AuthMethod = .identity
+    @State private var identityID: UUID?
     @State private var password = ""
     @State private var tailcatToken = ""
     @State private var copiedKey = false
@@ -391,7 +402,7 @@ struct AddDeviceSheet: View {
         case .ssh:
             return !host.trimmingCharacters(in: .whitespaces).isEmpty
                 && !username.trimmingCharacters(in: .whitespaces).isEmpty
-                && (authMethod == .deviceKey || !password.isEmpty)
+                && (authMethod != .password || !password.isEmpty)
                 && UInt16(port) != nil
         case .tailcat:
             return !tailcatToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -405,8 +416,8 @@ struct AddDeviceSheet: View {
             Form {
                 Section {
                     Picker(String(localized: "Connection"), selection: $kind) {
-                        Text(String(localized: "Pair with Mac")).tag(MobileDevice.Kind.relay)
-                        Text(String(localized: "SSH")).tag(MobileDevice.Kind.ssh)
+                        Text(String(localized: "Direct (IP or hostname)")).tag(MobileDevice.Kind.ssh)
+                        Text(String(localized: "Pair with Mac (no public IP)")).tag(MobileDevice.Kind.relay)
                         Text(String(localized: "Tailcat")).tag(MobileDevice.Kind.tailcat)
                     }
                 }
@@ -459,7 +470,8 @@ struct AddDeviceSheet: View {
                                 port: UInt16(port) ?? 22,
                                 username: username,
                                 authMethod: authMethod,
-                                password: password
+                                password: password,
+                                identityID: authMethod == .identity ? identityID : nil
                             )
                         case .tailcat:
                             model.addTailcatDevice(name: name, token: tailcatToken)
@@ -527,8 +539,12 @@ struct AddDeviceSheet: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
             Picker(String(localized: "Authentication"), selection: $authMethod) {
-                Text(String(localized: "Device Key")).tag(MobileDevice.AuthMethod.deviceKey)
+                Text(String(localized: "SSH Key")).tag(MobileDevice.AuthMethod.identity)
+                Text(String(localized: "This Phone's Key")).tag(MobileDevice.AuthMethod.deviceKey)
                 Text(String(localized: "Password")).tag(MobileDevice.AuthMethod.password)
+            }
+            if authMethod == .identity {
+                IdentityPicker(identityID: $identityID)
             }
             if authMethod == .password {
                 SecureField(String(localized: "Password"), text: $password)
@@ -548,11 +564,11 @@ struct AddDeviceSheet: View {
                     UIPasteboard.general.string = model.deviceKeyAuthorizedLine
                     copiedKey = true
                 }
-                Text(String(localized: "On the Mac, run: echo '<key>' >> ~/.ssh/authorized_keys — or paste the line into Herdrm's upcoming pairing screen."))
+                Text(String(localized: "On the server, run: echo '<key>' >> ~/.ssh/authorized_keys. A Mac without a public IP can pair by QR code instead (Pair with Mac)."))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-        } else {
+        } else if authMethod == .password {
             Section {
                 Text(String(localized: "The password is stored in this device's Keychain and never leaves it except to log in over SSH."))
                     .font(.footnote)

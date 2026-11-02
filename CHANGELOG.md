@@ -14,7 +14,16 @@ the Sparkle update description — a release without a section here fails CI.
   forwarding or SSH setup on the phone. The session is end-to-end encrypted
   (Noise IKpsk2); the relay can't read it. Pairing installs the phone's SSH key
   restricted to connections through the relay, and Settings → iPhone lists and
-  removes paired phones. See docs/RELAY.md.
+  removes paired phones. See docs/RELAY.md. A Mac with a public address can
+  give it in Settings → iPhone: the phone then connects directly and uses the
+  relay only as a fallback.
+- **iOS: SSH keys for servers you reach directly.** Add Device → Direct (IP or
+  hostname) signs in with your own private keys: import them under Keys (paste
+  or file; OpenSSH or PEM, Ed25519, ECDSA or RSA, with or without a
+  passphrase), or add one right from Add Device. Automatic tries the key that
+  worked for that server last, then the rest, the way OpenSSH does. Keys stay
+  in this iPhone's Keychain only (no iCloud, no other device), are never shown
+  again after import, and by default need Face ID before use.
 - **iOS: agents open as a chat.** An agent's screen on the phone defaults to a
   Chat tab: your prompts, the agent's replies, and each tool call as a compact
   row you can expand for its input and result. The live Terminal is one tap

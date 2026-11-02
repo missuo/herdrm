@@ -137,6 +137,20 @@ public final class SSHConnection: Sendable {
             timeout: timeout)
     }
 
+    /// Signs in with a private key file's contents (OpenSSH or PEM format;
+    /// Ed25519, ECDSA or RSA; `passphrase` for an encrypted one). A wrong key
+    /// or passphrase throws `.authenticationFailed` and leaves the connection
+    /// usable for another attempt.
+    public func authenticate(
+        username: String,
+        privateKey: Data,
+        passphrase: String?,
+        timeout: Duration
+    ) async throws {
+        try await driver.authenticate(
+            username: username, privateKey: privateKey, passphrase: passphrase, timeout: timeout)
+    }
+
     public func authenticate(
         username: String,
         publicKey: Data,

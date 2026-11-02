@@ -35,9 +35,18 @@ enum MobileTransportError: LocalizedError {
     case missingPassword
     case homeProbeFailed
     case tailcatTerminalUnsupported
+    case missingIdentity
+    case identityUnreadable(String)
+    case noIdentityAccepted
 
     var errorDescription: String? {
         switch self {
+        case .missingIdentity:
+            return String(localized: "The key chosen for this server was removed. Pick another in the server's settings.")
+        case .identityUnreadable(let name):
+            return String(localized: "Couldn't read the key “\(name)”: the passphrase may be wrong.")
+        case .noIdentityAccepted:
+            return String(localized: "The server accepted none of your keys. Add the right one under Keys, or check the user name.")
         case .hostKeyChanged(let fingerprint):
             return String(
                 localized: "This device's SSH host key changed (\(fingerprint)). If the host was reinstalled, remove and re-add the device."
@@ -143,6 +152,8 @@ final class SSHDirectTransport: MobileTransport {
                     password: password,
                     timeout: .seconds(15)
                 )
+            case .identity:
+                try await Self.authenticateWithIdentities(connection, device: device)
             }
 
             let socketPath: String
@@ -164,6 +175,55 @@ final class SSHDirectTransport: MobileTransport {
             relayStream?.close()
             throw error
         }
+    }
+
+    /// Signs in with the device's chosen key, or tries them in turn the way
+    /// OpenSSH does: the key that worked here last, this phone's device key,
+    /// then every other imported key. The server answers each try, so the
+    /// right key is found without the user picking it.
+    @MainActor
+    static func authenticateWithIdentities(_ connection: SSHConnection, device: MobileDevice) async throws {
+        let store = SSHIdentityStore.shared
+        let reason = String(localized: "Sign in to \(device.name)")
+        if let id = device.identityID {
+            guard let identity = store.identity(id) else { throw MobileTransportError.missingIdentity }
+            let secret = try store.secret(for: identity, reason: reason)
+            do {
+                try await connection.authenticate(username: device.username, privateKey: secret.key,
+                                                  passphrase: secret.passphrase, timeout: .seconds(15))
+            } catch SSHError.privateKeyUnreadable {
+                throw MobileTransportError.identityUnreadable(identity.name)
+            }
+            store.noteWorked(identity, for: device.id)
+            return
+        }
+        enum Attempt { case deviceKey, identity(SSHIdentity) }
+        let identities = store.candidates(for: device.id)
+        var order: [Attempt] = [.deviceKey] + identities.map { .identity($0) }
+        if let known = identities.first, store.lastWorked(for: device.id) == known.id {
+            order = [.identity(known), .deviceKey] + identities.dropFirst().map { .identity($0) }
+        }
+        let deviceKey = DeviceKey.ensure()
+        for attempt in order {
+            do {
+                switch attempt {
+                case .deviceKey:
+                    try await connection.authenticate(
+                        username: device.username, publicKey: DeviceKey.publicKeyBlob(deviceKey),
+                        signer: { try deviceKey.signature(for: $0) }, timeout: .seconds(15))
+                case .identity(let identity):
+                    // Skipped when Face ID is cancelled or the key can't be read.
+                    guard let secret = try? store.secret(for: identity, reason: reason) else { continue }
+                    try await connection.authenticate(username: device.username, privateKey: secret.key,
+                                                      passphrase: secret.passphrase, timeout: .seconds(15))
+                    store.noteWorked(identity, for: device.id)
+                }
+                return
+            } catch SSHError.authenticationFailed, SSHError.privateKeyUnreadable {
+                continue // the server said no to this one; try the next
+            }
+        }
+        throw MobileTransportError.noIdentityAccepted
     }
 
     static func fingerprint(_ key: Data) -> String {

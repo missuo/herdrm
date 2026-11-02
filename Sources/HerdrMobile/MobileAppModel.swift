@@ -308,7 +308,8 @@ final class MobileAppModel {
         port: UInt16,
         username: String,
         authMethod: MobileDevice.AuthMethod,
-        password: String
+        password: String,
+        identityID: UUID? = nil
     ) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let device = MobileDevice(
@@ -316,7 +317,8 @@ final class MobileAppModel {
             host: host.trimmingCharacters(in: .whitespacesAndNewlines),
             port: port,
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-            authMethod: authMethod
+            authMethod: authMethod,
+            identityID: identityID
         )
         if authMethod == .password {
             MobileSecretStore.setPassword(password, for: device.id)

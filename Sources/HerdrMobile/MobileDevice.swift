@@ -29,6 +29,9 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         /// This phone's Ed25519 key, enrolled in the host's authorized_keys.
         case deviceKey
         case password
+        /// An imported private key (Identities): `identityID`, or nil to try
+        /// them all, starting with the one that worked here last.
+        case identity
     }
 
     var id: UUID
@@ -42,6 +45,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
     var socketPath: String?
     /// Set for `.relay` devices.
     var relay: Relay?
+    /// The key for `.identity` auth; nil chooses automatically.
+    var identityID: UUID?
 
     init(
         id: UUID = UUID(),
@@ -52,7 +57,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         username: String = "",
         authMethod: AuthMethod = .deviceKey,
         socketPath: String? = nil,
-        relay: Relay? = nil
+        relay: Relay? = nil,
+        identityID: UUID? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -63,6 +69,7 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         self.authMethod = authMethod
         self.socketPath = socketPath
         self.relay = relay
+        self.identityID = identityID
     }
 
     /// Devices stored before the tailcat kind existed decode as SSH.
@@ -77,6 +84,7 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         authMethod = try container.decodeIfPresent(AuthMethod.self, forKey: .authMethod) ?? .deviceKey
         socketPath = try container.decodeIfPresent(String.self, forKey: .socketPath)
         relay = try container.decodeIfPresent(Relay.self, forKey: .relay)
+        identityID = try container.decodeIfPresent(UUID.self, forKey: .identityID)
     }
 
     var isTailcat: Bool { kind == .tailcat }

@@ -31,6 +31,24 @@ struct HerdrMobileApp: App {
                            let url = URL(string: link) {
                             model.openPairingURL(url)
                         }
+                        // UI tests: `-HerdrmTestKeys <base64,…> -HerdrmTestDirect host:port:user`
+                        // imports keys (no Face ID) and adds a direct server
+                        // that picks among them automatically.
+                        if let keys = UserDefaults.standard.string(forKey: "HerdrmTestKeys"),
+                           let direct = UserDefaults.standard.string(forKey: "HerdrmTestDirect") {
+                            for (i, encoded) in keys.split(separator: ",").enumerated() {
+                                guard let data = Data(base64Encoded: String(encoded)) else { continue }
+                                _ = try? SSHIdentityStore.shared.add(
+                                    name: "Test key \(i + 1)", keyText: String(decoding: data, as: UTF8.self),
+                                    passphrase: nil, requiresAuthentication: false)
+                                try? await Task.sleep(nanoseconds: 10_000_000) // distinct addedAt
+                            }
+                            let parts = direct.split(separator: ":").map(String.init)
+                            if parts.count == 3, let port = UInt16(parts[1]) {
+                                model.addDevice(name: "Direct test", host: parts[0], port: port, username: parts[2],
+                                                authMethod: .identity, password: "")
+                            }
+                        }
                     }
             }
             #else

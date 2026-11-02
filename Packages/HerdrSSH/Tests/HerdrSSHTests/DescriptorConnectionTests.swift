@@ -80,3 +80,60 @@ struct DescriptorConnectionTests {
         try await connection.close(timeout: .seconds(2))
     }
 }
+
+/// `authenticate(privateKey:passphrase:)` with real key files against a
+/// disposable sshd: HERDRSSH_KEY_SSHD_PORT, HERDRSSH_DESCRIPTOR_USER, and
+/// base64 file contents in HERDRSSH_KEY_ED25519_PASS (passphrase "correct
+/// horse"), HERDRSSH_KEY_RSA (none) and HERDRSSH_KEY_UNAUTHORIZED.
+@Suite(
+    .enabled(if: ProcessInfo.processInfo.environment["HERDRSSH_KEY_SSHD_PORT"] != nil),
+    .timeLimit(.minutes(1)))
+struct PrivateKeyAuthenticationTests {
+    let env = ProcessInfo.processInfo.environment
+
+    func key(_ name: String) throws -> Data {
+        try #require(env[name].flatMap { Data(base64Encoded: $0) })
+    }
+
+    func connect() async throws -> SSHConnection {
+        let port = try #require(env["HERDRSSH_KEY_SSHD_PORT"].flatMap(UInt16.init))
+        return try await SSHConnection.connect(to: SSHEndpoint(host: "127.0.0.1", port: port), timeout: .seconds(10))
+    }
+
+    @Test func aPassphraseProtectedEd25519KeySignsInAndAWrongPassphraseLeavesTheConnectionUsable() async throws {
+        let user = try #require(env["HERDRSSH_DESCRIPTOR_USER"])
+        let connection = try await connect()
+        await #expect(throws: SSHError.privateKeyUnreadable) {
+            try await connection.authenticate(username: user, privateKey: try key("HERDRSSH_KEY_ED25519_PASS"),
+                                              passphrase: "wrong", timeout: .seconds(10))
+        }
+        try await connection.authenticate(username: user, privateKey: try key("HERDRSSH_KEY_ED25519_PASS"),
+                                          passphrase: "correct horse", timeout: .seconds(10))
+        let result = try await connection.execute("printf ed25519-ok", timeout: .seconds(10))
+        #expect(result.stdout == Data("ed25519-ok".utf8))
+        try await connection.close(timeout: .seconds(2))
+    }
+
+    @Test func anRSAKeySignsIn() async throws {
+        let user = try #require(env["HERDRSSH_DESCRIPTOR_USER"])
+        let connection = try await connect()
+        try await connection.authenticate(username: user, privateKey: try key("HERDRSSH_KEY_RSA"),
+                                          passphrase: nil, timeout: .seconds(10))
+        let result = try await connection.execute("printf rsa-ok", timeout: .seconds(10))
+        #expect(result.stdout == Data("rsa-ok".utf8))
+        try await connection.close(timeout: .seconds(2))
+    }
+
+    @Test func aKeyTheServerDoesNotKnowFailsAndTheNextOneIsTried() async throws {
+        let user = try #require(env["HERDRSSH_DESCRIPTOR_USER"])
+        let connection = try await connect()
+        await #expect(throws: SSHError.authenticationFailed) {
+            try await connection.authenticate(username: user, privateKey: try key("HERDRSSH_KEY_UNAUTHORIZED"),
+                                              passphrase: nil, timeout: .seconds(10))
+        }
+        try await connection.authenticate(username: user, privateKey: try key("HERDRSSH_KEY_RSA"),
+                                          passphrase: nil, timeout: .seconds(10))
+        #expect(try await connection.execute("printf next-ok", timeout: .seconds(10)).stdout == Data("next-ok".utf8))
+        try await connection.close(timeout: .seconds(2))
+    }
+}

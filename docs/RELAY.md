@@ -13,6 +13,13 @@ iPhone ──wss──▶ relay ◀──wss── Mac (Herdrm, signed in to the
 The relay server is a separate, private project. Everything the apps do is
 here; the server can't read or change any of it.
 
+The relay is the fallback. A server with a public IP or hostname (a VPS, a
+machine with port forwarding) is added on the iPhone directly with Add Device →
+Direct, signing in with your own SSH keys (Keys). A Mac that has a public
+address but pairs by QR can give it in Settings → iPhone: the phone tries it
+first and uses the relay only when that fails, accepting the direct route only
+if sshd presents the host key the Mac reported over the encrypted channel.
+
 ## Using it
 
 1. On the Mac, turn on **Remote Login** (System Settings → General → Sharing).
