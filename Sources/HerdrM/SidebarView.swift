@@ -208,29 +208,20 @@ struct SidebarView: View {
             }
 
             Spacer(minLength: 0)
-            if showsMachineStats, let device = model.statsDevice {
+            if showsMachineStats {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
                 SidebarUsageStats(meters: usageMeters, onOpenSheet: openUsage)
                     .padding(.horizontal, 6)
-                    // The machine row below centers ~32pt of content in a
-                    // fixed 44pt frame — 6pt of air above and below its
-                    // wash. The usage row sizes to its content, so it needs
-                    // the same clearance explicitly or its hover wash sits
-                    // flush against the hairlines.
+                    // The row sizes to its content; without explicit
+                    // clearance its hover wash would sit flush against the
+                    // hairlines on either side.
                     .padding(.vertical, 6)
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                SidebarMachineStats(
-                    stats: model.machineStats,
-                    device: device,
-                    isOpen: model.showMachineStats
-                ) {
-                    model.showMachineStats.toggle()
-                }
-                .padding(.horizontal, 6)
-                .frame(height: SidebarFooterMetrics.statsHeight)
                 // Round one's refresh discipline (the `600ce7d` lesson):
                 // anchored to the stats block — a real view that renders
                 // whenever a pane is selected — never to a conditional row.
+                // Upstream moved the machine meters onto the footer's
+                // device card, so the usage row carries the discipline now.
                 .task(id: model.devices.map(\.id)) {
                     await Self.refreshUsageReads(
                         states: usageHint.states, devices: model.devices
