@@ -8,6 +8,11 @@ the Sparkle update description — a release without a section here fails CI.
 ## [Unreleased]
 
 ### Added
+- **An opt-in usage row in the sidebar footer.** One meter column per
+  picked agent, read on the selected device only: quota windows with
+  percent used and time until reset, or a compact 7-day token total for
+  agents without windows. Off by default (`sidebar.showUsageStats`); the
+  detail window comes later.
 - **Agent usage readings in HerdrKit.** `UsageSource` runs each coding
   agent's own usage command on a device — `claude -p /usage`, a codex
   session scan, `opencode stats`, gemini's usage files — and parses the
