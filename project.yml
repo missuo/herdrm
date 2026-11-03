@@ -1,6 +1,6 @@
 name: HerdrM
 options:
-  bundleIdPrefix: dev.bybee
+  bundleIdPrefix: sb.moe
   deploymentTarget:
     macOS: "14.0"
   xcodeVersion: "16.0"
@@ -69,7 +69,7 @@ targets:
         SUEnableAutomaticChecks: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm
+        PRODUCT_BUNDLE_IDENTIFIER: sb.moe.herdrm
         PRODUCT_NAME: herdrm
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         SWIFT_VERSION: "5.10"
@@ -162,7 +162,7 @@ targets:
       - target: HerdrM
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm.tests
+        PRODUCT_BUNDLE_IDENTIFIER: sb.moe.herdrm.tests
         GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         SWIFT_VERSION: "5.10"

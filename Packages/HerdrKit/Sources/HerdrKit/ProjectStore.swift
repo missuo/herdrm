@@ -36,7 +36,7 @@ extension ProjectStoreFile {
 /// Persists per-project overrides and space roots as JSON under Application Support.
 public final class ProjectStore: @unchecked Sendable {
     private let fileURL: URL
-    private let queue = DispatchQueue(label: "dev.bybee.herdrm.projects")
+    private let queue = DispatchQueue(label: "sb.moe.herdrm.projects")
 
     public init(directory: URL? = nil) {
         let base = directory ?? FileManager.default

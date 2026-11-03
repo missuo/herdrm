@@ -7,6 +7,18 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-02
+
+> **Herdrm has a new bundle ID: `sb.moe.herdrm`** (it was `dev.bybee.herdrm`).
+> This update installs over the old app as usual, and Herdrm copies your
+> settings over on its first launch. macOS may ask once whether Herdrm can use
+> the passwords and keys it saved before: choose Always Allow. It may also ask
+> for notification permission again.
+>
+> **Herdrm now supports Herdrm for iOS.** Pair your iPhone from Settings →
+> iPhone, then reach this Mac's agents and terminals from the phone on any
+> network, end-to-end encrypted.
+
 ### Added
 - **Reach your Mac from iPhone on any network.** Turn on Settings → iPhone on
   the Mac and scan the code with Herdrm on iPhone (or the Camera app): the
@@ -40,6 +52,10 @@ the Sparkle update description — a release without a section here fails CI.
   agent under More Agents) or a new terminal in that space, and opens it.
 
 ### Changed
+- **New bundle ID `sb.moe.herdrm`** for the Mac app (and `sb.moe.herdrm-ios`
+  for iOS). Settings carry over from `dev.bybee.herdrm` on first launch;
+  Keychain items keep their names, so saved passwords, SSH keys and paired
+  iPhones stay.
 - **iOS: Server → Space → Agent.** The phone follows the Mac's layout: pick a
   server, then one of its spaces, then an agent (or a terminal) in it.
 
