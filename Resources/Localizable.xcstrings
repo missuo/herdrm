@@ -1,6 +1,38 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "Claude": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Claude"
+          }
+        }
+      }
+    },
+    "Codex": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Codex"
+          }
+        }
+      }
+    },
     "Couldn't create it" : {
       "localizations" : {
         "en" : {
@@ -13,6 +45,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "无法创建"
+          }
+        }
+      }
+    },
+    "Gemini": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemini"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Gemini"
           }
         }
       }
@@ -45,6 +93,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新建 Agent 或终端"
+          }
+        }
+      }
+    },
+    "OpenCode": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenCode"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "OpenCode"
           }
         }
       }
@@ -109,6 +173,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "iPhone 会先连这个地址，连不上再走中继。已配对 iPhone 的密钥可以从任何地址登录，这是直接 SSH 连接所必需的。"
+          }
+        }
+      }
+    },
+    "Usage: %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Usage: %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "用量：%@"
           }
         }
       }

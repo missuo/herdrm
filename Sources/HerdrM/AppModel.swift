@@ -398,6 +398,19 @@ final class AppModel: ObservableObject {
     @Published var terminalToRename: TerminalEntry?
     /// The device whose grazr accounts window is open.
     @Published var grazrAccountsDevice: Device?
+
+    /// Which agents the sidebar's usage row shows, comma-listed in
+    /// canonical order. Default: the window-bearing pair plus opencode.
+    @AppStorage("usage.sidebarAgents") var sidebarAgents: String = "claude,codex,opencode"
+
+    /// The sidebar usage row's picked agents, in canonical order; junk
+    /// entries drop and an unparsable list falls back to the default set.
+    var sidebarAgentProviders: [UsageProvider] {
+        let canonical = UsageProvider.allCases
+        let picked = Set(sidebarAgents.split(separator: ",").map(String.init))
+        let providers = canonical.filter { picked.contains($0.rawValue) }
+        return providers.isEmpty ? canonical : providers
+    }
     /// The install's tailcat client public key ("nodekey:…") for hosts' allow
     /// lists. Loaded on demand, so users without tailcat devices never create one.
     @Published var tailcatClientPublicKey: String?

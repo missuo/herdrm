@@ -27,6 +27,14 @@ struct SidebarView: View {
     @ObservedObject var model: AppModel
     @Binding var collapsed: Bool
     var width: CGFloat = SidebarWidth.defaultWidth
+    /// Usage readings behind the footer's usage row — its own model, so
+    /// the row keeps the states it read and the store's cache keeps
+    /// re-reads cheap.
+    @StateObject private var usageHint = UsageModel()
+    /// Whether the footer shows the usage row at all, off by default like
+    /// the machine-stats line: on, it runs provider commands on the
+    /// selected device.
+    @AppStorage(UsageDefaults.showKey) private var showsUsageStats = false
     @State private var deviceButtonHovered = false
     @State private var draggingSpaceID: String?
     @State private var spaceDrop: (id: String, after: Bool)?
@@ -204,6 +212,27 @@ struct SidebarView: View {
             }
 
             Spacer(minLength: 0)
+            if showsUsageStats, let device = model.statsDevice {
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                SidebarUsageStats(meters: usageMeters)
+                    .padding(.horizontal, 6)
+                    // The row sizes to its content; without explicit
+                    // clearance its edges would sit flush against the
+                    // hairlines on either side.
+                    .padding(.vertical, 6)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                // The refresh task anchors to the row, a view that only
+                // renders while a pane is selected, and reads the
+                // selected device — turning the row on never means reads
+                // on every configured host.
+                .task(id: device.id) {
+                    await Self.refreshUsageReads(
+                        states: usageHint.states, devices: [device]
+                    ) { device, force in
+                        await usageHint.refresh(device, force: force)
+                    }
+                }
+            }
             footer
         }
         // The details panel belongs to the meters; with them gone it has no anchor.
@@ -230,6 +259,111 @@ struct SidebarView: View {
         return SpaceRevealTarget(space: space, pane: model.selectedPane,
                                  generation: model.sidebarRevealGeneration,
                                  selectionGeneration: model.sidebarSelectionGeneration)
+    }
+
+    /// The usage row's meters: one per picked agent, read on the selected
+    /// device only. Window-bearing agents fill a line per open window —
+    /// the ~5h session and the longer limit; tokens-only agents a compact
+    /// total.
+    private var usageMeters: [UsageMeterValue] {
+        let now = Date()
+        guard let device = model.statsDevice else { return [] }
+        return model.sidebarAgentProviders.map { provider in
+            func line(_ found: (device: Device, window: GrazrWindow)?) -> UsageWindowValue? {
+                guard let found else { return nil }
+                return UsageWindowValue(
+                    label: Self.windowLabel(found.window),
+                    percentUsed: 100 - Double(found.window.left(now: now)),
+                    untilReset: Self.untilReset(found.window.resetsAt, now: now)
+                )
+            }
+            let session = line(UsageSelection.tightestSession(
+                states: usageHint.states, devices: [device], provider: provider, now: now))
+            let limit = line(UsageSelection.tightestLimit(
+                states: usageHint.states, devices: [device], provider: provider, scope: nil, now: now))
+            let windows = [session, limit].compactMap { $0 }
+            return UsageMeterValue(
+                provider: provider,
+                windows: windows,
+                tokenTotal: windows.isEmpty
+                    ? Self.tokenTotal(provider, states: usageHint.states)
+                    : nil
+            )
+        }
+    }
+
+    /// A window line's label: the ~5h session, the week, or the window's
+    /// own span (30D) when an agent reports something else.
+    static func windowLabel(_ window: GrazrWindow) -> String {
+        switch window.group {
+        case "session": return "5H"
+        case "weekly": return "7D"
+        default: return window.group.uppercased()
+        }
+    }
+
+    /// `45m`, `2h51m`, `1d2h` — how long until the window refills; nil
+    /// when the reading carries no reset time.
+    static func untilReset(_ resetsAt: Date?, now: Date) -> String? {
+        guard let resetsAt else { return nil }
+        let minutes = Int((max(0, resetsAt.timeIntervalSince(now)) / 60).rounded())
+        if minutes < 60 { return "\(minutes)m" }
+        let hours = minutes / 60
+        if hours < 24 { return "\(hours)h\(minutes % 60)m" }
+        return "\(hours / 24)d\(hours % 24)h"
+    }
+
+    /// The picked agents' compact token total from the readings — the
+    /// meter value for agents that report no quota windows.
+    static func tokenTotal(
+        _ provider: UsageProvider,
+        states: [UUID: [UsageProvider: UsageProviderState]]
+    ) -> String? {
+        var total = 0
+        for perProvider in states.values {
+            guard case .readings(let readings) = perProvider[provider] else { continue }
+            for reading in readings {
+                guard let tokens = reading.tokens else { continue }
+                total += tokens.input + tokens.output + tokens.reasoning + tokens.cacheRead + tokens.cacheWrite
+            }
+        }
+        guard total > 0 else { return nil }
+        return UsageFormat.compact(total)
+    }
+
+    /// First read for a device with no states yet, and — when the row's
+    /// `.task` refires on a device change — a retry for a device where any
+    /// provider stands `.failed` or `.unknown`. Plain non-forced
+    /// refreshes: the store's five-minute cache and single-flight fold
+    /// bound the cost.
+    static func refreshUsageReads(
+        states: [UUID: [UsageProvider: UsageProviderState]],
+        devices: [Device],
+        refresh: (Device, Bool) async -> Void
+    ) async {
+        for device in devices where needsUsageRead(states[device.id]) {
+            await refresh(device, false)
+        }
+    }
+
+    /// Whether `device`'s states call for a read: never read, any provider
+    /// standing `.failed` or `.unknown`, or every watched window past its
+    /// reset — a fully-reset reading is stale by definition. Plain
+    /// non-forced refreshes: the store's cache bounds the cost.
+    static func needsUsageRead(_ states: [UsageProvider: UsageProviderState]?) -> Bool {
+        guard let states else { return true }
+        if states.contains { _, state in
+            switch state {
+            case .failed, .unknown: return true
+            default: return false
+            }
+        } { return true }
+        let now = Date()
+        let windows = states.values.flatMap { state -> [GrazrWindow] in
+            guard case .readings(let readings) = state else { return [] }
+            return readings.flatMap(\.windows)
+        }
+        return !windows.isEmpty && windows.allSatisfy { !$0.isOpen(now: now) }
     }
 
     private var terminalsSectionVisible: Bool {
@@ -1298,4 +1432,224 @@ struct SpinnerView: View {
             .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: spinning)
             .onAppear { spinning = true }
     }
+}
+
+// MARK: - Usage meters row
+
+/// One window line in a usage meter: its own label (5H, 7D, 30D), the
+/// percent used, and how long until it refills.
+struct UsageWindowValue: Equatable {
+    let label: String
+    let percentUsed: Double
+    let untilReset: String?
+}
+
+/// One meter's data in the sidebar's usage row: up to two open windows —
+/// the ~5h session and the longer limit (week, 30d) — or, for agents that
+/// report no windows, a compact token total. Neither dims to a dash.
+struct UsageMeterValue: Identifiable, Equatable {
+    let provider: UsageProvider
+    var windows: [UsageWindowValue] = []
+    var tokenTotal: String?
+    var id: UsageProvider { provider }
+
+    /// The header percent: the most-used of the agent's windows.
+    var tightestPercentUsed: Double? {
+        windows.map(\.percentUsed).max()
+    }
+}
+
+/// The opt-in usage row in the sidebar footer: one meter column per
+/// picked agent, read on the selected device only. Window-bearing agents
+/// fill a level-tinted bar with the percent used; tokens-only agents show
+/// a labeled 7D total line over a dimmed track. Not tappable yet — the
+/// details window is a later PR.
+struct SidebarUsageStats: View {
+    let meters: [UsageMeterValue]
+
+    var body: some View {
+        // Top-aligned so every column's icon + value headline sits on
+        // one line; shorter columns just leave space below.
+        HStack(alignment: .top, spacing: 12) {
+            ForEach(meters) { meter in
+                UsageMeter(
+                    provider: meter.provider,
+                    windows: meter.windows,
+                    tokenTotal: meter.tokenTotal
+                )
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(summary)
+    }
+
+    private var summary: String {
+        let parts = meters.map { meter in
+            let windows = meter.windows
+                .map { "\($0.label) \(Int($0.percentUsed.rounded()))%\(($0.untilReset.map { " · \($0)" }) ?? "")" }
+                .joined(separator: " · ")
+            let value = windows.isEmpty
+                ? (meter.tokenTotal.map { "7D \($0)" } ?? "—")
+                : windows
+            return "\(Self.name(meter.provider)) \(value)"
+        }
+        return String(localized: "Usage: \(parts.joined(separator: " · "))")
+    }
+
+    static func name(_ provider: UsageProvider) -> String {
+        switch provider {
+        case .claude: return String(localized: "Claude").uppercased()
+        case .codex: return String(localized: "Codex").uppercased()
+        case .opencode: return String(localized: "OpenCode").uppercased()
+        case .gemini: return String(localized: "Gemini").uppercased()
+        }
+    }
+
+    /// The picked set's whole algebra: the comma list future pickers and
+    /// `AppModel.sidebarAgents` share, toggling one agent in or out.
+    static func toggling(_ provider: UsageProvider, in raw: String) -> String {
+        var picked = raw.split(separator: ",").map(String.init)
+        if let index = picked.firstIndex(of: provider.rawValue) {
+            picked.remove(at: index)
+        } else {
+            picked.append(provider.rawValue)
+        }
+        // Keep the canonical order so the list reads stably.
+        let ordered = UsageProvider.allCases.map(\.rawValue)
+        picked.sort { lhs, rhs in
+            let l = ordered.firstIndex(of: lhs) ?? ordered.count
+            let r = ordered.firstIndex(of: rhs) ?? ordered.count
+            return l < r
+        }
+        return picked.joined(separator: ",")
+    }
+}
+
+/// One meter column: the agent's brand icon over a line per open window —
+/// label, percent used, time until reset — each above its level-tinted
+/// bar. Tokens-only agents show one labeled 7D line — the total — above a
+/// single dimmed track, so every column's first bar sits at the same
+/// height. Icons, not names: three-plus meters leave no room for words.
+private struct UsageMeter: View {
+    let provider: UsageProvider
+    let windows: [UsageWindowValue]
+    let tokenTotal: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 4) {
+                if let resource = BrandIconLoader.agentIcon(for: provider.rawValue) {
+                    BrandIcon(resource: resource, size: 11, fallbackSystemName: fallback)
+                        .foregroundStyle(Theme.textTertiary)
+                } else {
+                    Image(systemName: fallback)
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                Spacer(minLength: 2)
+                Text(verbatim: header)
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(headerTint)
+                    .lineLimit(1)
+            }
+            if windows.isEmpty {
+                // A labeled line like the window rows, so the first track
+                // sits level with window columns' first row and the total
+                // reads as text, not a lone bar. "7D" is honest: every
+                // tokens-only source reads a 7-day period.
+                VStack(alignment: .leading, spacing: 1) {
+                    if let total = tokenTotal {
+                        HStack(spacing: 3) {
+                            Text(verbatim: "7D")
+                                .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Theme.textTertiary)
+                            Text(verbatim: total)
+                                .font(.system(size: 9.5).monospacedDigit())
+                                .foregroundStyle(Theme.textSecondary)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                    }
+                    track(percent: nil)
+                }
+            } else {
+                ForEach(Array(windows.enumerated()), id: \.offset) { _, window in
+                    VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: 3) {
+                            Text(verbatim: window.label)
+                                .font(.system(size: 8.5, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Theme.textTertiary)
+                            Text(verbatim: line(window))
+                                .font(.system(size: 9.5).monospacedDigit())
+                                .foregroundStyle(Self.levelColor(window.percentUsed) == Theme.textSecondary ? Theme.textSecondary : Self.levelColor(window.percentUsed))
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                        }
+                        track(percent: window.percentUsed)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .animation(.easeOut(duration: 0.35), value: windows)
+        .animation(.easeOut(duration: 0.35), value: tokenTotal)
+    }
+
+    /// The header value: the tightest window's percent, the token total,
+    /// or a dimmed dash.
+    private var header: String {
+        windows.map(\.percentUsed).max().map { Self.percent($0) } ?? tokenTotal ?? "—"
+    }
+
+    private var headerTint: Color {
+        windows.map(\.percentUsed).max().map(Self.levelColor)
+            ?? (tokenTotal != nil ? Theme.textSecondary : Theme.textGhost)
+    }
+
+    private func line(_ window: UsageWindowValue) -> String {
+        let percent = Self.percent(window.percentUsed)
+        return window.untilReset.map { "\(percent) · \($0)" } ?? percent
+    }
+
+    private func track(percent: Double?) -> some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.textGhost.opacity(0.22))
+                Capsule()
+                    .fill(percent.map(Self.levelColor) ?? Theme.textGhost)
+                    .frame(width: max((percent ?? 0) > 0 ? 3 : 0, proxy.size.width * (percent ?? 0) / 100))
+            }
+        }
+        .frame(height: 4)
+    }
+
+    private static func percent(_ value: Double) -> String {
+        MachineStatsFormat.percent(value)
+    }
+
+    /// The machine row's own rule, percent used: calm until the window is
+    /// nearly spent.
+    private static func levelColor(_ percent: Double) -> Color {
+        if percent >= 90 { return Theme.danger }
+        if percent >= 75 { return Theme.warning }
+        return Theme.textSecondary
+    }
+
+    /// An SF fallback when no brand icon is bundled for the agent.
+    private var fallback: String {
+        switch provider {
+        case .claude: return "sparkles"
+        case .codex: return "infinity"
+        case .opencode: return "chevron.left.forwardslash.chevron.right"
+        case .gemini: return "wand.and.stars"
+        }
+    }
+}
+
+/// Where the usage row's opt-in lives; mirrors the machine-stats key.
+enum UsageDefaults {
+    static let showKey = "sidebar.showUsageStats"
 }
