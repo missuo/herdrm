@@ -24,7 +24,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>dev.bybee.herdrm.pair</string>
+			<string>sb.moe.herdrm-ios.pair</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>herdrm</string>

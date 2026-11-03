@@ -129,7 +129,7 @@ final class MobileDeviceStore {
 /// `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` deliberately keeps them
 /// out of iCloud Keychain and device-to-device migration.
 enum MobileSecretStore {
-    private static let service = "dev.bybee.herdrm.ios.ssh"
+    private static let service = "sb.moe.herdrm-ios.ssh"
 
     static func password(for deviceID: UUID) -> String? {
         var query = baseQuery(deviceID: deviceID)
