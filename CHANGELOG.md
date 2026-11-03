@@ -35,10 +35,19 @@ the Sparkle update description — a release without a section here fails CI.
   ("Type something.", "Tell Claude what to change") open a text field.
   Tapping sends the keys the agent's terminal expects, and the card goes away
   once the agent moves on. Codex approval prompts get the same card.
+- **iOS: start agents and terminals from the phone.** The + button on a
+  space's screen starts a new agent (Claude and Codex first, every other herdr
+  agent under More Agents) or a new terminal in that space, and opens it.
 
 ### Changed
 - **iOS: Server → Space → Agent.** The phone follows the Mac's layout: pick a
   server, then one of its spaces, then an agent (or a terminal) in it.
+
+### Fixed
+- **iOS: switching apps no longer drops the connection.** Coming back to
+  Herdrm keeps the existing session (and its open terminal) when it still
+  answers, and reconnects only when it doesn't. The app also keeps the
+  connection up for a short while in the background.
 
 ## [0.6.25] - 2026-11-02
 

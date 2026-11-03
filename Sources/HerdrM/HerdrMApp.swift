@@ -388,37 +388,10 @@ struct AgentsSettingsView: View {
     @State private var argDrafts: [String: String] = [:]
     @State private var yoloMode = AgentLaunchArgsStore.yoloMode()
 
-    /// Kinds herdr ships manifests for (plus OMP, which starts through its
-    /// lifecycle extension). Kinds a connected server advertises beyond these
-    /// are appended with their raw name.
-    private static let knownKinds: [(kind: String, label: String)] = [
-        ("claude", "Claude"),
-        ("codex", "Codex"),
-        ("droid", "Droid"),
-        ("agy", "Antigravity"),
-        ("cursor", "Cursor"),
-        ("gemini", "Gemini"),
-        ("grok", "Grok"),
-        ("kimi", "Kimi"),
-        ("opencode", "OpenCode"),
-        ("copilot", "Copilot"),
-        ("devin", "Devin"),
-        ("cline", "Cline"),
-        ("kiro", "Kiro"),
-        ("amp", "Amp"),
-        ("hermes", "Hermes"),
-        ("kilo", "Kilo"),
-        ("qodercli", "Qoder"),
-        ("qwen", "Qwen Code"),
-        ("letta", "Letta"),
-        ("maki", "Maki"),
-        ("muse", "Muse"),
-        ("pi", "Pi"),
-        ("omp", "Oh My Pi"),
-    ]
-
+    /// Kinds a connected server advertises beyond `AgentKinds.known` are
+    /// appended with their raw name.
     private var kinds: [(kind: String, label: String)] {
-        var rows = Self.knownKinds
+        var rows = AgentKinds.known
         for session in model.sessions.values {
             for kind in session.agentCatalog.kinds where !rows.contains(where: { $0.kind == kind }) {
                 rows.append((kind, kind))

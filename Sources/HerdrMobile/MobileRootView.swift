@@ -238,6 +238,48 @@ private struct SpaceContentList: View {
         .refreshable {
             await model.selectedSession?.refresh()
         }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { newMenu }
+        }
+        .alert(
+            String(localized: "Couldn't create it"),
+            isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })
+        ) {
+            Button(String(localized: "OK"), role: .cancel) {}
+        } message: {
+            Text(model.actionError ?? "")
+        }
+    }
+
+    private var isConnected: Bool {
+        if case .connected = model.selectedConnectionState { return true }
+        return false
+    }
+
+    /// New Agent (Claude and Codex first, the rest under More) and New Terminal,
+    /// in the space on screen.
+    private var newMenu: some View {
+        Menu {
+            Section(String(localized: "New Agent")) {
+                ForEach(AgentKinds.known.prefix(2), id: \.kind) { row in
+                    Button(row.label, systemImage: "sparkles") { model.newAgent(kind: row.kind) }
+                }
+                Menu(String(localized: "More Agents"), systemImage: "ellipsis.circle") {
+                    ForEach(AgentKinds.known.dropFirst(2), id: \.kind) { row in
+                        Button(row.label) { model.newAgent(kind: row.kind) }
+                    }
+                }
+            }
+            Button(String(localized: "New Terminal"), systemImage: "terminal") { model.newTerminal() }
+        } label: {
+            if model.isCreating {
+                ProgressView()
+            } else {
+                Image(systemName: "plus")
+            }
+        }
+        .disabled(!isConnected || model.isCreating)
+        .accessibilityLabel(String(localized: "New agent or terminal"))
     }
 
     @ViewBuilder
