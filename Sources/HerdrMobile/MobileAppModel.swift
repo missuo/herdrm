@@ -24,6 +24,7 @@ final class MobileDeviceSession {
     private var snapshotRefreshToken: UUID?
     private var refreshRequested = false
     private var statusGeneration: UInt64 = 0
+    private var probing = false
 
     var onChange: (() -> Void)?
 
@@ -32,33 +33,72 @@ final class MobileDeviceSession {
     }
 
     func connect() async {
-        guard case .connecting = state else {
-            state = .connecting
-            onChange?()
-            do {
-                let transport: MobileTransport
-                switch device.kind {
-                case .ssh, .relay:
-                    transport = try await SSHDirectTransport.connect(device: device)
-                case .tailcat:
-                    transport = try await TailcatMobileTransport.connect(device: device)
-                }
-                let pong = try await transport.request(
-                    method: "ping", params: .object([:]), as: PingResult.self
-                )
-                guard pong.protocolVersion >= 17 else {
-                    await transport.close()
-                    throw HerdrError.incompatibleProtocol(pong.protocolVersion)
-                }
-                self.transport = transport
-                state = .connected(version: pong.version)
+        if case .connecting = state { return }
+        guard !probing else { return }
+        // Back from the background (or an app switch) the old connection is
+        // usually still up: keep it, with its open terminals, when it answers.
+        if case .connected = state, let transport {
+            probing = true
+            let alive = await Self.answers(transport)
+            probing = false
+            if alive, self.transport === transport {
+                if eventTask == nil { startEventPump() }
                 await refresh()
-                startEventPump()
-            } catch {
-                state = .failed((error as? LocalizedError)?.errorDescription ?? "\(error)")
+                return
             }
-            onChange?()
-            return
+        }
+        await dropTransport()
+        state = .connecting
+        onChange?()
+        do {
+            let transport: MobileTransport
+            switch device.kind {
+            case .ssh, .relay:
+                transport = try await SSHDirectTransport.connect(device: device)
+            case .tailcat:
+                transport = try await TailcatMobileTransport.connect(device: device)
+            }
+            let pong = try await transport.request(
+                method: "ping", params: .object([:]), as: PingResult.self
+            )
+            guard pong.protocolVersion >= 17 else {
+                await transport.close()
+                throw HerdrError.incompatibleProtocol(pong.protocolVersion)
+            }
+            self.transport = transport
+            state = .connected(version: pong.version)
+            await refresh()
+            startEventPump()
+        } catch {
+            state = .failed((error as? LocalizedError)?.errorDescription ?? "\(error)")
+        }
+        onChange?()
+    }
+
+    /// Whether `transport` still answers a ping within a few seconds.
+    private static func answers(_ transport: MobileTransport) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                (try? await transport.request(method: "ping", params: .object([:]), as: PingResult.self)) != nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(4))
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Stops the event pump and closes the transport, keeping the snapshot so
+    /// the lists stay on screen while the connection comes back.
+    private func dropTransport() async {
+        eventTask?.cancel()
+        eventTask = nil
+        if let transport {
+            self.transport = nil
+            await transport.close()
         }
     }
 

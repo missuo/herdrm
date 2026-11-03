@@ -1,9 +1,11 @@
 import SwiftUI
+import UIKit
 
 @main
 struct HerdrMobileApp: App {
     @State private var model = MobileAppModel()
     @Environment(\.scenePhase) private var scenePhase
+    @State private var backgroundGrace = BackgroundGrace()
 
     init() {
         // The public half of the device key, for the pairing UI and support
@@ -56,10 +58,18 @@ struct HerdrMobileApp: App {
             #endif
         }
         .onChange(of: scenePhase) { _, phase in
-            // iOS tears sockets down in the background; on return, re-prove the
-            // connection instead of trusting a held one.
-            if phase == .active, model.selectedDeviceID != nil {
-                model.connectSelected()
+            switch phase {
+            case .background:
+                // Ask for the usual grace period so a quick app switch finds
+                // the connection still up.
+                backgroundGrace.begin()
+            case .active:
+                backgroundGrace.end()
+                // iOS may have torn the sockets down meanwhile; connectSelected
+                // keeps the connection when it still answers.
+                if model.selectedDeviceID != nil { model.connectSelected() }
+            default:
+                break
             }
         }
     }
@@ -68,5 +78,25 @@ struct HerdrMobileApp: App {
         MobileRootView(model: model)
             // herdrm://pair?… from the system Camera scanning a Mac's code.
             .onOpenURL { model.openPairingURL($0) }
+    }
+}
+
+/// One UIKit background task while the app is in the background, so open
+/// sockets survive a short trip to another app.
+@MainActor
+final class BackgroundGrace {
+    private var task: UIBackgroundTaskIdentifier = .invalid
+
+    func begin() {
+        guard task == .invalid else { return }
+        task = UIApplication.shared.beginBackgroundTask(withName: "Keep connection") { [weak self] in
+            self?.end()
+        }
+    }
+
+    func end() {
+        guard task != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(task)
+        task = .invalid
     }
 }

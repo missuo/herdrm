@@ -40,6 +40,12 @@ the Sparkle update description — a release without a section here fails CI.
 - **iOS: Server → Space → Agent.** The phone follows the Mac's layout: pick a
   server, then one of its spaces, then an agent (or a terminal) in it.
 
+### Fixed
+- **iOS: switching apps no longer drops the connection.** Coming back to
+  Herdrm keeps the existing session (and its open terminal) when it still
+  answers, and reconnects only when it doesn't. The app also keeps the
+  connection up for a short while in the background.
+
 ## [0.6.25] - 2026-11-02
 
 > **Herdrm may be discontinued.** herdr has released its own official GUI app,
