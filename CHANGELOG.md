@@ -7,6 +7,14 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+- **Agent usage readings in HerdrKit.** `UsageSource` runs each coding
+  agent's own usage command on a device — `claude -p /usage`, a codex
+  session scan, `opencode stats`, gemini's usage files — and parses the
+  output into quota windows and token totals; `UsageStore` caches each
+  parse per device for five minutes and folds concurrent reads into one
+  command run.
+
 ## [0.7.0] - 2026-11-02
 
 > **Herdrm has a new bundle ID: `sb.moe.herdrm`** (it was `dev.bybee.herdrm`).
