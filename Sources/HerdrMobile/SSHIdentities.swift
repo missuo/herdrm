@@ -33,7 +33,7 @@ final class SSHIdentityStore {
     static let shared = SSHIdentityStore()
 
     private static let listKey = "sshIdentities.v1"
-    private static let service = "dev.bybee.herdrm.ios.identity"
+    private static let service = "sb.moe.herdrm-ios.identity"
     private static let lastUsedKey = "sshIdentities.lastUsed.v1"
 
     /// One Face ID covers the keys a connection tries, and a reconnect soon

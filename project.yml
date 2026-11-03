@@ -132,12 +132,12 @@ targets:
         NSCameraUsageDescription: >-
           Herdrm uses the camera to scan the pairing code shown on your Mac.
         CFBundleURLTypes:
-          - CFBundleURLName: dev.bybee.herdrm.pair
+          - CFBundleURLName: sb.moe.herdrm-ios.pair
             CFBundleURLSchemes:
               - herdrm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm.ios
+        PRODUCT_BUNDLE_IDENTIFIER: sb.moe.herdrm-ios
         PRODUCT_NAME: HerdrMobile
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"

@@ -10,7 +10,7 @@ import UIKit
 /// Secrets stay in this device's Keychain: the phone's relay key (one for all
 /// Macs) and each Mac's PSK. The device list only holds what is public.
 enum MobileRelay {
-    private static let keychain = RelayKeychain(service: "dev.bybee.herdrm.ios.relay")
+    private static let keychain = RelayKeychain(service: "sb.moe.herdrm-ios.relay")
 
     static var phoneKey: Curve25519.KeyAgreement.PrivateKey { keychain.agreementKey("phone.noise") }
 

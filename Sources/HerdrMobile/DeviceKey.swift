@@ -3,13 +3,13 @@ import Foundation
 import os
 import Security
 
-private let keyLog = Logger(subsystem: "dev.bybee.herdrm.ios", category: "devicekey")
+private let keyLog = Logger(subsystem: "sb.moe.herdrm-ios", category: "devicekey")
 
 /// This phone's SSH identity: one Ed25519 key generated on device, private
 /// bytes kept in the Keychain and never exported. Enrolling a Mac means
 /// appending `authorizedKeysLine` to that Mac's ~/.ssh/authorized_keys.
 enum DeviceKey {
-    private static let service = "dev.bybee.herdrm.ios.ssh"
+    private static let service = "sb.moe.herdrm-ios.ssh"
     private static let account = "device-ed25519-private-key"
 
     static func ensure() -> Curve25519.Signing.PrivateKey {
