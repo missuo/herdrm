@@ -20,6 +20,13 @@ packages:
     # Prebuilt libghostty xcframework — pin exactly and review the checksum diff
     # on every bump (supply-chain discipline for a binary dependency). The
     # version scheme is <major.minor>.<UTC yyyymmdd>, so `from:` would drift.
+    #
+    # BUMP WHEN POSSIBLE: this pin's ghostty (82938b6) contains a known
+    # app-freezing draw-mutex deadlock family — ghostty-org/ghostty#14245,
+    # fixed by open PR #14444 ("keep the app mailbox draining while joining
+    # threads"). No released libghostty-spm carries it yet (checked
+    # 2026-10-26). When a release's "Ghostty commit" contains that PR, bump,
+    # verify against docs/libghostty-draw-deadlock.md, and retire that page.
     exactVersion: "1.6.20260909"
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
