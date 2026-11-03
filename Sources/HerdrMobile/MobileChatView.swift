@@ -688,17 +688,15 @@ private struct ChoiceCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "hand.raised.fill")
-                Text(String(localized: "Needs your input"))
-                Spacer()
-                if case .waiting = answering {
+            // The status bar above already says the agent needs input.
+            if case .waiting = answering {
+                HStack(spacing: 6) {
                     ProgressView().controlSize(.mini)
-                    Text(String(localized: "Sent")).foregroundStyle(.secondary)
+                    Text(String(localized: "Sent"))
                 }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
             }
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.orange)
 
             Text(choice.question.isEmpty ? String(localized: "The agent is waiting for your choice.") : choice.question)
                 .font(.headline)
