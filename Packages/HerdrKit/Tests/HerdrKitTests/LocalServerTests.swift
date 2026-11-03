@@ -272,8 +272,8 @@ final class LocalServerTests: XCTestCase {
 
     func testServerEnvironmentDropsTheAppsProcessIdentity() {
         let base = [
-            "__CFBundleIdentifier": "dev.bybee.herdrm",
-            "XPC_SERVICE_NAME": "application.dev.bybee.herdrm.1.2",
+            "__CFBundleIdentifier": "sb.moe.herdrm",
+            "XPC_SERVICE_NAME": "application.sb.moe.herdrm.1.2",
             "XPC_FLAGS": "0x0",
             "OSLogRateLimit": "1",
             "MallocNanoZone": "0",

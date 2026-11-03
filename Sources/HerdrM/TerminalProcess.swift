@@ -13,10 +13,10 @@ final class TerminalProcess: @unchecked Sendable {
     private var readSource: DispatchSourceRead?
     private var exitSource: DispatchSourceProcess?
     /// Reads, the exit watch, and EOF handling are serialized here.
-    private let ioQueue = DispatchQueue(label: "dev.bybee.herdrm.terminal-process.io")
+    private let ioQueue = DispatchQueue(label: "sb.moe.herdrm.terminal-process.io")
     /// Writes go through a dedicated queue so a blocked child can never stall a
     /// caller (keyboard bytes arrive on Ghostty's IO thread).
-    private let writeQueue = DispatchQueue(label: "dev.bybee.herdrm.terminal-process.write")
+    private let writeQueue = DispatchQueue(label: "sb.moe.herdrm.terminal-process.write")
     private let stateLock = NSLock()
     private var exitReported = false
 

@@ -280,9 +280,9 @@ struct TerminalRowDragHost: View {
 }
 
 final class SidebarRowDragNSView: NSView, NSDraggingSource {
-    static let spacePasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.space-id")
-    static let agentPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.agent-id")
-    static let terminalPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.terminal-id")
+    static let spacePasteboardType = NSPasteboard.PasteboardType("sb.moe.herdrm.space-id")
+    static let agentPasteboardType = NSPasteboard.PasteboardType("sb.moe.herdrm.agent-id")
+    static let terminalPasteboardType = NSPasteboard.PasteboardType("sb.moe.herdrm.terminal-id")
 
     var pasteboardType = SidebarRowDragNSView.spacePasteboardType
     var entryID = ""

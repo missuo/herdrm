@@ -106,6 +106,9 @@ extension FocusedValues {
 
 @main
 struct HerdrMApp: App {
+    /// First, before the delegate (and its AppModel) reads any setting:
+    /// stored properties initialize in declaration order.
+    private let legacyDefaults: Void = LegacyDefaults.migrate()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("app.theme") private var themePreference = "system"
     /// Read here as well as in DetailView and Settings: an @AppStorage on the App

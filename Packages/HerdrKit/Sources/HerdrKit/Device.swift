@@ -68,7 +68,7 @@ public struct Device: Codable, Sendable, Identifiable, Equatable, Hashable {
 /// Persists the device list as JSON under Application Support.
 public final class DeviceStore: @unchecked Sendable {
     private let fileURL: URL
-    private let queue = DispatchQueue(label: "dev.bybee.herdrm.devices")
+    private let queue = DispatchQueue(label: "sb.moe.herdrm.devices")
 
     public init(directory: URL? = nil) {
         let base = directory ?? FileManager.default
