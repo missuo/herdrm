@@ -35,6 +35,9 @@ the Sparkle update description — a release without a section here fails CI.
   ("Type something.", "Tell Claude what to change") open a text field.
   Tapping sends the keys the agent's terminal expects, and the card goes away
   once the agent moves on. Codex approval prompts get the same card.
+- **iOS: start agents and terminals from the phone.** The + button on a
+  space's screen starts a new agent (Claude and Codex first, every other herdr
+  agent under More Agents) or a new terminal in that space, and opens it.
 
 ### Changed
 - **iOS: Server → Space → Agent.** The phone follows the Mac's layout: pick a

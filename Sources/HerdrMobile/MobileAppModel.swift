@@ -473,6 +473,112 @@ final class MobileAppModel {
         }
     }
 
+    // MARK: - New terminal / agent (same RPCs as the Mac app)
+
+    /// Why the last create failed; shown as an alert.
+    var actionError: String?
+    private(set) var isCreating = false
+
+    /// The space new tabs go into: the one on screen, else the server's
+    /// focused or first space (nil only when the server has none).
+    private var targetWorkspaceID: String? {
+        guard let snapshot = selectedSession?.snapshot else { return selectedSpaceID }
+        return selectedSpaceID ?? snapshot.focusedWorkspaceID ?? snapshot.workspaces.first?.workspaceID
+    }
+
+    func newTerminal() {
+        create { session, transport, workspaceID in
+            try await Self.newTab(transport, workspaceID: workspaceID, label: nil)
+        }
+    }
+
+    /// A fresh tab in the space plus `agent.start`. Agent names are global on
+    /// a herdr server, so a taken name retries with a short suffix.
+    func newAgent(kind: String) {
+        let label = newAgentLabel(kind: kind)
+        create { session, transport, workspaceID in
+            let paneID = try await Self.newTab(transport, workspaceID: workspaceID, label: label)
+            do {
+                do {
+                    try await Self.startAgent(transport, name: kind, kind: kind, paneID: paneID)
+                } catch HerdrError.rpc(let code, _) where code == "agent_name_taken" {
+                    let suffix = String(UUID().uuidString.prefix(4)).lowercased()
+                    try await Self.startAgent(transport, name: "\(kind)-\(suffix)", kind: kind, paneID: paneID)
+                }
+            } catch {
+                _ = try? await transport.request(method: "pane.close", params: .object(["pane_id": .string(paneID)]))
+                throw error
+            }
+            return paneID
+        }
+    }
+
+    private func create(
+        _ make: @escaping (MobileDeviceSession, MobileTransport, String?) async throws -> String
+    ) {
+        guard !isCreating, let session = selectedSession, let transport = session.transport else { return }
+        let workspaceID = targetWorkspaceID
+        isCreating = true
+        Task {
+            defer { isCreating = false }
+            do {
+                let paneID = try await make(session, transport, workspaceID)
+                await session.refresh()
+                if selectedSession === session { selectedAgentPaneID = paneID }
+            } catch {
+                actionError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+        }
+    }
+
+    /// `tab.create` in the space; with no space yet, a new space whose first
+    /// pane is used instead (as on the Mac).
+    private static func newTab(_ transport: MobileTransport, workspaceID: String?, label: String?) async throws -> String {
+        var params: [String: JSONValue] = ["focus": .bool(false)]
+        guard let workspaceID else {
+            let result = try await transport.request(method: "workspace.create", params: .object(params))
+            guard let paneID = result["root_pane"]?["pane_id"]?.stringValue
+            else { throw HerdrError.malformedResponse("workspace.create returned no root_pane.pane_id") }
+            return paneID
+        }
+        params["workspace_id"] = .string(workspaceID)
+        if let label { params["label"] = .string(label) }
+        let result = try await transport.request(method: "tab.create", params: .object(params))
+        guard let paneID = result["root_pane"]?["pane_id"]?.stringValue
+        else { throw HerdrError.malformedResponse("tab.create returned no root_pane.pane_id") }
+        return paneID
+    }
+
+    /// `agent.start`, retried for up to two seconds while the new tab's shell
+    /// is still starting (herdr answers `agent_pane_busy` until then).
+    private static func startAgent(_ transport: MobileTransport, name: String, kind: String, paneID: String) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while true {
+            do {
+                _ = try await transport.request(method: "agent.start", params: .object([
+                    "name": .string(name),
+                    "kind": .string(kind),
+                    "pane_id": .string(paneID),
+                    "args": .array([]),
+                ]))
+                return
+            } catch HerdrError.rpc(let code, let message) where code == "agent_pane_busy" {
+                guard ContinuousClock.now < deadline else { throw HerdrError.rpc(code: code, message: message) }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    /// Named after the space, like the Mac app ("cotabby", then "cotabby 2").
+    private func newAgentLabel(kind: String) -> String {
+        guard let snapshot = selectedSession?.snapshot else { return kind }
+        let space = targetWorkspaceID.flatMap { id in snapshot.workspaces.first { $0.workspaceID == id } }
+        let taken = Set(snapshot.agents.map { agent in
+            agent.title(tabLabel: snapshot.tabs?.first { $0.tabID == agent.tabID }?.customLabel)
+        })
+        return NewAgentLabel.make(spaceLabel: space?.label, kind: kind, taken: taken)
+    }
+
     // MARK: - Derived lists (mirror the Mac sidebar)
 
     var spaces: [WorkspaceInfo] {
