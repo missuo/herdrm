@@ -7,6 +7,13 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Fixed
+- Keep unread completion dots and read acknowledgements when the Mac app quits
+  and reopens. Restored dots do not repeat completion notifications; results
+  finished while the app was closed still notify once. Temporary sequence-less
+  reconnect states retain unread results, while replacement terminals discard
+  the old result's dot (#208).
+
 ## [0.7.0] - 2026-11-02
 
 > **Herdrm has a new bundle ID: `sb.moe.herdrm`** (it was `dev.bybee.herdrm`).

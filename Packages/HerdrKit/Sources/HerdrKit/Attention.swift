@@ -25,7 +25,7 @@ public enum SpaceAttention: Equatable, Sendable {
 
 /// Keys a "finished while you weren't looking" flag. herdr has no viewed
 /// state; this lives entirely in the GUI.
-public struct AgentUnreadKey: Hashable, Sendable {
+public struct AgentUnreadKey: Codable, Hashable, Sendable {
     public let deviceID: UUID
     public let paneID: String
 
@@ -37,14 +37,14 @@ public struct AgentUnreadKey: Hashable, Sendable {
 
 /// Tracks completed results from snapshots for one device. Retain this value
 /// across a connection gap so turns completed while disconnected are counted.
-public struct AgentCompletionTracker: Sendable {
-    private struct Observation: Sendable {
+public struct AgentCompletionTracker: Codable, Equatable, Sendable {
+    private struct Observation: Codable, Equatable, Sendable {
         let terminalID: String?
         let completionSeq: UInt64?
         let status: AgentStatus
     }
 
-    private struct AcknowledgedCompletion: Sendable {
+    private struct AcknowledgedCompletion: Codable, Equatable, Sendable {
         let terminalID: String?
         let completionSeq: UInt64
     }
@@ -53,6 +53,17 @@ public struct AgentCompletionTracker: Sendable {
     private var acknowledgedCompletions: [String: AcknowledgedCompletion] = [:]
 
     public init() {}
+
+    /// A replacement terminal cannot inherit the former result's unread badge.
+    /// Inspect before update replaces the observation. Sequence rollback on the
+    /// same terminal can be a recovered old baseline, not a new result.
+    public func replacedPaneIDs(in agents: [AgentInfo]) -> Set<String> {
+        Set(agents.compactMap { agent in
+            guard let previous = observations[agent.paneID] else { return nil }
+            if previous.terminalID != agent.terminalID { return agent.paneID }
+            return nil
+        })
+    }
 
     /// Remember the result the user read independently of snapshot baselines.
     /// A reconnect can briefly omit the pane or its completion sequence.
@@ -151,9 +162,12 @@ public enum AgentUnread: Sendable {
         for agent in agents {
             let key = AgentUnreadKey(deviceID: deviceID, paneID: agent.paneID)
             if agent.status != .done {
-                // Unknown is a temporary loss of classification, not an
-                // acknowledgement. Retain unread until the known state returns.
-                if agent.status != .unknown { next.remove(key) }
+                // Reconnects can temporarily report idle/unknown without a
+                // sequence. Neither means the user read the retained result.
+                // Idle with a sequence is the server's explicit read state.
+                let recovering = agent.status == .unknown
+                    || (agent.status == .idle && agent.completionSeq == nil)
+                if !recovering { next.remove(key) }
                 continue
             }
             let completed = completedPaneIDs?.contains(agent.paneID)
@@ -162,5 +176,31 @@ public enum AgentUnread: Sendable {
             next.insert(key)
         }
         return next
+    }
+}
+
+/// Client attention belongs to a result, not the lifetime of the GUI process.
+/// Save the badge and its completion history together so restoring the badge
+/// does not replay a sound or revive a result that was already read.
+public struct AgentAttentionState: Codable, Equatable, Sendable {
+    public static let defaultsKey = "agents.attention"
+    public var unread: Set<AgentUnreadKey>
+    public var trackers: [UUID: AgentCompletionTracker]
+
+    public init(unread: Set<AgentUnreadKey> = [], trackers: [UUID: AgentCompletionTracker] = [:]) {
+        self.unread = unread
+        self.trackers = trackers
+    }
+
+    public static func load(from defaults: UserDefaults = .standard) -> AgentAttentionState {
+        guard let data = defaults.data(forKey: defaultsKey),
+              let state = try? JSONDecoder().decode(Self.self, from: data)
+        else { return AgentAttentionState() }
+        return state
+    }
+
+    public func save(to defaults: UserDefaults = .standard) {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        defaults.set(data, forKey: Self.defaultsKey)
     }
 }

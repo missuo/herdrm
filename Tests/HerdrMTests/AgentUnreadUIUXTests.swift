@@ -351,29 +351,6 @@ final class AgentUnreadUIUXTests: XCTestCase {
         XCTAssertTrue(AppModel(attentionDefaults: defaults).unreadAgents.isEmpty)
     }
 
-    func testServerCounterResetClearsOldUnreadButNextCompletionNotifies() throws {
-        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false, attentionDefaults: defaults)
-        let model = sidebar.model
-        let entry = try XCTUnwrap(model.visibleAgents.first)
-        let deviceID = entry.device.id
-        model.updateSnapshotAttention(agents: [entry.agent.updatingStatus(.working)], deviceID: deviceID)
-        var done = entry.agent.updatingStatus(.done)
-        done.completionSeq = 40
-        model.updateSnapshotAttention(agents: [done], deviceID: deviceID)
-        XCTAssertTrue(model.isUnread(entry))
-
-        let relaunched = AppModel(attentionDefaults: defaults)
-        done.completionSeq = 2
-        XCTAssertTrue(relaunched.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty)
-        XCTAssertFalse(relaunched.isUnread(entry), "A reset counter establishes a fresh baseline")
-        done.completionSeq = 3
-        XCTAssertEqual(relaunched.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
-        XCTAssertTrue(relaunched.isUnread(entry), "The first result after the reset still notifies")
-    }
-
     private func finish(_ entry: AppModel.AgentEntry, in model: AppModel) {
         let deviceID = entry.device.id
         let agents = model.session(deviceID).agents

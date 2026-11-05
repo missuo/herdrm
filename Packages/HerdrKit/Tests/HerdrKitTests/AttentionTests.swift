@@ -400,6 +400,43 @@ final class AttentionTests: XCTestCase {
                                            unread: [key], deviceID: device, completedPaneIDs: []), [])
     }
 
+    func testSavedAttentionRestoresBadgesAndCompletionHistoryTogether() throws {
+        let suite = "AttentionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(AgentAttentionState.load(from: defaults), AgentAttentionState())
+        let device = UUID()
+        let key = AgentUnreadKey(deviceID: device, paneID: "w1:p1")
+        var tracker = AgentCompletionTracker()
+        _ = tracker.update(agents: [try decodeAgent(paneID: key.paneID, status: "working")])
+        let done = try decodeAgent(paneID: key.paneID, status: "done", completionSeq: 41)
+        XCTAssertEqual(tracker.update(agents: [done]), [key.paneID])
+        let state = AgentAttentionState(unread: [key], trackers: [device: tracker])
+        state.save(to: defaults)
+        var restored = AgentAttentionState.load(from: defaults)
+        XCTAssertEqual(restored, state)
+        XCTAssertEqual(restored.trackers[device]?.update(agents: [done]), [])
+        restored.unread.remove(key)
+        restored.trackers[device]?.acknowledge(paneID: key.paneID)
+        restored.save(to: defaults)
+        let read = AgentAttentionState.load(from: defaults)
+        XCTAssertEqual(read, restored)
+        XCTAssertTrue(read.unread.isEmpty)
+    }
+
+    func testOnlyTerminalReplacementInvalidatesTheOldUnreadResult() throws {
+        let pane = "w1:p1"
+        var tracker = AgentCompletionTracker()
+        _ = tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", completionSeq: 40)])
+        for status in ["idle", "unknown"] {
+            XCTAssertEqual(tracker.replacedPaneIDs(in: [try decodeAgent(paneID: pane, status: status)]), [])
+        }
+        XCTAssertEqual(tracker.replacedPaneIDs(in: [try decodeAgent(paneID: pane, status: "done", completionSeq: 2)]), [])
+        XCTAssertEqual(tracker.replacedPaneIDs(in: [try decodeAgent(paneID: pane, status: "done", completionSeq: 40,
+                                                                terminalID: "replacement")]), [pane])
+        XCTAssertEqual(tracker.replacedPaneIDs(in: [try decodeAgent(paneID: pane, status: "done", completionSeq: 41)]), [])
+    }
+
     /// Runtime checks let this regression fail against the old non-persistable
     /// types rather than failing to compile before Codable is implemented.
     private func roundTrip<T>(_ value: T) throws -> T {
