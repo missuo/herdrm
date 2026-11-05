@@ -18,6 +18,7 @@ final class SidebarHarness {
     private let window: NSWindow
     private let scroll: NSScrollView
     private var signatures: [Header: [Double]] = [:]
+    private var inputTerminals: [PaneRef: LineBreakTerminalView] = [:]
 
     /// - Parameters: number of fake workspaces / agents shown in the sidebar.
     /// - Parameter agentTokens: pane `tokens` map given to every fake agent
@@ -142,6 +143,48 @@ final class SidebarHarness {
     func mountTerminal(_ view: LineBreakTerminalView, focus: Bool = false) {
         root.addSubview(view)
         if focus { window.makeFirstResponder(view) }
+    }
+
+    /// Real terminal mouse handling beside the sidebar, without starting a
+    /// PTY, SSH connection or agent. Keep the sidebar's existing geometry.
+    func mountInputTerminals(for panes: [PaneRef]) {
+        let sidebarSize = root.frame.size
+        let paneWidth: CGFloat = 280
+        let contentSize = NSSize(width: sidebarSize.width + paneWidth * CGFloat(panes.count),
+                                 height: sidebarSize.height)
+        let content = NSView(frame: NSRect(origin: .zero, size: contentSize))
+        root.removeFromSuperview()
+        window.contentView = content
+        window.setContentSize(contentSize)
+        root.autoresizingMask = []
+        root.frame = NSRect(origin: .zero, size: sidebarSize)
+        content.addSubview(root)
+        for (index, pane) in panes.enumerated() {
+            let view = LineBreakTerminalView(frame: NSRect(
+                x: sidebarSize.width + paneWidth * CGFloat(index) + 10, y: 12,
+                width: paneWidth - 20, height: sidebarSize.height - 24))
+            view.mouseReportingEnabled = false
+            // The same activation binding as DetailView.attachChild.
+            view.onActivate = { [weak model] in
+                model?.focusVisiblePane(pane, revealSpace: true)
+            }
+            content.addSubview(view)
+            inputTerminals[pane] = view
+        }
+        settle()
+    }
+
+    func clickInputTerminal(_ pane: PaneRef) throws {
+        let view = try XCTUnwrap(inputTerminals[pane], "no input terminal for \(pane)")
+        let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+        let content = try XCTUnwrap(window.contentView)
+        let target = try XCTUnwrap(content.hitTest(content.superview?.convert(point, from: nil) ?? point))
+        XCTAssertTrue(target === view, "The click must reach the actual terminal view")
+        let (down, up) = try mouseClick(at: point)
+        target.mouseDown(with: down)
+        target.mouseUp(with: up)
+        settle()
+        XCTAssertTrue(window.firstResponder === view, "The input terminal must still receive keyboard focus")
     }
 
     var terminalFirstResponder: NSResponder? { window.firstResponder }
