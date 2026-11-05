@@ -78,8 +78,9 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
 
             XCTAssertEqual(sidebar.model.selectedPane, click.pane,
                            "The sidebar click must still switch the right-hand pane")
-            XCTAssertTrue(try sidebar.spaceRowIsSelected(click.space))
+            XCTAssertFalse(try sidebar.spaceRowIsSelected(click.space))
             XCTAssertNil(sidebar.model.selectedSpace, "Selecting a pane must preserve All Spaces")
+            XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
             let agentRowAfterClick = try sidebar.paneRowFrame("Agent 1")
             let terminalRowAfterClick = try sidebar.paneRowFrame("Terminal test1")
             let layout = "listHeight \(originalListHeight) -> \(sidebar.listHeight), maxOffset \(originalMaxOffset) -> \(sidebar.maxOffset)"
@@ -107,6 +108,7 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
                 XCTAssertEqual(try sidebar.paneRowFrame("Terminal test1").minY, originalTerminalRow.minY, accuracy: 1,
                                "\(context), input click \(inputClick): the terminal row must stay in place")
                 XCTAssertNil(sidebar.model.selectedSpace, "Input focus must preserve All Spaces")
+                XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
             }
         }
 
@@ -123,8 +125,9 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
         sidebar.model.reveal(terminalRef)
         sidebar.settleSidebar()
         XCTAssertTrue(sidebar.visibleSpaceRow(terminalSpace), "Search and notification navigation must still reveal the same pane")
-        XCTAssertTrue(try sidebar.spaceRowIsSelected(terminalSpace))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected(terminalSpace))
         XCTAssertNil(sidebar.model.selectedSpace)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
     }
 
     func testRestoredRemoteTerminalRevealsOnceButRepeatedInputClicksPreserveScrolling() throws {
@@ -140,8 +143,9 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
 
         XCTAssertNotNil(sidebar.model.selectedTerminalEntry)
         XCTAssertTrue(sidebar.visibleSpaceRow("Space 25"))
-        XCTAssertTrue(try sidebar.spaceRowIsSelected("Space 25"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 25"))
         XCTAssertNil(sidebar.model.selectedSpace)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
 
         sidebar.scroll(.top)
         XCTAssertFalse(sidebar.visibleSpaceRow("Space 25"))
@@ -151,8 +155,9 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
             XCTAssertEqual(sidebar.scrollOffset, manuallyChosenOffset, accuracy: 1)
             XCTAssertFalse(sidebar.visibleSpaceRow("Space 25"), "Input focus must respect manual sidebar scrolling")
         }
-        XCTAssertTrue(try sidebar.spaceRowIsSelected("Space 25"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 25"))
         XCTAssertNil(sidebar.model.selectedSpace)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
         XCTAssertEqual(sidebar.model.visibleSpaces.count, 25)
     }
 
@@ -199,8 +204,9 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
                            "\(grouped ? "grouped" : "flat") split click \(index + 1): input focus must not scroll the sidebar")
             XCTAssertEqual(try sidebar.paneRowFrame("Agent 1").minY, originalAgentRow.minY, accuracy: 1)
             XCTAssertEqual(try sidebar.paneRowFrame("Terminal test1").minY, originalTerminalRow.minY, accuracy: 1)
-            XCTAssertTrue(try sidebar.spaceRowIsSelected(space))
+            XCTAssertFalse(try sidebar.spaceRowIsSelected(space))
             XCTAssertNil(sidebar.model.selectedSpace)
+            XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
         }
     }
 
@@ -225,11 +231,12 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
         sidebar.model.detailMode = .terminal
         sidebar.settleSidebar()
         XCTAssertTrue(sidebar.visibleSpaceRow("Space 25"))
-        XCTAssertTrue(try sidebar.spaceRowIsSelected("Space 25"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 25"))
         XCTAssertNil(sidebar.model.selectedSpace)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
     }
 
-    func testSharedWorkspaceIDsOnDifferentDevicesRevealAndHighlightOnlyTheOwningSpace() throws {
+    func testSharedWorkspaceIDsRevealOnlyOwningSpaceWithoutChangingAllSpacesFilter() throws {
         let other = Device(name: "other-test-server", kind: .ssh(target: "other.invalid"))
         let sidebar = try SidebarHarness(spaces: 25, agents: 1, device: remote,
                                          pinnedHeaders: false, configureModel: { model in
@@ -246,13 +253,14 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
         })
         sidebar.model.selectedPane = PaneRef(deviceID: remote.id, paneID: "pane-0")
         sidebar.settleSidebar()
-        XCTAssertTrue(try sidebar.spaceRowIsSelected("Space 1"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 1"))
 
         sidebar.model.reveal(PaneRef(deviceID: other.id, paneID: "other-pane-0"))
         sidebar.settleSidebar()
         XCTAssertTrue(sidebar.visibleSpaceRow("Other Space 1"))
-        XCTAssertTrue(try sidebar.spaceRowIsSelected("Other Space 1"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Other Space 1"))
         XCTAssertNil(sidebar.model.selectedSpace)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"), "The highlight must match the active filter")
         XCTAssertNil(sidebar.model.deviceFilter)
         XCTAssertEqual(sidebar.model.visibleAgents.count, 2)
 
@@ -338,6 +346,68 @@ final class SidebarSpaceRevealUIUXTests: XCTestCase {
         XCTAssertFalse(sidebar.visibleSpaceRow("Space 14"), "Input focus must not repeat the navigation reveal")
         XCTAssertTrue(try sidebar.spaceRowIsSelected("Space 14"))
         XCTAssertEqual(sidebar.model.selectedPane, terminalRef)
+    }
+
+    func testRestoredPaneAndInputFocusKeepHighlightAlignedWithSpaceFilter() throws {
+        let firstAgent = PaneRef(deviceID: remote.id, paneID: "pane-0")
+        let secondAgent = PaneRef(deviceID: remote.id, paneID: "pane-1")
+        let secondSpace = SpaceRef(deviceID: remote.id, workspaceID: "ws-1")
+        let sidebar = try SidebarHarness(spaces: 2, agents: 2, terminals: 1, device: remote,
+                                         pinnedHeaders: false, configureModel: { model in
+            model.sessions[self.remote.id]?.agents = try (0..<2).map { index in
+                try self.decode(AgentInfo.self, [
+                    "agent": "claude", "name": "Agent \(index + 1)", "workspace_id": "ws-\(index)",
+                    "tab_id": "tab-\(index)", "pane_id": "pane-\(index)",
+                ])
+            }
+            model.sessions[self.remote.id]?.panes = [try self.terminal(in: "ws-0")]
+            model.selectedPane = firstAgent
+        })
+        sidebar.mountInputTerminals(for: [firstAgent, secondAgent])
+        sidebar.settleSidebar()
+
+        XCTAssertEqual(sidebar.model.selectedPane, firstAgent, "Launch restores the right-hand pane")
+        XCTAssertNil(sidebar.model.selectedSpace)
+        XCTAssertEqual(sidebar.model.visibleAgents.count, 2)
+        XCTAssertEqual(sidebar.model.visibleTerminals.count, 1)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 1"), "The restored pane's owner is not an active filter")
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 2"))
+
+        try sidebar.clickSpaceTitle("Space 2")
+        XCTAssertEqual(sidebar.model.selectedSpace, secondSpace)
+        XCTAssertEqual(sidebar.model.selectedPane, secondAgent)
+        XCTAssertEqual(sidebar.model.visibleAgents.map(\.ref), [secondAgent])
+        XCTAssertTrue(sidebar.model.visibleTerminals.isEmpty)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("Space 2"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("All Spaces"))
+        let filteredOffset = sidebar.scrollOffset
+        for _ in 1...2 {
+            try sidebar.clickInputTerminal(secondAgent)
+            XCTAssertEqual(sidebar.model.selectedSpace, secondSpace)
+            XCTAssertEqual(sidebar.model.visibleAgents.map(\.ref), [secondAgent])
+            XCTAssertTrue(try sidebar.spaceRowIsSelected("Space 2"))
+            XCTAssertFalse(try sidebar.spaceRowIsSelected("All Spaces"))
+            XCTAssertEqual(sidebar.scrollOffset, filteredOffset, accuracy: 1)
+        }
+
+        try sidebar.clickSpaceTitle("All Spaces")
+        XCTAssertNil(sidebar.model.selectedSpace)
+        XCTAssertEqual(sidebar.model.selectedPane, secondAgent, "Clearing the filter keeps the displayed pane")
+        XCTAssertEqual(sidebar.model.visibleAgents.count, 2)
+        XCTAssertEqual(sidebar.model.visibleTerminals.count, 1)
+        XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"))
+        XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 2"))
+        let unfilteredOffset = sidebar.scrollOffset
+        for _ in 1...2 {
+            try sidebar.clickInputTerminal(secondAgent)
+            XCTAssertNil(sidebar.model.selectedSpace)
+            XCTAssertEqual(sidebar.model.selectedPane, secondAgent)
+            XCTAssertEqual(sidebar.model.visibleAgents.count, 2)
+            XCTAssertTrue(try sidebar.spaceRowIsSelected("All Spaces"))
+            XCTAssertFalse(try sidebar.spaceRowIsSelected("Space 2"))
+            XCTAssertEqual(sidebar.scrollOffset, unfilteredOffset, accuracy: 1)
+        }
     }
 
     private func terminal(in workspaceID: String, tabID: String = "term-tab-0") throws -> PaneInfo {
