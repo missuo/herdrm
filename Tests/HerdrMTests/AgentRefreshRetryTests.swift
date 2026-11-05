@@ -85,7 +85,10 @@ final class AgentRefreshRetryTests: XCTestCase {
         }
         let server = try SnapshotRetrySocket(failures: failures)
         let device = Device(name: "Snapshot retry fixture", kind: .local, socketPath: server.path)
-        let model = AppModel()
+        let suite = "AgentRefreshRetryTests.attention.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let model = AppModel(attentionDefaults: defaults)
         model.devices = [device]
         model.deviceFilter = nil
         let working = try JSONDecoder().decode(AgentInfo.self, from: JSONSerialization.data(withJSONObject: [

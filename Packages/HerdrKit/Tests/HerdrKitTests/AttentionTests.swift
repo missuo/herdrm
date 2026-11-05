@@ -355,6 +355,60 @@ final class AttentionTests: XCTestCase {
         XCTAssertNil(legacy.completionSeq)
     }
 
+    func testTrackerAndUnreadSurviveEncodingWithoutRepeatingCompletion() throws {
+        let device = UUID()
+        let first = try decodeAgent(paneID: "read", status: "working")
+        let second = try decodeAgent(paneID: "unread", status: "working")
+        var tracker = AgentCompletionTracker()
+        XCTAssertEqual(tracker.update(agents: [first, second]), [])
+        let done = try ["read", "unread"].map {
+            try decodeAgent(paneID: $0, status: "done", completionSeq: 41)
+        }
+        XCTAssertEqual(tracker.update(agents: done), ["read", "unread"])
+        tracker.acknowledge(paneID: "read")
+        let unread: Set<AgentUnreadKey> = [AgentUnreadKey(deviceID: device, paneID: "unread")]
+
+        // The process disappears here. Only encoded state reaches its successor.
+        var restored = try roundTrip(tracker)
+        let restoredUnread = try roundTrip(unread)
+        XCTAssertEqual(restoredUnread, unread)
+        XCTAssertEqual(restored.update(agents: done), [], "Restoring a badge is not a new notification")
+        let next = try [done[0], decodeAgent(paneID: "unread", status: "done", completionSeq: 42)]
+        XCTAssertEqual(restored.update(agents: next), ["unread"], "A turn completed while closed still notifies")
+        XCTAssertEqual(restored.update(agents: next), [])
+
+        restored.acknowledge(paneID: "unread")
+        var afterReading = try roundTrip(restored)
+        XCTAssertEqual(afterReading.update(agents: []), [])
+        XCTAssertEqual(afterReading.update(agents: try ["read", "unread"].map {
+            try decodeAgent(paneID: $0, status: "unknown")
+        }), [])
+        XCTAssertEqual(afterReading.update(agents: next), [], "Read results stay read across relaunch and recovery")
+    }
+
+    func testIdleWithoutSequenceDoesNotDiscardAnUnreadCompletion() throws {
+        let device = UUID()
+        let key = AgentUnreadKey(deviceID: device, paneID: "w1:p1")
+        for status in ["idle", "unknown"] {
+            let recovering = try decodeAgent(paneID: key.paneID, status: status)
+            XCTAssertEqual(AgentUnread.applying(previous: [key.paneID: .done], agents: [recovering],
+                                               unread: [key], deviceID: device, completedPaneIDs: []), [key],
+                           "A sequence-less reconnect snapshot is not evidence the user read the result")
+        }
+        let readByServer = try decodeAgent(paneID: key.paneID, status: "idle", completionSeq: 41)
+        XCTAssertEqual(AgentUnread.applying(previous: [key.paneID: .done], agents: [readByServer],
+                                           unread: [key], deviceID: device, completedPaneIDs: []), [])
+    }
+
+    /// Runtime checks let this regression fail against the old non-persistable
+    /// types rather than failing to compile before Codable is implemented.
+    private func roundTrip<T>(_ value: T) throws -> T {
+        let encodable = try XCTUnwrap(value as? any Encodable, "Attention must survive process exit")
+        let type = try XCTUnwrap(T.self as? any Decodable.Type)
+        let data = try JSONEncoder().encode(encodable)
+        return try XCTUnwrap(JSONDecoder().decode(type, from: data) as? T)
+    }
+
     private func decodeDone(paneID: String) throws -> AgentInfo {
         try decodeAgent(paneID: paneID, status: "done")
     }

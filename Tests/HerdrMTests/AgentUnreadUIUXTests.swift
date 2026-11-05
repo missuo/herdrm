@@ -270,6 +270,110 @@ final class AgentUnreadUIUXTests: XCTestCase {
         XCTAssertFalse(sidebar.model.isUnread(entry))
     }
 
+    func testRelaunchRestoresOnlyUnreadResultsAndClicksPersistAcknowledgement() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var first: SidebarHarness? = try SidebarHarness(spaces: 1, agents: 2, pinnedHeaders: false,
+                                                       attentionDefaults: defaults)
+        let firstModel = try XCTUnwrap(first?.model)
+        let entries = firstModel.visibleAgents
+        let deviceID = try XCTUnwrap(entries.first).device.id
+        let working = entries.map { $0.agent.updatingStatus(.working) }
+        firstModel.sessions[deviceID]?.agents = working
+        firstModel.updateSnapshotAttention(agents: working, deviceID: deviceID)
+        let done = working.map { original in
+            var agent = original.updatingStatus(.done)
+            agent.completionSeq = 41
+            return agent
+        }
+        firstModel.sessions[deviceID]?.agents = done
+        XCTAssertEqual(firstModel.updateSnapshotAttention(agents: done, deviceID: deviceID), Set(done.map(\.paneID)))
+        try first?.clickAgentTitleWithoutSettling("Agent 1")
+        XCTAssertFalse(firstModel.isUnread(entries[0]))
+        XCTAssertTrue(firstModel.isUnread(entries[1]))
+        first = nil
+
+        // A new real AppModel loads the same persisted state through the harness.
+        let reopened = try SidebarHarness(spaces: 1, agents: 2, pinnedHeaders: false, attentionDefaults: defaults)
+        let model = reopened.model
+        model.sessions[deviceID]?.agents = done
+        XCTAssertFalse(model.isUnread(entries[0]), "Reading A before quitting remains acknowledged")
+        XCTAssertTrue(model.isUnread(entries[1]), "Unopened B must still show its blue dot")
+        XCTAssertTrue(model.updateSnapshotAttention(agents: done, deviceID: deviceID).isEmpty,
+                      "Restoring B's dot must not replay its completion notification")
+        let recovering = done.map { original in
+            var agent = original.updatingStatus(.idle)
+            agent.completionSeq = nil
+            return agent
+        }
+        model.updateSnapshotAttention(agents: recovering, deviceID: deviceID)
+        XCTAssertTrue(model.isUnread(entries[1]), "A reconnect classification gap does not read B")
+        XCTAssertTrue(model.updateSnapshotAttention(agents: done, deviceID: deviceID).isEmpty)
+        reopened.settleSidebar()
+        try reopened.clickAgentTitleWithoutSettling("Agent 2")
+        XCTAssertFalse(model.isUnread(entries[1]))
+
+        let afterReading = AppModel(attentionDefaults: defaults)
+        XCTAssertTrue(afterReading.unreadAgents.isEmpty, "Reading B also survives the next launch")
+        XCTAssertTrue(afterReading.updateSnapshotAttention(agents: done, deviceID: deviceID).isEmpty)
+        var offlineResult = done
+        offlineResult[1].completionSeq = 42
+        XCTAssertEqual(afterReading.updateSnapshotAttention(agents: offlineResult, deviceID: deviceID), [done[1].paneID])
+        XCTAssertTrue(afterReading.isUnread(entries[1]), "A genuinely newer result completed while closed is unread")
+        XCTAssertTrue(afterReading.updateSnapshotAttention(agents: offlineResult, deviceID: deviceID).isEmpty)
+    }
+
+    func testRestoredUnreadDoesNotTransferToAReplacementTerminal() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false, attentionDefaults: defaults)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let deviceID = entry.device.id
+        let working = entry.agent.updatingStatus(.working)
+        model.updateSnapshotAttention(agents: [working], deviceID: deviceID)
+        var done = working.updatingStatus(.done)
+        done.completionSeq = 41
+        model.updateSnapshotAttention(agents: [done], deviceID: deviceID)
+        XCTAssertTrue(model.isUnread(entry))
+
+        let relaunched = AppModel(attentionDefaults: defaults)
+        XCTAssertTrue(relaunched.isUnread(entry))
+        let replacement = try JSONDecoder().decode(AgentInfo.self, from: JSONSerialization.data(withJSONObject: [
+            "pane_id": done.paneID, "workspace_id": done.workspaceID, "tab_id": done.tabID,
+            "terminal_id": "replacement", "agent": "codex",
+            "agent_status": "done", "completion_seq": 41
+        ]))
+        XCTAssertTrue(relaunched.updateSnapshotAttention(agents: [replacement], deviceID: deviceID).isEmpty)
+        XCTAssertFalse(relaunched.isUnread(entry), "A replacement terminal cannot inherit the former result's dot")
+        XCTAssertTrue(AppModel(attentionDefaults: defaults).unreadAgents.isEmpty)
+    }
+
+    func testServerCounterResetClearsOldUnreadButNextCompletionNotifies() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false, attentionDefaults: defaults)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let deviceID = entry.device.id
+        model.updateSnapshotAttention(agents: [entry.agent.updatingStatus(.working)], deviceID: deviceID)
+        var done = entry.agent.updatingStatus(.done)
+        done.completionSeq = 40
+        model.updateSnapshotAttention(agents: [done], deviceID: deviceID)
+        XCTAssertTrue(model.isUnread(entry))
+
+        let relaunched = AppModel(attentionDefaults: defaults)
+        done.completionSeq = 2
+        XCTAssertTrue(relaunched.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty)
+        XCTAssertFalse(relaunched.isUnread(entry), "A reset counter establishes a fresh baseline")
+        done.completionSeq = 3
+        XCTAssertEqual(relaunched.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertTrue(relaunched.isUnread(entry), "The first result after the reset still notifies")
+    }
+
     private func finish(_ entry: AppModel.AgentEntry, in model: AppModel) {
         let deviceID = entry.device.id
         let agents = model.session(deviceID).agents
