@@ -7,6 +7,12 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Fixed
+
+- Keep the sidebar in place when clicking an Agent or terminal's input, including
+  repeated clicks and switching between visible split panes. Search, notification
+  navigation and restored selections still reveal their destination space.
+
 ## [0.7.0] - 2026-11-02
 
 > **Herdrm has a new bundle ID: `sb.moe.herdrm`** (it was `dev.bybee.herdrm`).

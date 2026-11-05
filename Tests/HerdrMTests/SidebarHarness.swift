@@ -166,7 +166,7 @@ final class SidebarHarness {
             view.mouseReportingEnabled = false
             // The same activation binding as DetailView.attachChild.
             view.onActivate = { [weak model] in
-                model?.focusVisiblePane(pane, revealSpace: true)
+                model?.focusVisiblePane(pane)
             }
             content.addSubview(view)
             inputTerminals[pane] = view

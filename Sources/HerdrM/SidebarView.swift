@@ -187,8 +187,8 @@ struct SidebarView: View {
                 }
                 .clipped()
                 .onChange(of: spaceRevealTarget, initial: true) { previous, target in
-                    // Sidebar-row clicks update selection/highlight in place.
-                    // A later explicit activation can still reveal that pane.
+                    // Sidebar clicks and terminal input focus update highlights
+                    // in place. Explicit navigation can still reveal the pane.
                     guard previous.selectionGeneration == target.selectionGeneration
                             || previous.generation != target.generation,
                           let space = target.space else { return }
