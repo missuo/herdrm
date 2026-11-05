@@ -187,8 +187,8 @@ struct SidebarView: View {
                 }
                 .clipped()
                 .onChange(of: spaceRevealTarget, initial: true) { previous, target in
-                    // Sidebar-row clicks update selection/highlight in place.
-                    // A later explicit activation can still reveal that pane.
+                    // Sidebar clicks and terminal input focus update highlights
+                    // in place. Explicit navigation can still reveal the pane.
                     guard previous.selectionGeneration == target.selectionGeneration
                             || previous.generation != target.generation,
                           let space = target.space else { return }
@@ -368,8 +368,7 @@ struct SidebarView: View {
     }
 
     private var allSpacesRow: some View {
-        let selected = model.selectedSpace == nil && model.displayedPaneSpace == nil
-            && model.selectedShellID == nil
+        let selected = model.selectedSpace == nil
         return Button {
             model.selectSpace(nil, revealInSidebar: false)
         } label: {
@@ -391,6 +390,7 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private struct TerminalRowView: View {
@@ -1179,8 +1179,7 @@ private struct SpaceRowView: View {
     @State private var hovered = false
 
     var body: some View {
-        let selected = model.selectedShellID == nil
-            && (model.displayedPaneSpace ?? model.selectedSpace) == entry.ref
+        let selected = model.selectedSpace == entry.ref
         let expanded = model.isSpaceExpanded(entry)
         HStack(spacing: 0) {
             if grouped {
