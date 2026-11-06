@@ -1,10 +1,33 @@
 import AppKit
 import HerdrKit
+import SwiftUI
 import XCTest
 @testable import herdrm
 
 @MainActor
 final class AgentUnreadUIUXTests: XCTestCase {
+    func testRecoveryStatusesRenderTheExistingUnreadDot() throws {
+        func bluePixels(_ status: AgentStatus, unread: Bool) throws -> Int {
+            let renderer = ImageRenderer(content: AgentStatusGlyph(status: status, unreadDone: unread)
+                .frame(width: 24, height: 24).background(Color.black))
+            let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(renderer.cgImage))
+            var count = 0
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+                    if color.blueComponent > color.redComponent + 0.2 { count += 1 }
+                }
+            }
+            return count
+        }
+        let done = try bluePixels(.done, unread: true)
+        XCTAssertGreaterThan(done, 0, "A real completed result supplies the visible-dot baseline")
+        for status in [AgentStatus.idle, .unknown] {
+            XCTAssertEqual(try bluePixels(status, unread: true), done)
+            XCTAssertEqual(try bluePixels(status, unread: false), 0)
+        }
+    }
+
     func testOpenedCompletionStaysReadAfterReconnectRebuildsItsObservation() throws {
         let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false)
         let model = sidebar.model
@@ -164,9 +187,15 @@ final class AgentUnreadUIUXTests: XCTestCase {
                           "A relaunch during recovery must retain the result")
             XCTAssertEqual(model.attention(in: space), .unreadDone)
             sidebar.settleSidebar()
-            XCTAssertTrue(sidebar.accessibilityDump.contains("Agent 1, Unread"),
+            XCTAssertTrue(sidebar.actionRowNames().contains("Agent 1, Unread"),
                           "The recovering Agent still exposes its unread badge")
         }
+        let screenshot = FileManager.default.temporaryDirectory.appendingPathComponent("unread-recovery-demo.png")
+        try sidebar.writeSnapshot(to: screenshot)
+        let attachment = XCTAttachment(contentsOfFile: screenshot)
+        attachment.name = "Unread result during recovery (fake Agent 1 and Space 1)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
 
         var recovering = done.updatingStatus(.idle)
         recovering.completionSeq = nil
@@ -180,6 +209,8 @@ final class AgentUnreadUIUXTests: XCTestCase {
         try sidebar.clickAgentTitleWithoutSettling("Agent 1")
         XCTAssertFalse(model.isUnread(entry))
         XCTAssertFalse(AppModel(attentionDefaults: defaults).isUnread(entry))
+        sidebar.settleSidebar()
+        XCTAssertFalse(sidebar.actionRowNames().contains("Agent 1, Unread"))
 
         done.completionSeq = 42
         model.sessions[deviceID]?.agents = [done]

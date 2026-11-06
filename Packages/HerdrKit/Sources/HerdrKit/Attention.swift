@@ -14,8 +14,8 @@ public enum SpaceAttention: Equatable, Sendable {
         var sawWorking = false
         for agent in agents {
             if agent.status == .blocked { return .blocked }
-            if agent.status == .done, agent.unreadDone { sawUnreadDone = true }
-            else if agent.status == .working { sawWorking = true }
+            if agent.status == .working { sawWorking = true }
+            else if agent.unreadDone { sawUnreadDone = true }
         }
         if sawUnreadDone { return .unreadDone }
         if sawWorking { return .working }

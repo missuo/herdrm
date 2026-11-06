@@ -115,8 +115,8 @@ private struct PaneSwitcherPanel: View {
             switch agent.agent.status {
             case .working: parts.append(String(localized: "Working"))
             case .blocked: parts.append(String(localized: "Needs input"))
-            case .done where model.isUnread(agent): parts.append(String(localized: "Unread"))
-            case .done, .idle, .unknown: break
+            case .done, .idle, .unknown:
+                if model.isUnread(agent) { parts.append(String(localized: "Unread")) }
             }
             parts.append(model.spaceName(deviceID: agent.device.id, workspaceID: agent.agent.workspaceID))
         case .terminal(let terminal):

@@ -2518,6 +2518,9 @@ final class AppModel: ObservableObject {
         guard state.agents[index].status != status else { return true }
         let previous = previousStatuses[deviceID] ?? [:]
         state.agents[index] = state.agents[index].updatingStatus(status)
+        // Status events carry no completion sequence. In particular, an idle
+        // recovery event must not reuse the prior done sequence as a read ack.
+        state.agents[index].completionSeq = nil
         // Older servers have no completion sequence. Retain active-state
         // evidence even when the event arrives between two snapshots; done
         // still waits for the snapshot and cannot consume a completion here.
