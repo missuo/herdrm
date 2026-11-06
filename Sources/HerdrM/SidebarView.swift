@@ -751,9 +751,8 @@ struct SidebarView: View {
         switch entry.agent.status {
         case .working: parts.append(String(localized: "Working"))
         case .blocked: parts.append(String(localized: "Needs input"))
-        case .done where unread: parts.append(String(localized: "Unread"))
-        case .done: break
-        case .idle, .unknown: break
+        case .done, .idle, .unknown:
+            if unread { parts.append(String(localized: "Unread")) }
         }
         if let account = entry.agent.statsLines.first(where: { $0.kind == .account }) {
             parts.append(account.isPinnedAccount

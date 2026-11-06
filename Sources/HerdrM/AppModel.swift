@@ -434,15 +434,22 @@ final class AppModel: ObservableObject {
     private var refreshRequested: Set<UUID> = []
     private var statusGenerations: [UUID: UInt64] = [:]
     private var previousStatuses: [UUID: [String: AgentStatus]] = [:]
-    // Transport reconnects keep this history: restoring an old done state is
-    // not a new completion. New completion sequences still arrive while offline.
+    // Reconnects and relaunches keep this history: restoring an old done state
+    // is not a new completion. New sequences still arrive while we are offline.
     private var completionTrackers: [UUID: AgentCompletionTracker] = [:]
+    private let attentionDefaults: UserDefaults
+    private var savedAttention: AgentAttentionState
     /// Claude panes already checked for the usage-credits dialog during their
     /// current blocked spell, per device. A pane leaves when it stops being
     /// blocked, so a later spell is checked again.
     private var modelSwitchChecked: [UUID: Set<String>] = [:]
 
-    init(recentPanesDefaults: UserDefaults = .standard) {
+    init(recentPanesDefaults: UserDefaults = .standard, attentionDefaults: UserDefaults = .standard) {
+        self.attentionDefaults = attentionDefaults
+        let attention = AgentAttentionState.load(from: attentionDefaults)
+        savedAttention = attention
+        unreadAgents = attention.unread
+        completionTrackers = attention.trackers
         self.recentPanesDefaults = recentPanesDefaults
         recentPanes = RecentPanes.load(from: recentPanesDefaults)
         let loaded = DeviceStore().load()
@@ -716,6 +723,20 @@ final class AppModel: ObservableObject {
         // still hold the previous one when a visible result is auto-read.
         completionTrackers[pane.deviceID]?.acknowledge(paneID: pane.paneID)
         unreadAgents.remove(AgentUnreadKey(deviceID: pane.deviceID, paneID: pane.paneID))
+        saveAttention()
+    }
+
+    private func saveAttention() {
+        let attention = AgentAttentionState(unread: unreadAgents, trackers: completionTrackers)
+        guard attention != savedAttention else { return }
+        attention.save(to: attentionDefaults)
+        savedAttention = attention
+    }
+
+    private func forgetAttention(on deviceID: UUID) {
+        completionTrackers[deviceID] = nil
+        unreadAgents = unreadAgents.filter { $0.deviceID != deviceID }
+        saveAttention()
     }
 
     /// A result already visible in the active terminal needs no unread badge.
@@ -734,12 +755,17 @@ final class AppModel: ObservableObject {
                                            unread: unreadAgents, deviceID: deviceID,
                                            completedPaneIDs: completedPaneIDs)
         markVisibleAgentRead()
+        saveAttention()
     }
 
     /// Snapshots carry completion_seq; status events do not. Both the badge and
     /// the notification consume this one result, including after a reconnect.
     @discardableResult
     func updateSnapshotAttention(agents: [AgentInfo], deviceID: UUID) -> Set<String> {
+        let replaced = completionTrackers[deviceID]?.replacedPaneIDs(in: agents) ?? []
+        if !replaced.isEmpty {
+            unreadAgents = unreadAgents.filter { $0.deviceID != deviceID || !replaced.contains($0.paneID) }
+        }
         let completed = completionTrackers[deviceID, default: AgentCompletionTracker()]
             .update(agents: agents)
         updateUnreadAgents(previous: previousStatuses[deviceID] ?? [:], agents: agents,
@@ -1660,7 +1686,7 @@ final class AppModel: ObservableObject {
         // Remove named-session devices whose session is gone.
         for device in devices where device.isNamedSession && !discoveredIDs.contains(device.id) {
             stopSession(device.id)
-            completionTrackers[device.id] = nil
+            forgetAttention(on: device.id)
             attachSessions.removeAll { $0.device.id == device.id }
             forgetRecentPanes(on: device.id)
             devices.removeAll { $0.id == device.id }
@@ -2254,7 +2280,7 @@ final class AppModel: ObservableObject {
         let targetChanged = devices[index].sshTarget != sshTarget
         devices[index].name = name
         if targetChanged {
-            completionTrackers[id] = nil
+            forgetAttention(on: id)
             removeSSHPassword(for: id)
             devices[index].kind = .ssh(target: sshTarget)
             devices[index].osID = nil
@@ -2297,7 +2323,7 @@ final class AppModel: ObservableObject {
         TailcatCredentialStore.removeToken(for: device.id)
         if sshAuthenticationRequest?.deviceID == device.id { sshAuthenticationRequest = nil }
         stopSession(device.id)
-        completionTrackers[device.id] = nil
+        forgetAttention(on: device.id)
         attachSessions.removeAll { $0.device.id == device.id }
         forgetRecentPanes(on: device.id)
         devices.removeAll { $0.id == device.id }
@@ -2492,6 +2518,9 @@ final class AppModel: ObservableObject {
         guard state.agents[index].status != status else { return true }
         let previous = previousStatuses[deviceID] ?? [:]
         state.agents[index] = state.agents[index].updatingStatus(status)
+        // Status events carry no completion sequence. In particular, an idle
+        // recovery event must not reuse the prior done sequence as a read ack.
+        state.agents[index].completionSeq = nil
         // Older servers have no completion sequence. Retain active-state
         // evidence even when the event arrives between two snapshots; done
         // still waits for the snapshot and cannot consume a completion here.

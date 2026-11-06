@@ -1,10 +1,33 @@
 import AppKit
 import HerdrKit
+import SwiftUI
 import XCTest
 @testable import herdrm
 
 @MainActor
 final class AgentUnreadUIUXTests: XCTestCase {
+    func testRecoveryStatusesRenderTheExistingUnreadDot() throws {
+        func bluePixels(_ status: AgentStatus, unread: Bool) throws -> Int {
+            let renderer = ImageRenderer(content: AgentStatusGlyph(status: status, unreadDone: unread)
+                .frame(width: 24, height: 24).background(Color.black))
+            let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(renderer.cgImage))
+            var count = 0
+            for y in 0..<bitmap.pixelsHigh {
+                for x in 0..<bitmap.pixelsWide {
+                    let color = try XCTUnwrap(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+                    if color.blueComponent > color.redComponent + 0.2 { count += 1 }
+                }
+            }
+            return count
+        }
+        let done = try bluePixels(.done, unread: true)
+        XCTAssertGreaterThan(done, 0, "A real completed result supplies the visible-dot baseline")
+        for status in [AgentStatus.idle, .unknown] {
+            XCTAssertEqual(try bluePixels(status, unread: true), done)
+            XCTAssertEqual(try bluePixels(status, unread: false), 0)
+        }
+    }
+
     func testOpenedCompletionStaysReadAfterReconnectRebuildsItsObservation() throws {
         let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false)
         let model = sidebar.model
@@ -131,6 +154,74 @@ final class AgentUnreadUIUXTests: XCTestCase {
         XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
         XCTAssertTrue(model.isUnread(entry))
         XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty)
+    }
+
+    func testRecoveryStatusEventsKeepUnreadVisibleAndPersistedUntilOpened() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false,
+                                         attentionDefaults: defaults)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let space = try XCTUnwrap(model.visibleSpaces.first)
+        let deviceID = entry.device.id
+        let working = entry.agent.updatingStatus(.working)
+        model.sessions[deviceID]?.agents = [working]
+        model.updateSnapshotAttention(agents: [working], deviceID: deviceID)
+        var done = working.updatingStatus(.done)
+        done.completionSeq = 41
+        model.sessions[deviceID]?.agents = [done]
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+
+        // Manifest reloads/reconnects send status events before the authoritative
+        // snapshot. An idle event has no sequence and cannot acknowledge 41.
+        for status in ["idle", "unknown"] {
+            let event = HerdrEvent(kind: HerdrEvent.agentStatusChangedKind, payload: .object([
+                "data": .object(["pane_id": .string(done.paneID), "agent_status": .string(status)])
+            ]))
+            XCTAssertTrue(model.applyAgentStatusEvent(event, deviceID: deviceID))
+            XCTAssertNil(model.session(deviceID).agents.first?.completionSeq)
+            XCTAssertTrue(model.isUnread(entry), "A sequence-less status event did not read the result")
+            XCTAssertTrue(AppModel(attentionDefaults: defaults).isUnread(entry),
+                          "A relaunch during recovery must retain the result")
+            XCTAssertEqual(model.attention(in: space), .unreadDone)
+            sidebar.settleSidebar()
+            XCTAssertTrue(sidebar.actionRowNames().contains("Agent 1, Unread"),
+                          "The recovering Agent still exposes its unread badge")
+        }
+        let screenshot = FileManager.default.temporaryDirectory.appendingPathComponent("unread-recovery-demo.png")
+        try sidebar.writeSnapshot(to: screenshot)
+        let attachment = XCTAttachment(contentsOfFile: screenshot)
+        attachment.name = "Unread result during recovery (fake Agent 1 and Space 1)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        var recovering = done.updatingStatus(.idle)
+        recovering.completionSeq = nil
+        model.sessions[deviceID]?.agents = [recovering]
+        XCTAssertTrue(model.updateSnapshotAttention(agents: [recovering], deviceID: deviceID).isEmpty)
+        XCTAssertTrue(model.isUnread(entry))
+        model.sessions[deviceID]?.agents = [done]
+        XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty,
+                      "Restoring the same result must not produce another notification")
+        sidebar.settleSidebar()
+        try sidebar.clickAgentTitleWithoutSettling("Agent 1")
+        XCTAssertFalse(model.isUnread(entry))
+        XCTAssertFalse(AppModel(attentionDefaults: defaults).isUnread(entry))
+        sidebar.settleSidebar()
+        XCTAssertFalse(sidebar.actionRowNames().contains("Agent 1, Unread"))
+
+        done.completionSeq = 42
+        model.sessions[deviceID]?.agents = [done]
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertTrue(model.isUnread(entry))
+        let serverRead = done.updatingStatus(.idle)
+        model.sessions[deviceID]?.agents = [serverRead]
+        model.updateSnapshotAttention(agents: [serverRead], deviceID: deviceID)
+        XCTAssertFalse(model.isUnread(entry), "An actual idle snapshot with a sequence still acknowledges it")
+        XCTAssertEqual(model.attention(in: space), .none)
+        XCTAssertFalse(AppModel(attentionDefaults: defaults).isUnread(entry))
     }
 
     func testLegacyActivityEventsStillProduceOneSnapshotCompletion() throws {
@@ -268,6 +359,87 @@ final class AgentUnreadUIUXTests: XCTestCase {
         XCTAssertTrue(sidebar.model.isUnread(entry), "A file view covers the result")
         sidebar.model.detailMode = .terminal
         XCTAssertFalse(sidebar.model.isUnread(entry))
+    }
+
+    func testRelaunchRestoresOnlyUnreadResultsAndClicksPersistAcknowledgement() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var first: SidebarHarness? = try SidebarHarness(spaces: 1, agents: 2, pinnedHeaders: false,
+                                                       attentionDefaults: defaults)
+        let firstModel = try XCTUnwrap(first?.model)
+        let entries = firstModel.visibleAgents
+        let deviceID = try XCTUnwrap(entries.first).device.id
+        let working = entries.map { $0.agent.updatingStatus(.working) }
+        firstModel.sessions[deviceID]?.agents = working
+        firstModel.updateSnapshotAttention(agents: working, deviceID: deviceID)
+        let done = working.map { original in
+            var agent = original.updatingStatus(.done)
+            agent.completionSeq = 41
+            return agent
+        }
+        firstModel.sessions[deviceID]?.agents = done
+        XCTAssertEqual(firstModel.updateSnapshotAttention(agents: done, deviceID: deviceID), Set(done.map(\.paneID)))
+        try first?.clickAgentTitleWithoutSettling("Agent 1")
+        XCTAssertFalse(firstModel.isUnread(entries[0]))
+        XCTAssertTrue(firstModel.isUnread(entries[1]))
+        first = nil
+
+        // A new real AppModel loads the same persisted state through the harness.
+        let reopened = try SidebarHarness(spaces: 1, agents: 2, pinnedHeaders: false, attentionDefaults: defaults)
+        let model = reopened.model
+        model.sessions[deviceID]?.agents = done
+        XCTAssertFalse(model.isUnread(entries[0]), "Reading A before quitting remains acknowledged")
+        XCTAssertTrue(model.isUnread(entries[1]), "Unopened B must still show its blue dot")
+        XCTAssertTrue(model.updateSnapshotAttention(agents: done, deviceID: deviceID).isEmpty,
+                      "Restoring B's dot must not replay its completion notification")
+        let recovering = done.map { original in
+            var agent = original.updatingStatus(.idle)
+            agent.completionSeq = nil
+            return agent
+        }
+        model.updateSnapshotAttention(agents: recovering, deviceID: deviceID)
+        XCTAssertTrue(model.isUnread(entries[1]), "A reconnect classification gap does not read B")
+        XCTAssertTrue(model.updateSnapshotAttention(agents: done, deviceID: deviceID).isEmpty)
+        reopened.settleSidebar()
+        try reopened.clickAgentTitleWithoutSettling("Agent 2")
+        XCTAssertFalse(model.isUnread(entries[1]))
+
+        let afterReading = AppModel(attentionDefaults: defaults)
+        XCTAssertTrue(afterReading.unreadAgents.isEmpty, "Reading B also survives the next launch")
+        XCTAssertTrue(afterReading.updateSnapshotAttention(agents: done, deviceID: deviceID).isEmpty)
+        var offlineResult = done
+        offlineResult[1].completionSeq = 42
+        XCTAssertEqual(afterReading.updateSnapshotAttention(agents: offlineResult, deviceID: deviceID), [done[1].paneID])
+        XCTAssertTrue(afterReading.isUnread(entries[1]), "A genuinely newer result completed while closed is unread")
+        XCTAssertTrue(afterReading.updateSnapshotAttention(agents: offlineResult, deviceID: deviceID).isEmpty)
+    }
+
+    func testRestoredUnreadDoesNotTransferToAReplacementTerminal() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false, attentionDefaults: defaults)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let deviceID = entry.device.id
+        let working = entry.agent.updatingStatus(.working)
+        model.updateSnapshotAttention(agents: [working], deviceID: deviceID)
+        var done = working.updatingStatus(.done)
+        done.completionSeq = 41
+        model.updateSnapshotAttention(agents: [done], deviceID: deviceID)
+        XCTAssertTrue(model.isUnread(entry))
+
+        let relaunched = AppModel(attentionDefaults: defaults)
+        XCTAssertTrue(relaunched.isUnread(entry))
+        let replacement = try JSONDecoder().decode(AgentInfo.self, from: JSONSerialization.data(withJSONObject: [
+            "pane_id": done.paneID, "workspace_id": done.workspaceID, "tab_id": done.tabID,
+            "terminal_id": "replacement", "agent": "codex",
+            "agent_status": "done", "completion_seq": 41
+        ]))
+        XCTAssertTrue(relaunched.updateSnapshotAttention(agents: [replacement], deviceID: deviceID).isEmpty)
+        XCTAssertFalse(relaunched.isUnread(entry), "A replacement terminal cannot inherit the former result's dot")
+        XCTAssertTrue(AppModel(attentionDefaults: defaults).unreadAgents.isEmpty)
     }
 
     private func finish(_ entry: AppModel.AgentEntry, in model: AppModel) {
