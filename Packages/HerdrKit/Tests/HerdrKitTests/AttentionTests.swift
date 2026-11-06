@@ -41,6 +41,23 @@ final class AttentionTests: XCTestCase {
         )
     }
 
+    func testRecoveringUnreadResultsRemainVisibleWithoutOverridingActiveState() {
+        for status in [AgentStatus.idle, .unknown] {
+            XCTAssertEqual(SpaceAttention.rollup([(status: status, unreadDone: true)]), .unreadDone)
+            XCTAssertEqual(SpaceAttention.rollup([(status: status, unreadDone: false)]), .none)
+            XCTAssertEqual(SpaceAttention.rollup([
+                (status: status, unreadDone: true),
+                (status: .working, unreadDone: false),
+            ]), .unreadDone, "An unread result keeps the same space priority during recovery")
+            XCTAssertEqual(SpaceAttention.rollup([
+                (status: status, unreadDone: true),
+                (status: .blocked, unreadDone: false),
+            ]), .blocked)
+        }
+        XCTAssertEqual(SpaceAttention.rollup([(status: .working, unreadDone: true)]), .working)
+        XCTAssertEqual(SpaceAttention.rollup([(status: .blocked, unreadDone: true)]), .blocked)
+    }
+
     func testInitialSnapshotDoesNotMarkUnread() throws {
         let agent = try decodeDone(paneID: "w1:p1")
         let device = UUID()

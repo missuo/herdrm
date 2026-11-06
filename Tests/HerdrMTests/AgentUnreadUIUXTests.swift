@@ -133,6 +133,66 @@ final class AgentUnreadUIUXTests: XCTestCase {
         XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty)
     }
 
+    func testRecoveryStatusEventsKeepUnreadVisibleAndPersistedUntilOpened() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false,
+                                         attentionDefaults: defaults)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let space = try XCTUnwrap(model.visibleSpaces.first)
+        let deviceID = entry.device.id
+        let working = entry.agent.updatingStatus(.working)
+        model.sessions[deviceID]?.agents = [working]
+        model.updateSnapshotAttention(agents: [working], deviceID: deviceID)
+        var done = working.updatingStatus(.done)
+        done.completionSeq = 41
+        model.sessions[deviceID]?.agents = [done]
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+
+        // Manifest reloads/reconnects send status events before the authoritative
+        // snapshot. An idle event has no sequence and cannot acknowledge 41.
+        for status in ["idle", "unknown"] {
+            let event = HerdrEvent(kind: HerdrEvent.agentStatusChangedKind, payload: .object([
+                "data": .object(["pane_id": .string(done.paneID), "agent_status": .string(status)])
+            ]))
+            XCTAssertTrue(model.applyAgentStatusEvent(event, deviceID: deviceID))
+            XCTAssertNil(model.session(deviceID).agents.first?.completionSeq)
+            XCTAssertTrue(model.isUnread(entry), "A sequence-less status event did not read the result")
+            XCTAssertTrue(AppModel(attentionDefaults: defaults).isUnread(entry),
+                          "A relaunch during recovery must retain the result")
+            XCTAssertEqual(model.attention(in: space), .unreadDone)
+            sidebar.settleSidebar()
+            XCTAssertTrue(sidebar.accessibilityDump.contains("Agent 1, Unread"),
+                          "The recovering Agent still exposes its unread badge")
+        }
+
+        var recovering = done.updatingStatus(.idle)
+        recovering.completionSeq = nil
+        model.sessions[deviceID]?.agents = [recovering]
+        XCTAssertTrue(model.updateSnapshotAttention(agents: [recovering], deviceID: deviceID).isEmpty)
+        XCTAssertTrue(model.isUnread(entry))
+        model.sessions[deviceID]?.agents = [done]
+        XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: deviceID).isEmpty,
+                      "Restoring the same result must not produce another notification")
+        sidebar.settleSidebar()
+        try sidebar.clickAgentTitleWithoutSettling("Agent 1")
+        XCTAssertFalse(model.isUnread(entry))
+        XCTAssertFalse(AppModel(attentionDefaults: defaults).isUnread(entry))
+
+        done.completionSeq = 42
+        model.sessions[deviceID]?.agents = [done]
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertTrue(model.isUnread(entry))
+        let serverRead = done.updatingStatus(.idle)
+        model.sessions[deviceID]?.agents = [serverRead]
+        model.updateSnapshotAttention(agents: [serverRead], deviceID: deviceID)
+        XCTAssertFalse(model.isUnread(entry), "An actual idle snapshot with a sequence still acknowledges it")
+        XCTAssertEqual(model.attention(in: space), .none)
+        XCTAssertFalse(AppModel(attentionDefaults: defaults).isUnread(entry))
+    }
+
     func testLegacyActivityEventsStillProduceOneSnapshotCompletion() throws {
         let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false)
         let model = sidebar.model
