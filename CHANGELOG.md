@@ -11,6 +11,18 @@ the Sparkle update description — a release without a section here fails CI.
 
 - **Option key can type characters in the terminal.** Settings → Terminal → *Use Option as Meta key* (on by default). Turn it off on layouts that type characters with Option, such as ⌥L → `@` and ⌥N → `~` on German. ⌥⌫ and ⌥← / ⌥→ word editing keep working either way. ([#122](https://github.com/missuo/herdrm/issues/122))
 
+### Fixed
+
+- **The highlighted Space is the filter you chose.** All Spaces stays
+  highlighted while the Agent and Terminal lists show every space, even when
+  the right-hand pane belongs to one of them. Selecting a pane from another
+  space (a grouped-sidebar row, the machine-stats panel) switches back to
+  All Spaces instead of leaving the old Space highlighted, and search,
+  notifications and ⌃Tab scroll to the selected Agent or Terminal row.
+- **Clicking into a terminal keeps the sidebar where it is.** Focusing an
+  Agent's or Terminal's input, including switching between split panes, no
+  longer scrolls the sidebar to its Space.
+
 ## [0.7.0] - 2026-11-02
 
 > **Herdrm has a new bundle ID: `sb.moe.herdrm`** (it was `dev.bybee.herdrm`).

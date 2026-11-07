@@ -190,10 +190,10 @@ final class AppModel: ObservableObject {
     private var conversationLastVisible = false
     private var conversationResumeNeedsLatest = false
     @Published var selectedSpace: SpaceRef?
-    /// An explicit activation should reveal its space even when the same pane
-    /// already owns the keyboard. Status refreshes never increment this.
+    /// Explicit navigation can reveal a pane's row even when it is selected.
+    /// Terminal input focus and status refreshes never increment this.
     @Published private(set) var sidebarRevealGeneration = 0
-    /// Selecting a sidebar row must leave that row under the pointer.
+    /// Sidebar selection and terminal input focus preserve the list's position.
     @Published private(set) var sidebarSelectionGeneration = 0
     @Published var selectedPane: PaneRef? {
         didSet {
@@ -207,6 +207,7 @@ final class AppModel: ObservableObject {
                 AttachViewRegistry.select(selectedAttachedEntry?.id)
             }
             noteVisibleAttachSessions()
+            if selectedPane != oldValue { widenSpaceFilterToSelectedPane() }
             if let pane = selectedPane, pane != oldValue {
                 recordRecentPane(pane)
                 snapPaneViewportToBottom(pane)
@@ -964,6 +965,18 @@ final class AppModel: ObservableObject {
         return SpaceRef(deviceID: entry.device.id, workspaceID: entry.workspaceID)
     }
 
+    /// The Space highlight is the Agent/Terminal list filter, so it must
+    /// always contain the selected row. Every path that selects a pane outside
+    /// the filter (a grouped-tree row in another space, the machine-stats
+    /// panel, a new agent, a refresh fallback) lands here and widens the
+    /// filter to All Spaces, the same rule `reveal` applies.
+    private func widenSpaceFilterToSelectedPane() {
+        guard let space = selectedSpace, let entry = selectedAttachedEntry,
+              entry.device.id != space.deviceID || entry.workspaceID != space.workspaceID
+        else { return }
+        selectedSpace = nil
+    }
+
     private func revealDisplayedSpaceInSidebar() {
         guard displayedPaneSpace != nil else { return }
         sidebarRevealGeneration += 1
@@ -1326,16 +1339,15 @@ final class AppModel: ObservableObject {
         requestClosePane(entry.ref, name: name, selectAfter: fallback)
     }
 
-    /// The keyboard landed in another pane of the shown tab: make it the selection,
-    /// so the sidebar, unread marks and viewport snap follow. Selection stays a
-    /// herdrm-side notion; herdr's own focus is left alone, as it is for sidebar clicks.
-    func focusVisiblePane(_ ref: PaneRef, revealSpace: Bool = false) {
+    /// The keyboard landed in a visible pane: update selection and unread marks
+    /// in place. Moving input focus must not move the sidebar away from its rows.
+    func focusVisiblePane(_ ref: PaneRef) {
         guard visiblePaneRefs.contains(ref) else { return }
-        if ref != selectedPane { selectedPane = ref }
+        if ref != selectedPane {
+            sidebarSelectionGeneration += 1
+            selectedPane = ref
+        }
         markSelectedAgentRead()
-        // A selection also assigns first responder programmatically. Only an
-        // explicit terminal activation should repeat a sidebar reveal.
-        if revealSpace { revealDisplayedSpaceInSidebar() }
     }
 
     private var firstVisiblePaneRef: PaneRef? {
