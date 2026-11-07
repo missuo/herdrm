@@ -13,6 +13,15 @@ the Sparkle update description — a release without a section here fails CI.
 
 ### Fixed
 
+- **The highlighted Space is the filter you chose.** All Spaces stays
+  highlighted while the Agent and Terminal lists show every space, even when
+  the right-hand pane belongs to one of them. Selecting a pane from another
+  space (a grouped-sidebar row, the machine-stats panel) switches back to
+  All Spaces instead of leaving the old Space highlighted, and search,
+  notifications and ⌃Tab scroll to the selected Agent or Terminal row.
+- **Clicking into a terminal keeps the sidebar where it is.** Focusing an
+  Agent's or Terminal's input, including switching between split panes, no
+  longer scrolls the sidebar to its Space.
 - **Unread dots survive quitting and reopening Herdrm.** A result you haven't
   opened keeps its dot after a relaunch without notifying again, results you
   already read stay read, and results that finished while Herdrm was closed
