@@ -12,6 +12,8 @@ enum TerminalDefaults {
     static let lineSpacingKey = "terminal.lineSpacing"
     /// Show every pane of the selected tab, arranged like the herdr TUI.
     static let tabLayoutKey = "terminal.tabLayout"
+    /// Which Option keys act as Meta (`TerminalOptionAsAlt` raw value).
+    static let optionAsAltKey = "terminal.optionAsAlt"
     static let defaultFontSize: Double = 12.5
     /// `NSFont.Weight` rawValue; 0 is `.regular`. Only the system monospaced font
     /// has selectable weights — named families ship fixed faces and ignore this.
@@ -119,6 +121,23 @@ enum TerminalDefaults {
     }
 }
 
+/// Which Option keys the terminal treats as Meta (Ghostty's
+/// `macos-option-as-alt`). Layouts that type characters with Option (German
+/// ⌥L → `@`, ⌥N → `~`) need it off. Ghostty also takes `left` / `right`, but the
+/// pinned libghostty-spm never reports which Option key is down (no
+/// NX_DEVICERALTKEYMASK → altRight), so a one-sided setting would act on both
+/// keys or neither; add those cases once the dependency reports the side.
+enum TerminalOptionAsAlt: String {
+    case both, off
+
+    var ghosttyValue: String {
+        switch self {
+        case .both: "true"
+        case .off: "false"
+        }
+    }
+}
+
 /// The process-wide Ghostty app object: every terminal surface shares it, so
 /// appearance settings land once here instead of per view. Ghostty owns the
 /// light/dark switch itself — the theme below carries both palettes and the
@@ -153,12 +172,13 @@ enum GhosttyRuntime {
     /// rebuild, so this runs from every view update — the controller dedupes.
     static func applyFontSettings(
         fontName: String, fontSize: Double, fontWeight: Double, thinStrokes: Bool,
-        lineSpacing: Double, copyOnSelect: Bool
+        lineSpacing: Double, copyOnSelect: Bool, optionAsAlt: TerminalOptionAsAlt
     ) {
         controller.setTerminalConfiguration(
             fontConfiguration(
                 fontName: fontName, fontSize: fontSize, fontWeight: fontWeight,
-                thinStrokes: thinStrokes, lineSpacing: lineSpacing, copyOnSelect: copyOnSelect
+                thinStrokes: thinStrokes, lineSpacing: lineSpacing, copyOnSelect: copyOnSelect,
+                optionAsAlt: optionAsAlt
             )
         )
     }
@@ -169,7 +189,8 @@ enum GhosttyRuntime {
         fontWeight: Double,
         thinStrokes: Bool,
         lineSpacing: Double,
-        copyOnSelect: Bool
+        copyOnSelect: Bool,
+        optionAsAlt: TerminalOptionAsAlt = .both
     ) -> TerminalConfiguration {
         TerminalConfiguration { builder in
             builder.withFontSize(Float(fontSize))
@@ -180,9 +201,10 @@ enum GhosttyRuntime {
             builder.withCursorStyle(.block)
             builder.withCursorStyleBlink(true)
             builder.withFontThicken(!thinStrokes)
-            // Option-as-Meta: matches what the SwiftTerm embed did, and the
-            // readline chords below (⌥⌫ → ESC DEL etc.) assume it.
-            builder.withCustom("macos-option-as-alt", "true")
+            // Option-as-Meta defaults to both keys, as the SwiftTerm embed did.
+            // The ⌥⌫/⌥←/⌥→/⌥⌦ readline chords are sent by LineBreakTerminalView
+            // itself, so they keep working whichever keys are left as Option.
+            builder.withCustom("macos-option-as-alt", optionAsAlt.ghosttyValue)
             // HerdrM owns copy only while Ghostty has a local selection. With
             // no local selection, Command-C must reach a mouse-aware pane app.
             builder.withCustom("keybind", "super+c=unbind")
@@ -2296,6 +2318,7 @@ struct AttachTerminalView: NSViewRepresentable {
     var mouseReporting: Bool = true
     /// Copies a local selection to the clipboard on mouse release.
     var copyOnSelect: Bool = true
+    var optionAsAlt: TerminalOptionAsAlt = .both
     /// False while kept alive behind another view: Ghostty then stops drawing
     /// frames for it (output is still parsed), so busy background agents do
     /// not cost full-window Metal renders.
@@ -2395,7 +2418,8 @@ struct AttachTerminalView: NSViewRepresentable {
             lineSpacing: lineSpacing,
             dark: dark,
             mouseReporting: mouseReporting,
-            copyOnSelect: copyOnSelect
+            copyOnSelect: copyOnSelect,
+            optionAsAlt: optionAsAlt
         )
     }
 
@@ -2463,7 +2487,7 @@ func applyTerminalAppearance(
     _ view: LineBreakTerminalView,
     fontName: String, fontSize: Double, thinStrokes: Bool,
     fontWeight: Double, lineSpacing: Double, dark: Bool, mouseReporting: Bool,
-    copyOnSelect: Bool
+    copyOnSelect: Bool, optionAsAlt: TerminalOptionAsAlt = .both
 ) {
     GhosttyRuntime.applyFontSettings(
         fontName: fontName,
@@ -2471,7 +2495,8 @@ func applyTerminalAppearance(
         fontWeight: fontWeight,
         thinStrokes: thinStrokes,
         lineSpacing: lineSpacing,
-        copyOnSelect: copyOnSelect
+        copyOnSelect: copyOnSelect,
+        optionAsAlt: optionAsAlt
     )
     view.mouseReportingEnabled = mouseReporting
     view.scrollRowHeight = CGFloat(fontSize * lineSpacing * 1.3)
@@ -2593,6 +2618,7 @@ struct ShellTerminalView: NSViewRepresentable {
     var dark: Bool = false
     var mouseReporting: Bool = true
     var copyOnSelect: Bool = true
+    var optionAsAlt: TerminalOptionAsAlt = .both
     /// See `AttachTerminalView.isVisible`.
     var isVisible: Bool = true
     var onAttachmentError: (String) -> Void = { _ in }
@@ -2633,7 +2659,8 @@ struct ShellTerminalView: NSViewRepresentable {
             lineSpacing: lineSpacing,
             dark: dark,
             mouseReporting: mouseReporting,
-            copyOnSelect: copyOnSelect
+            copyOnSelect: copyOnSelect,
+            optionAsAlt: optionAsAlt
         )
 
         let command = HerdrService(device: device, autoStartLocalServer: false)
@@ -2671,7 +2698,8 @@ struct ShellTerminalView: NSViewRepresentable {
             lineSpacing: lineSpacing,
             dark: dark,
             mouseReporting: mouseReporting,
-            copyOnSelect: copyOnSelect
+            copyOnSelect: copyOnSelect,
+            optionAsAlt: optionAsAlt
         )
     }
 
