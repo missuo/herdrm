@@ -14,6 +14,7 @@ final class SidebarHarness {
     enum ScrollTarget { case top, bottom, offset(CGFloat) }
 
     let model: AppModel
+    private let attentionSuiteName: String?
     private let root: NSHostingView<AnyView>
     private let window: NSWindow
     private let scroll: NSScrollView
@@ -26,8 +27,11 @@ final class SidebarHarness {
     /// - Parameter sheets: attach the app's New Agent / New Terminal / New Space
     ///   sheets, so a button press can be followed to the sheet it opens.
     /// - Parameter pinnedHeaders: learn the header titles for `pinnedHeader`; needs a list long enough to scroll.
-    init(spaces: Int, agents: Int, terminals: Int = 0, agentTokens: [String: String]? = nil, agentKinds: [String] = [], device: Device = .local, sheets: Bool = false, appearance: NSAppearance.Name = .darkAqua, pinnedHeaders: Bool = true, width: CGFloat = 260, height: CGFloat = 600, configureModel: ((AppModel) throws -> Void)? = nil) throws {
-        model = try Self.fakeModel(spaces: spaces, agents: agents, terminals: terminals, agentTokens: agentTokens, agentKinds: agentKinds, device: device)
+    init(spaces: Int, agents: Int, terminals: Int = 0, agentTokens: [String: String]? = nil, agentKinds: [String] = [], device: Device = .local, sheets: Bool = false, appearance: NSAppearance.Name = .darkAqua, pinnedHeaders: Bool = true, width: CGFloat = 260, height: CGFloat = 600, attentionDefaults: UserDefaults? = nil, configureModel: ((AppModel) throws -> Void)? = nil) throws {
+        let suiteName = attentionDefaults == nil ? "SidebarHarness.attention.\(UUID().uuidString)" : nil
+        attentionSuiteName = suiteName
+        let defaults = attentionDefaults ?? UserDefaults(suiteName: suiteName!)!
+        model = try Self.fakeModel(spaces: spaces, agents: agents, terminals: terminals, agentTokens: agentTokens, agentKinds: agentKinds, device: device, attentionDefaults: defaults)
         try configureModel?(model)
         let sidebar = SidebarView(model: model, collapsed: .constant(false), width: width).frame(width: width, height: height)
         root = NSHostingView(rootView: sheets ? AnyView(sidebar.newItemSheets(model: model)) : AnyView(sidebar))
@@ -44,6 +48,7 @@ final class SidebarHarness {
     }
 
     deinit {
+        if let attentionSuiteName { UserDefaults.standard.removePersistentDomain(forName: attentionSuiteName) }
         window.sheets.forEach { window.endSheet($0) }
         window.close()
     }
@@ -558,8 +563,8 @@ final class SidebarHarness {
 
     // MARK: - Fake data
 
-    private static func fakeModel(spaces: Int, agents: Int, terminals: Int, agentTokens: [String: String]?, agentKinds: [String], device: Device) throws -> AppModel {
-        let model = AppModel()
+    private static func fakeModel(spaces: Int, agents: Int, terminals: Int, agentTokens: [String: String]?, agentKinds: [String], device: Device, attentionDefaults: UserDefaults) throws -> AppModel {
+        let model = AppModel(attentionDefaults: attentionDefaults)
         model.devices = device == .local ? [device] : [.local, device]
         var state = DeviceSessionState()
         state.workspaces = try (0..<spaces).map { i in

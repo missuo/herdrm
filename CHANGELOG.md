@@ -23,6 +23,13 @@ the Sparkle update description — a release without a section here fails CI.
 - **Clicking into a terminal keeps the sidebar where it is.** Focusing an
   Agent's or Terminal's input, including switching between split panes, no
   longer scrolls the sidebar to its Space.
+- **Unread dots survive quitting and reopening Herdrm.** A result you haven't
+  opened keeps its dot after a relaunch without notifying again, results you
+  already read stay read, and results that finished while Herdrm was closed
+  notify once. ([#208](https://github.com/missuo/herdrm/issues/208))
+- **Unread dots no longer vanish while a server reconnects.** On herdr
+  versions that report completion sequences, a brief idle or unknown state
+  during reconnect keeps the dot; on older ones, idle still clears it.
 
 ## [0.7.0] - 2026-11-02
 

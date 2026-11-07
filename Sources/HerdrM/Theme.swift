@@ -87,14 +87,12 @@ struct AgentStatusGlyph: View {
             Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.warning)
-        case .done:
+        case .done, .idle, .unknown:
             if unreadDone {
                 Circle()
                     .fill(Theme.working)
                     .frame(width: 7, height: 7)
             }
-        case .idle, .unknown:
-            EmptyView()
         }
     }
 }
