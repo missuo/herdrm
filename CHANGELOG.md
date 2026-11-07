@@ -7,17 +7,19 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+
+- **Option key can type characters in the terminal.** Settings → Terminal → *Use Option as Meta key* (on by default). Turn it off on layouts that type characters with Option, such as ⌥L → `@` and ⌥N → `~` on German. ⌥⌫ and ⌥← / ⌥→ word editing keep working either way. ([#122](https://github.com/missuo/herdrm/issues/122))
+
 ### Fixed
-- Keep existing unread dots visible through temporary idle/unknown recovery
-  states on servers that report completion sequences. Sequence-less status
-  events no longer mistake a previous completion sequence for a read
-  acknowledgement and erase the saved dot. On older servers, idle still
-  clears the dot as before.
-- Keep unread completion dots and read acknowledgements when the Mac app quits
-  and reopens. Restored dots do not repeat completion notifications; results
-  finished while the app was closed still notify once. Temporary sequence-less
-  reconnect states retain unread results, while replacement terminals discard
-  the old result's dot (#208).
+
+- **Unread dots survive quitting and reopening Herdrm.** A result you haven't
+  opened keeps its dot after a relaunch without notifying again, results you
+  already read stay read, and results that finished while Herdrm was closed
+  notify once. ([#208](https://github.com/missuo/herdrm/issues/208))
+- **Unread dots no longer vanish while a server reconnects.** On herdr
+  versions that report completion sequences, a brief idle or unknown state
+  during reconnect keeps the dot; on older ones, idle still clears it.
 
 ## [0.7.0] - 2026-11-02
 
