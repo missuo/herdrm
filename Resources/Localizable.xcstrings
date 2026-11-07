@@ -2257,6 +2257,38 @@
         }
       }
     },
+    "Use Option as Meta key": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use Option as Meta key"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "将 Option 键用作 Meta 键"
+          }
+        }
+      }
+    },
+    "Option chords like ⌥B and ⌥F reach the terminal as Esc sequences. Turn off if your keyboard layout types characters with Option, like ⌥L for @ on a German layout.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Option chords like ⌥B and ⌥F reach the terminal as Esc sequences. Turn off if your keyboard layout types characters with Option, like ⌥L for @ on a German layout."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "⌥B、⌥F 等 Option 组合键会以 Esc 序列发送给终端。如果你的键盘布局用 Option 输入字符（例如德语布局中 ⌥L 输入 @），请关闭此项。"
+          }
+        }
+      }
+    },
     "Thin strokes": {
       "localizations": {
         "en": {
