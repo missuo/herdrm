@@ -7,6 +7,10 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+
+- **Option key can type characters in the terminal.** Settings → Terminal → *Use Option as Meta key* (on by default). Turn it off on layouts that type characters with Option, such as ⌥L → `@` and ⌥N → `~` on German. ⌥⌫ and ⌥← / ⌥→ word editing keep working either way. ([#122](https://github.com/missuo/herdrm/issues/122))
+
 ### Fixed
 
 - **The highlighted Space is the filter you chose.** All Spaces stays
