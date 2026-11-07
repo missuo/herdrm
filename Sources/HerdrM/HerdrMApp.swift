@@ -526,6 +526,7 @@ struct TerminalSettingsView: View {
     @AppStorage(TerminalDefaults.lineSpacingKey) private var lineSpacing = TerminalDefaults.defaultLineSpacing
     @AppStorage("terminal.mouseReporting") private var mouseReporting = true
     @AppStorage("terminal.copyOnSelect") private var copyOnSelect = true
+    @AppStorage(TerminalDefaults.optionAsAltKey) private var optionAsAlt = TerminalOptionAsAlt.both
     @AppStorage(TerminalDefaults.tabLayoutKey) private var tabLayout = true
 
     @State private var importMessage: String?
@@ -608,6 +609,19 @@ struct TerminalSettingsView: View {
                     }
                 }
 
+                Toggle(isOn: Binding(
+                    get: { optionAsAlt == .both },
+                    set: { optionAsAlt = $0 ? .both : .off }
+                )) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Use Option as Meta key")
+                        Text("Option chords like ⌥B and ⌥F reach the terminal as Esc sequences. Turn off if your keyboard layout types characters with Option, like ⌥L for @ on a German layout.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 Toggle(isOn: $tabLayout) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Show every pane of the selected tab")
@@ -627,6 +641,7 @@ struct TerminalSettingsView: View {
                         thinStrokes = true
                         mouseReporting = true
                         copyOnSelect = true
+                        optionAsAlt = .both
                         importMessage = nil
                     }
                     Button("Import from Ghostty…") { importFromGhostty() }
