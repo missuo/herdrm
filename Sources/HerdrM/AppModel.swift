@@ -399,6 +399,11 @@ final class AppModel: ObservableObject {
     @Published var terminalToRename: TerminalEntry?
     /// The device whose grazr accounts window is open.
     @Published var grazrAccountsDevice: Device?
+    /// Agent usage behind the sidebar's opt-in usage row, in its own object
+    /// like `machineStats`, so a reading re-renders only the row. A `var`
+    /// so tests can hand in a model whose store runs no real commands;
+    /// set it before the sidebar mounts.
+    var usage = UsageModel()
     /// The install's tailcat client public key ("nodekey:…") for hosts' allow
     /// lists. Loaded on demand, so users without tailcat devices never create one.
     @Published var tailcatClientPublicKey: String?

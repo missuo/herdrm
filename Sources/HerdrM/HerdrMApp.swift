@@ -115,6 +115,8 @@ struct HerdrMApp: App {
     /// invalidates the commands body, so the menu checkmark follows the setting.
     @AppStorage(TerminalDefaults.tabLayoutKey) private var tabLayoutEnabled = true
     @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
+    @AppStorage(UsageDefaults.showKey) private var showsUsageStats = false
+    @AppStorage(UsageDefaults.agentsKey) private var usageAgents = UsageDefaults.defaultAgents
     @AppStorage(SidebarDefaults.groupBySpaceKey) private var groupSidebarBySpace = false
     @FocusedValue(\.appModel) private var focusedModel
     @FocusedValue(\.splitAxis) private var focusedSplitAxis
@@ -166,6 +168,20 @@ struct HerdrMApp: App {
             CommandGroup(after: .sidebar) {
                 // Off removes the sidebar meters and stops their sampler (one ssh per remote host).
                 Toggle("Show Machine Stats", isOn: $showsMachineStats)
+                // Off by default: on, the sidebar runs the picked agents' usage
+                // commands on the selected pane's device every five minutes.
+                Toggle("Show Agent Usage", isOn: $showsUsageStats)
+                Menu("Agents in Usage Row") {
+                    let picked = UsageDefaults.providers(from: usageAgents)
+                    ForEach(UsageProvider.allCases, id: \.self) { provider in
+                        Toggle(UsageDefaults.name(provider), isOn: Binding(
+                            get: { picked.contains(provider) },
+                            set: { _ in usageAgents = UsageDefaults.toggling(provider, in: usageAgents) }
+                        ))
+                        // The row always shows at least one agent.
+                        .disabled(picked == [provider])
+                    }
+                }
                 Button("Read full conversation") {
                     if let model = focusedModel, let entry = model.selectedEntry {
                         model.toggleConversationHistory(for: entry.ref)

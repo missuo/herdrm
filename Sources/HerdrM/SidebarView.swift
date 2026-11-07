@@ -27,6 +27,10 @@ struct SidebarView: View {
     @ObservedObject var model: AppModel
     @Binding var collapsed: Bool
     var width: CGFloat = SidebarWidth.defaultWidth
+    /// Whether the footer shows the usage row (View ▸ Show Agent Usage).
+    /// Off by default: on, it runs provider commands on the selected device.
+    @AppStorage(UsageDefaults.showKey) private var showsUsageStats = false
+    @AppStorage(UsageDefaults.agentsKey) private var usageAgents = UsageDefaults.defaultAgents
     @State private var deviceButtonHovered = false
     @State private var draggingSpaceID: String?
     @State private var spaceDrop: (id: String, after: Bool)?
@@ -204,6 +208,21 @@ struct SidebarView: View {
             }
 
             Spacer(minLength: 0)
+            if showsUsageStats, let device = model.statsDevice {
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+                // Reads the selected device only — turning the row on never
+                // means reads on every configured host.
+                SidebarUsageRow(
+                    usage: model.usage,
+                    device: device,
+                    providers: UsageDefaults.providers(from: usageAgents)
+                )
+                .padding(.horizontal, 6)
+                // The row sizes to its content; without explicit clearance
+                // its edges would sit flush against the hairlines.
+                .padding(.vertical, 6)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+            }
             footer
         }
         // The details panel belongs to the meters; with them gone it has no anchor.
@@ -1337,3 +1356,4 @@ struct SpinnerView: View {
             .onAppear { spinning = true }
     }
 }
+
