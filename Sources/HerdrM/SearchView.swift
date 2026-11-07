@@ -68,9 +68,11 @@ struct SearchSheet: View {
     }
 
     private func searchRank(_ entry: AppModel.AgentEntry) -> Int {
-        switch entry.agent.status {
+        // An unread result ranks the same whether it reads done, idle or unknown.
+        let status = entry.agent.status
+        if status != .blocked, status != .working, model.isUnread(entry) { return 1 }
+        switch status {
         case .blocked: return 0
-        case .done where model.isUnread(entry): return 1
         case .working: return 2
         case .done: return 3
         case .idle: return 4
