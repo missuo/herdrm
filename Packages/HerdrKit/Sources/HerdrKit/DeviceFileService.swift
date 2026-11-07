@@ -686,6 +686,7 @@ private enum SSHFileProcess {
                     scheduleTimeout(processBox, after: timeout)
                     let streams = readStreams(output: output, error: errorOutput)
                     process.waitUntilExit()
+                    processBox.killLeftovers()
                     let (data, errorData) = streams()
                     if processBox.didTimeOut {
                         continuation.resume(
@@ -760,6 +761,7 @@ private enum SSHFileProcess {
                         }
                     }
                     process.waitUntilExit()
+                    processBox.killLeftovers()
                     _ = group.wait(timeout: .now() + 2)
                     if processBox.wasCancelled && !processBox.didTimeOut {
                         continuation.resume(throwing: CancellationError())
@@ -1025,6 +1027,11 @@ private final class CancellableProcess: @unchecked Sendable {
     private var process: Process?
     private var cancelled = false
     private var timedOut = false
+    /// The process group `Process` started the command in (it leads its own),
+    /// nil when it shares another group: only then is signalling it safe.
+    private var group: pid_t?
+    /// Whether the command was still running when it was cancelled or timed out.
+    private var signalled = false
 
     var wasCancelled: Bool {
         lock.withLock { cancelled }
@@ -1035,11 +1042,23 @@ private final class CancellableProcess: @unchecked Sendable {
     }
 
     func install(_ process: Process) {
+        let pid = process.processIdentifier
+        let ownGroup: pid_t? = pid > 0 && getpgid(pid) == pid ? pid : nil
         let shouldCancel = lock.withLock {
             self.process = process
+            self.group = ownGroup
             return cancelled
         }
         if shouldCancel, process.isRunning { process.terminate() }
+    }
+
+    /// After a killed command's shell has exited, SIGKILLs what it left in its
+    /// process group: a child still holding stdout would otherwise keep the
+    /// read open. While any member lives the group ID cannot be reused, so the
+    /// signal reaches only the command's own leftovers.
+    func killLeftovers() {
+        let target = lock.withLock { signalled ? group : nil }
+        if let target { killpg(target, SIGKILL) }
     }
 
     func cancel() {
@@ -1051,19 +1070,23 @@ private final class CancellableProcess: @unchecked Sendable {
     }
 
     private func terminate(cancelled: Bool, timedOut: Bool) {
-        let runningProcess = lock.withLock {
+        let (runningProcess, group) = lock.withLock {
             self.cancelled = self.cancelled || cancelled
             self.timedOut = self.timedOut || timedOut
-            return process
+            return (process, self.group)
         }
         guard let runningProcess, runningProcess.isRunning else { return }
+        lock.withLock { signalled = true }
         let signalTarget = ProcessSignalTarget.capture(pid: runningProcess.processIdentifier)
         runningProcess.terminate()
+        // The shell's children (a hung CLI it started) get the TERM too.
+        if let group { killpg(group, SIGTERM) }
         // A shell that traps TERM defers it until its foreground command returns,
-        // so a hung child would keep waitUntilExit() blocked forever. Escalate.
+        // so a hung child would keep waitUntilExit() blocked forever. Escalate,
+        // to the whole group while its verified leader still runs.
         guard let signalTarget else { return }
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3) {
-            signalTarget.send(SIGKILL)
+            if signalTarget.send(SIGKILL) == 0, let group { killpg(group, SIGKILL) }
         }
     }
 }
