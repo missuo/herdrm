@@ -65,45 +65,11 @@ public struct UsageParseResult: Equatable, Sendable {
     }
 }
 
-/// Which window the sidebar's USAGE column watches.
+/// Which windows the sidebar's usage row shows. Across the listed devices
+/// with readings, the window with the least left wins; one past its reset
+/// has refilled (all of it left), and a device missing from `devices` is
+/// skipped. Ties keep the first in device order.
 public enum UsageSelection {
-    /// The open window with the least left among those matching `scope`,
-    /// across every provider on every listed device with readings. `scope`
-    /// nil matches scope-nil windows only (the all-models week, sessions);
-    /// a non-nil scope matches that scope's windows first, falling back to
-    /// the scope-nil ones when the model yields none — the meter never
-    /// blanks. A window past its reset has refilled and never wins; a
-    /// device missing from `devices` is skipped, the tap could not open a
-    /// sheet on it. Ties keep the first in device and provider order.
-    public static func tightestWindow(
-        states: [UUID: [UsageProvider: UsageProviderState]],
-        devices: [Device],
-        scope: String?,
-        now: Date
-    ) -> (device: Device, window: GrazrWindow)? {
-        pick(states: states, devices: devices, scope: scope, now: now)
-            ?? scope.flatMap { _ in
-                pick(states: states, devices: devices, scope: nil, now: now)
-            }
-    }
-
-    /// One provider's own tightest open window — the sidebar's per-agent
-    /// meter. Scope rules match the cross-provider variant: nil matches the
-    /// provider's scope-nil windows; non-nil prefers the provider's windows
-    /// of that scope, falling back to its scope-nil ones.
-    public static func tightestWindow(
-        states: [UUID: [UsageProvider: UsageProviderState]],
-        devices: [Device],
-        provider: UsageProvider,
-        scope: String?,
-        now: Date
-    ) -> (device: Device, window: GrazrWindow)? {
-        pick(states: states, devices: devices, scope: scope, now: now, provider: provider)
-            ?? scope.flatMap { _ in
-                pick(states: states, devices: devices, scope: nil, now: now, provider: provider)
-            }
-    }
-
     /// The provider's tightest open **session** window (~5h) across
     /// devices — the usage row's first line.
     public static func tightestSession(
@@ -128,8 +94,10 @@ public enum UsageSelection {
     }
 
     /// The provider's tightest open **limit** window — weekly, monthly,
-    /// anything not a session — the usage row's second line. Scope rules
-    /// as `tightestWindow`.
+    /// anything not a session — the usage row's second line. `scope` nil
+    /// matches scope-nil windows only (the all-models week); a non-nil
+    /// scope prefers that model's windows, falling back to the scope-nil
+    /// ones when it has none, so the line never blanks.
     public static func tightestLimit(
         states: [UUID: [UsageProvider: UsageProviderState]],
         devices: [Device],
@@ -154,34 +122,6 @@ public enum UsageSelection {
             }
         }
         return scoped ?? plain
-    }
-
-    /// The tightest open window whose scope is exactly `scope`, across
-    /// every provider — or within `provider` alone when given.
-    private static func pick(
-        states: [UUID: [UsageProvider: UsageProviderState]],
-        devices: [Device],
-        scope: String?,
-        now: Date,
-        provider: UsageProvider? = nil
-    ) -> (device: Device, window: GrazrWindow)? {
-        var best: (device: Device, window: GrazrWindow)?
-        for device in devices {
-            guard let perProvider = states[device.id] else { continue }
-            for candidate in UsageProvider.allCases {
-                if let provider, candidate != provider { continue }
-                guard case .readings(let readings) = perProvider[candidate] else { continue }
-                for reading in readings {
-                    for window in reading.windows
-                    where window.scope == scope {
-                        if window.left(now: now) < best?.window.left(now: now) ?? .max {
-                            best = (device, window)
-                        }
-                    }
-                }
-            }
-        }
-        return best
     }
 }
 

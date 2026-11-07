@@ -8,17 +8,8 @@ the Sparkle update description — a release without a section here fails CI.
 ## [Unreleased]
 
 ### Added
-- **An opt-in usage row in the sidebar footer.** One meter column per
-  picked agent, read on the selected device only: quota windows with
-  percent used and time until reset, or a compact 7-day token total for
-  agents without windows. Off by default (`sidebar.showUsageStats`); the
-  detail window comes later.
-- **Agent usage readings in HerdrKit.** `UsageSource` runs each coding
-  agent's own usage command on a device — `claude -p /usage`, a codex
-  session scan, `opencode stats`, gemini's usage files — and parses the
-  output into quota windows and token totals; `UsageStore` caches each
-  parse per device for five minutes and folds concurrent reads into one
-  command run.
+
+- **Option key can type characters in the terminal.** Settings → Terminal → *Use Option as Meta key* (on by default). Turn it off on layouts that type characters with Option, such as ⌥L → `@` and ⌥N → `~` on German. ⌥⌫ and ⌥← / ⌥→ word editing keep working either way. ([#122](https://github.com/missuo/herdrm/issues/122))
 
 ## [0.7.0] - 2026-11-02
 
