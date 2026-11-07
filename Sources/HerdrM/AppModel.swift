@@ -190,7 +190,7 @@ final class AppModel: ObservableObject {
     private var conversationLastVisible = false
     private var conversationResumeNeedsLatest = false
     @Published var selectedSpace: SpaceRef?
-    /// Explicit navigation can reveal a space even when its pane is selected.
+    /// Explicit navigation can reveal a pane's row even when it is selected.
     /// Terminal input focus and status refreshes never increment this.
     @Published private(set) var sidebarRevealGeneration = 0
     /// Sidebar selection and terminal input focus preserve the list's position.
@@ -207,6 +207,7 @@ final class AppModel: ObservableObject {
                 AttachViewRegistry.select(selectedAttachedEntry?.id)
             }
             noteVisibleAttachSessions()
+            if selectedPane != oldValue { widenSpaceFilterToSelectedPane() }
             if let pane = selectedPane, pane != oldValue {
                 recordRecentPane(pane)
                 snapPaneViewportToBottom(pane)
@@ -962,6 +963,18 @@ final class AppModel: ObservableObject {
         guard !isDetailCovered, selectedShellID == nil,
               let entry = selectedAttachedEntry else { return nil }
         return SpaceRef(deviceID: entry.device.id, workspaceID: entry.workspaceID)
+    }
+
+    /// The Space highlight is the Agent/Terminal list filter, so it must
+    /// always contain the selected row. Every path that selects a pane outside
+    /// the filter (a grouped-tree row in another space, the machine-stats
+    /// panel, a new agent, a refresh fallback) lands here and widens the
+    /// filter to All Spaces, the same rule `reveal` applies.
+    private func widenSpaceFilterToSelectedPane() {
+        guard let space = selectedSpace, let entry = selectedAttachedEntry,
+              entry.device.id != space.deviceID || entry.workspaceID != space.workspaceID
+        else { return }
+        selectedSpace = nil
     }
 
     private func revealDisplayedSpaceInSidebar() {

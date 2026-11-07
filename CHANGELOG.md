@@ -9,13 +9,15 @@ the Sparkle update description — a release without a section here fails CI.
 
 ### Fixed
 
-- Highlight the active Space filter consistently: All Spaces remains selected
-  when a restored or focused terminal belongs to one space but the Agent list
-  still shows every space. Clicking a Space or All Spaces changes both its
-  highlight and the list filter; terminal input focus preserves that choice.
-- Keep the sidebar in place when clicking an Agent or terminal's input, including
-  repeated clicks and switching between visible split panes. Search, notification
-  navigation and restored selections still reveal their destination space.
+- **The highlighted Space is the filter you chose.** All Spaces stays
+  highlighted while the Agent and Terminal lists show every space, even when
+  the right-hand pane belongs to one of them. Selecting a pane from another
+  space (a grouped-sidebar row, the machine-stats panel) switches back to
+  All Spaces instead of leaving the old Space highlighted, and search,
+  notifications and ⌃Tab scroll to the selected Agent or Terminal row.
+- **Clicking into a terminal keeps the sidebar where it is.** Focusing an
+  Agent's or Terminal's input, including switching between split panes, no
+  longer scrolls the sidebar to its Space.
 
 ## [0.7.0] - 2026-11-02
 

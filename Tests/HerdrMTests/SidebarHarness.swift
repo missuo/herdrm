@@ -164,10 +164,8 @@ final class SidebarHarness {
                 x: sidebarSize.width + paneWidth * CGFloat(index) + 10, y: 12,
                 width: paneWidth - 20, height: sidebarSize.height - 24))
             view.mouseReportingEnabled = false
-            // The same activation binding as DetailView.attachChild.
-            view.onActivate = { [weak model] in
-                model?.focusVisiblePane(pane)
-            }
+            // DetailView.attachChild's own activation binding, not a copy.
+            view.onActivate = DetailView.inputActivation(for: pane, in: model)
             content.addSubview(view)
             inputTerminals[pane] = view
         }
@@ -383,6 +381,15 @@ final class SidebarHarness {
         let visible = CGRect(x: onScreen.minX, y: screenTop - onScreen.maxY + 28,
                              width: onScreen.width, height: max(0, onScreen.height - 28))
         return visible.contains(frame)
+    }
+
+    /// An Agent or Terminal row, by the same viewport rule as `visibleSpaceRow`.
+    func visiblePaneRow(_ title: String) -> Bool {
+        visibleSpaceRow(title)
+    }
+
+    func paneRowIsSelected(_ title: String) throws -> Bool {
+        try paneTitle(title).isSelected == true
     }
 
     func spaceRowIsSelected(_ name: String) throws -> Bool {

@@ -120,7 +120,7 @@ struct SidebarView: View {
                                         draggingSpaceID: $draggingSpaceID,
                                         spaceDrop: $spaceDrop
                                     )
-                                    .id(entry.ref)
+                                    .id(SidebarScrollID.space(entry.ref))
                                     if groupBySpace, model.isSpaceExpanded(entry) {
                                         ForEach(model.spaceTreeRows(entry)) { row in
                                             treeRow(row)
@@ -191,14 +191,14 @@ struct SidebarView: View {
                     // in place. Explicit navigation can still reveal the pane.
                     guard previous.selectionGeneration == target.selectionGeneration
                             || previous.generation != target.generation,
-                          let space = target.space else { return }
-                    // A collapsed Spaces section stays collapsed: the user chose that.
+                          let row = revealRow(target) else { return }
                     // Centred, so the row clears the pinned section header.
-                    if spacesExpanded { proxy.scrollTo(space, anchor: .center) }
+                    proxy.scrollTo(row, anchor: .center)
                 }
                 .onChange(of: spacesExpanded) { _, expanded in
-                    if expanded, let space = spaceRevealTarget.space {
-                        proxy.scrollTo(space, anchor: .center)
+                    // Re-show the reveal row when it is one of the rows just expanded.
+                    if expanded, let row = revealRow(spaceRevealTarget), row.isInSpacesSection {
+                        proxy.scrollTo(row, anchor: .center)
                     }
                 }
             }
@@ -214,11 +214,47 @@ struct SidebarView: View {
         .background(VisualEffectView(material: .sidebar).ignoresSafeArea())
     }
 
+    /// Scroll anchors. A pane can be listed twice in grouped mode (under its
+    /// space and in an expanded Agents section), so the two rows differ.
+    private enum SidebarScrollID: Hashable {
+        case space(SpaceRef)
+        case pane(PaneRef, inSpaceTree: Bool)
+
+        var isInSpacesSection: Bool {
+            if case .pane(_, inSpaceTree: false) = self { return false }
+            return true
+        }
+    }
+
     private struct SpaceRevealTarget: Equatable {
         let space: SpaceRef?
         let pane: PaneRef?
         let generation: Int
         let selectionGeneration: Int
+    }
+
+    /// Where a reveal scrolls: a highlighted row, never a Space row that only
+    /// happens to own the pane. The Space row is highlighted while it is the
+    /// list filter; otherwise the displayed Agent/Terminal row is the target.
+    /// In grouped mode a collapsed space stands in for its hidden rows. A
+    /// collapsed section stays collapsed: the user chose that.
+    private func revealRow(_ target: SpaceRevealTarget) -> SidebarScrollID? {
+        guard let space = target.space, let pane = target.pane else { return nil }
+        if spacesExpanded, model.selectedSpace == space { return .space(space) }
+        if groupBySpace, spacesExpanded,
+           let entry = model.visibleSpaces.first(where: { $0.ref == space }) {
+            guard model.isSpaceExpanded(entry),
+                  model.spaceTreeRows(entry).contains(where: { $0.entry.ref == pane })
+            else { return .space(space) }
+            return .pane(pane, inSpaceTree: true)
+        }
+        if agentsExpanded, model.agentSectionRows.contains(where: { $0.entry.ref == pane }) {
+            return .pane(pane, inSpaceTree: false)
+        }
+        if terminalsExpanded, model.terminalSectionRows.contains(where: { $0.entry.ref == pane }) {
+            return .pane(pane, inSpaceTree: false)
+        }
+        return nil
     }
 
     /// Only navigation changes this value. Agent output/status updates may
@@ -259,6 +295,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func sectionRow(_ row: AppModel.SidebarRow) -> some View {
         paneRow(row, showsSpace: true, draggable: row.indent == 0)
+            .id(SidebarScrollID.pane(row.entry.ref, inSpaceTree: false))
     }
 
     /// A pane row inside a space's tree: the same rows, without the space line
@@ -267,6 +304,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func treeRow(_ row: AppModel.SidebarRow) -> some View {
         paneRow(row, showsSpace: false, draggable: false)
+            .id(SidebarScrollID.pane(row.entry.ref, inSpaceTree: true))
     }
 
     @ViewBuilder
@@ -431,6 +469,7 @@ struct SidebarView: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { model.selectAgent(entry.ref, revealInSidebar: false) }
             .accessibilityLabel(entry.title)
+            .accessibilityAddTraits(selected ? .isSelected : [])
         }
 
         private var titleLine: some View {
@@ -724,6 +763,7 @@ struct SidebarView: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { model.selectAgent(entry.ref, revealInSidebar: false) }
         .accessibilityLabel(accessibilityLabel(unread: unread))
+        .accessibilityAddTraits(selected ? .isSelected : [])
         // The drag host covers the row. Place this control above it so a
         // footer click opens this agent's history instead of selecting alone.
         .overlay(alignment: .bottomTrailing) {
