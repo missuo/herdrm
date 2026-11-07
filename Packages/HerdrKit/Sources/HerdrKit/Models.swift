@@ -46,8 +46,9 @@ public struct AgentInfo: Codable, Sendable, Identifiable, Equatable {
     /// Missing on older servers and on panes no plugin has tagged yet.
     public let tokens: [String: String]?
     public var agentSession: AgentSessionRef? = nil
-    /// The server's completion-event sequence. Status reclassification may
-    /// temporarily omit it; clients retain the last known value for this pane.
+    /// The server's completion-event sequence; nil on servers before protocol
+    /// 22. Only snapshots carry it: a status event clears it on the pane, and
+    /// `AgentCompletionTracker` keeps the last known value per pane.
     public var completionSeq: UInt64? = nil
 
     public var id: String { paneID }

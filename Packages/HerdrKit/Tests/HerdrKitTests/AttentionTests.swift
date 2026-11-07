@@ -346,7 +346,8 @@ final class AttentionTests: XCTestCase {
             let agent = try decodeAgent(paneID: pane, status: status, completionSeq: sequence)
             let completed = tracker.update(agents: [agent])
             unread = AgentUnread.applying(previous: previous, agents: [agent], unread: unread,
-                                           deviceID: device, completedPaneIDs: completed)
+                                           deviceID: device, completedPaneIDs: completed,
+                                           sequencedPaneIDs: tracker.sequencedPaneIDs)
             previous[pane] = agent.status
         }
 
@@ -409,12 +410,120 @@ final class AttentionTests: XCTestCase {
         for status in ["idle", "unknown"] {
             let recovering = try decodeAgent(paneID: key.paneID, status: status)
             XCTAssertEqual(AgentUnread.applying(previous: [key.paneID: .done], agents: [recovering],
-                                               unread: [key], deviceID: device, completedPaneIDs: []), [key],
+                                               unread: [key], deviceID: device, completedPaneIDs: [],
+                                               sequencedPaneIDs: [key.paneID]), [key],
                            "A sequence-less reconnect snapshot is not evidence the user read the result")
         }
         let readByServer = try decodeAgent(paneID: key.paneID, status: "idle", completionSeq: 41)
         XCTAssertEqual(AgentUnread.applying(previous: [key.paneID: .done], agents: [readByServer],
-                                           unread: [key], deviceID: device, completedPaneIDs: []), [])
+                                           unread: [key], deviceID: device, completedPaneIDs: [],
+                                           sequencedPaneIDs: [key.paneID]), [])
+    }
+
+    /// Protocol 17-21 servers never send completion_seq: idle without one is
+    /// their ordinary "read in the TUI" state, so the dot clears as before.
+    func testLegacyServerIdleWithoutSequenceStillClearsTheDot() throws {
+        let device = UUID()
+        let pane = "w1:p1"
+        let key = AgentUnreadKey(deviceID: device, paneID: pane)
+        for cleared in ["idle", "unknown"] {
+            var tracker = AgentCompletionTracker()
+            var previous: [String: AgentStatus] = [:]
+            var unread: Set<AgentUnreadKey> = []
+            func receive(_ status: String) throws {
+                let agent = try decodeAgent(paneID: pane, status: status)
+                let completed = tracker.update(agents: [agent])
+                unread = AgentUnread.applying(previous: previous, agents: [agent], unread: unread,
+                                               deviceID: device, completedPaneIDs: completed,
+                                               sequencedPaneIDs: tracker.sequencedPaneIDs)
+                previous[pane] = agent.status
+            }
+            try receive("working")
+            try receive("done")
+            XCTAssertEqual(unread, [key])
+            XCTAssertEqual(tracker.sequencedPaneIDs, [])
+            try receive(cleared)
+            XCTAssertEqual(unread, [], "A legacy \(cleared) status after done is the read state")
+            try receive("done")
+            XCTAssertEqual(unread, [], "Restoring the read result must not revive the dot")
+        }
+        let idle = try decodeAgent(paneID: pane, status: "idle")
+        XCTAssertEqual(AgentUnread.applying(previous: [pane: .done], agents: [idle], unread: [key],
+                                           deviceID: device, completedPaneIDs: []), [],
+                       "Without sequence evidence the caller gets the pre-sequence behaviour")
+    }
+
+    func testTrackerReportsPanesWithKnownCompletionSequences() throws {
+        var tracker = AgentCompletionTracker()
+        _ = tracker.update(agents: [
+            try decodeAgent(paneID: "modern", status: "done", completionSeq: 3),
+            try decodeAgent(paneID: "legacy", status: "done"),
+        ])
+        XCTAssertEqual(tracker.sequencedPaneIDs, ["modern"])
+        _ = tracker.update(agents: [
+            try decodeAgent(paneID: "modern", status: "idle"),
+            try decodeAgent(paneID: "legacy", status: "idle"),
+        ])
+        XCTAssertEqual(tracker.sequencedPaneIDs, ["modern"], "A sequence-less update keeps the pane's evidence")
+        _ = tracker.update(agents: [try decodeAgent(paneID: "modern", status: "idle", terminalID: "new")])
+        XCTAssertEqual(tracker.sequencedPaneIDs, [], "A replacement terminal starts without evidence")
+    }
+
+    func testAcknowledgementIsDroppedOnlyWhenItsPaneGetsANewTerminal() throws {
+        var tracker = AgentCompletionTracker()
+        let pane = "w1:p1"
+        _ = tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", completionSeq: 41)])
+        tracker.acknowledge(paneID: pane)
+        XCTAssertEqual(tracker.acknowledgedPaneIDs, [pane])
+        _ = tracker.update(agents: [])
+        XCTAssertEqual(tracker.acknowledgedPaneIDs, [pane], "A temporary absence keeps the acknowledgement")
+        _ = tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", completionSeq: 41)])
+        XCTAssertEqual(tracker.acknowledgedPaneIDs, [pane])
+        _ = tracker.update(agents: [try decodeAgent(paneID: pane, status: "done", completionSeq: 41,
+                                                     terminalID: "replacement")])
+        XCTAssertEqual(tracker.acknowledgedPaneIDs, [], "The old terminal's acknowledgement is obsolete")
+    }
+
+    func testAcknowledgementsAreCappedToTheMostRecent() throws {
+        var tracker = AgentCompletionTracker()
+        let limit = AgentCompletionTracker.acknowledgementLimit
+        let panes = (0..<(limit + 20)).map { "w\($0):p1" }
+        _ = tracker.update(agents: try panes.map { try decodeAgent(paneID: $0, status: "done", completionSeq: 1) })
+        for pane in panes { tracker.acknowledge(paneID: pane) }
+        XCTAssertEqual(tracker.acknowledgedPaneIDs.count, limit)
+        XCTAssertEqual(tracker.acknowledgedPaneIDs, Set(panes.suffix(limit)))
+        // Reading an older pane again makes it the most recent one.
+        tracker.acknowledge(paneID: panes[20])
+        tracker.acknowledge(paneID: panes[0])
+        let restored = try JSONDecoder().decode(AgentCompletionTracker.self,
+                                                from: JSONEncoder().encode(tracker))
+        XCTAssertEqual(restored.acknowledgedPaneIDs.count, limit)
+        XCTAssertTrue(restored.acknowledgedPaneIDs.contains(panes[0]))
+        XCTAssertTrue(restored.acknowledgedPaneIDs.contains(panes[20]))
+        XCTAssertFalse(restored.acknowledgedPaneIDs.contains(panes[21]), "The oldest acknowledgement goes first")
+    }
+
+    func testSavedAttentionCarriesAFormatVersionAndRejectsOthers() throws {
+        let suite = "AttentionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let device = UUID()
+        let state = AgentAttentionState(unread: [AgentUnreadKey(deviceID: device, paneID: "w1:p1")],
+                                        trackers: [device: AgentCompletionTracker()])
+        state.save(to: defaults)
+        let data = try XCTUnwrap(defaults.data(forKey: AgentAttentionState.defaultsKey))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(json["version"] as? Int, AgentAttentionState.formatVersion)
+        XCTAssertEqual(AgentAttentionState.load(from: defaults), state)
+
+        json["version"] = AgentAttentionState.formatVersion + 1
+        defaults.set(try JSONSerialization.data(withJSONObject: json), forKey: AgentAttentionState.defaultsKey)
+        XCTAssertEqual(AgentAttentionState.load(from: defaults), AgentAttentionState(),
+                       "A future format is discarded rather than misread")
+        json["version"] = nil
+        defaults.set(try JSONSerialization.data(withJSONObject: json), forKey: AgentAttentionState.defaultsKey)
+        XCTAssertEqual(AgentAttentionState.load(from: defaults), AgentAttentionState(),
+                       "An unversioned payload is discarded")
     }
 
     func testSavedAttentionRestoresBadgesAndCompletionHistoryTogether() throws {

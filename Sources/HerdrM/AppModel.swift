@@ -421,7 +421,7 @@ final class AppModel: ObservableObject {
     }
     @Published var capacityWarning: CapacityWarning?
 
-    private let store = DeviceStore()
+    private let store: DeviceStore
     private var services: [UUID: HerdrService] = [:]
     private var sessionTasks: [UUID: Task<Void, Never>] = [:]
     private var refreshDebounces: [UUID: Task<Void, Never>] = [:]
@@ -444,7 +444,9 @@ final class AppModel: ObservableObject {
     /// blocked, so a later spell is checked again.
     private var modelSwitchChecked: [UUID: Set<String>] = [:]
 
-    init(recentPanesDefaults: UserDefaults = .standard, attentionDefaults: UserDefaults = .standard) {
+    init(recentPanesDefaults: UserDefaults = .standard, attentionDefaults: UserDefaults = .standard,
+         deviceStore: DeviceStore = DeviceStore()) {
+        store = deviceStore
         self.attentionDefaults = attentionDefaults
         let attention = AgentAttentionState.load(from: attentionDefaults)
         savedAttention = attention
@@ -452,7 +454,7 @@ final class AppModel: ObservableObject {
         completionTrackers = attention.trackers
         self.recentPanesDefaults = recentPanesDefaults
         recentPanes = RecentPanes.load(from: recentPanesDefaults)
-        let loaded = DeviceStore().load()
+        let loaded = deviceStore.load()
         devices = loaded
         // Restore the device filter only if that device still exists;
         // otherwise fall back to All Devices.
@@ -739,6 +741,16 @@ final class AppModel: ObservableObject {
         saveAttention()
     }
 
+    /// Saved attention outlives the device list: devices removed while the app
+    /// was closed, and named sessions that never came back. Named sessions are
+    /// not persisted, so this waits for discovery instead of running at launch.
+    private func forgetAttentionOfMissingDevices() {
+        let known = Set(devices.map(\.id))
+        completionTrackers = completionTrackers.filter { known.contains($0.key) }
+        unreadAgents = unreadAgents.filter { known.contains($0.deviceID) }
+        saveAttention()
+    }
+
     /// A result already visible in the active terminal needs no unread badge.
     /// Background windows and covering detail views keep their unread state.
     func markVisibleAgentRead() {
@@ -753,7 +765,8 @@ final class AppModel: ObservableObject {
                             completedPaneIDs: Set<String>? = nil) {
         unreadAgents = AgentUnread.applying(previous: previous, agents: agents,
                                            unread: unreadAgents, deviceID: deviceID,
-                                           completedPaneIDs: completedPaneIDs)
+                                           completedPaneIDs: completedPaneIDs,
+                                           sequencedPaneIDs: completionTrackers[deviceID]?.sequencedPaneIDs ?? [])
         markVisibleAgentRead()
         saveAttention()
     }
@@ -1444,7 +1457,8 @@ final class AppModel: ObservableObject {
     private func preferredVisibleAgent() -> AgentEntry? {
         let agents = visibleAgents
         if let blocked = agents.first(where: { $0.agent.status == .blocked }) { return blocked }
-        if let unread = agents.first(where: { $0.agent.status == .done && isUnread($0) }) {
+        // Same rule as the dot: an unread result also shows while idle/unknown.
+        if let unread = agents.first(where: { $0.agent.status != .working && isUnread($0) }) {
             return unread
         }
         if let working = agents.first(where: { $0.agent.status == .working }) { return working }
@@ -1671,8 +1685,8 @@ final class AppModel: ObservableObject {
     /// Merges live herdr named sessions in as extra Local devices (issue #81)
     /// and drops ones whose session went away. Discovered, never persisted:
     /// named sessions come and go, unlike user-added SSH/tailcat devices.
-    func refreshNamedSessions() {
-        let discovered = HerdrSessionDiscovery.namedSessions()
+    func refreshNamedSessions(configDirectory: URL? = nil) {
+        let discovered = HerdrSessionDiscovery.namedSessions(configDirectory: configDirectory)
             .map(HerdrSessionDiscovery.device(for:))
         let discoveredIDs = Set(discovered.map(\.id))
         // Named-session devices already present, by id.
@@ -1696,6 +1710,7 @@ final class AppModel: ObservableObject {
                 selectedPane = preferredVisibleAgent()?.ref ?? firstVisiblePaneRef
             }
         }
+        forgetAttentionOfMissingDevices()
     }
 
     /// Runs one device's session: connect, snapshot, event stream, and reconnect

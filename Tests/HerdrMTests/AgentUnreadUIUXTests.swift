@@ -442,6 +442,147 @@ final class AgentUnreadUIUXTests: XCTestCase {
         XCTAssertTrue(AppModel(attentionDefaults: defaults).unreadAgents.isEmpty)
     }
 
+    func testLegacyServerIdleStatusAfterReadingInTheTUIClearsTheDot() throws {
+        let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let sidebar = try SidebarHarness(spaces: 1, agents: 1, pinnedHeaders: false, attentionDefaults: defaults)
+        let model = sidebar.model
+        let entry = try XCTUnwrap(model.visibleAgents.first)
+        let deviceID = entry.device.id
+        // Protocol 17-21 servers never send completion_seq.
+        for status in [AgentStatus.working, .done] {
+            let agent = entry.agent.updatingStatus(status)
+            model.sessions[deviceID]?.agents = [agent]
+            model.updateSnapshotAttention(agents: [agent], deviceID: deviceID)
+        }
+        XCTAssertTrue(model.isUnread(entry))
+        // The user reads the result in the herdr TUI; the server reports idle.
+        let event = HerdrEvent(kind: HerdrEvent.agentStatusChangedKind, payload: .object([
+            "data": .object(["pane_id": .string(entry.agent.paneID), "agent_status": .string("idle")])
+        ]))
+        XCTAssertTrue(model.applyAgentStatusEvent(event, deviceID: deviceID))
+        XCTAssertFalse(model.isUnread(entry), "Idle is the legacy server's read state")
+        XCTAssertFalse(AppModel(attentionDefaults: defaults).isUnread(entry),
+                       "The cleared dot is not restored on the next launch")
+        sidebar.settleSidebar()
+        XCTAssertFalse(sidebar.actionRowNames().contains("Agent 1, Unread"))
+    }
+
+    func testOpeningASpaceLandsOnAnUnreadResultDuringRecovery() throws {
+        let sidebar = try SidebarHarness(spaces: 1, agents: 2, pinnedHeaders: false)
+        let model = sidebar.model
+        let entries = model.visibleAgents
+        XCTAssertEqual(entries.count, 2)
+        let deviceID = entries[0].device.id
+        let working = entries.map { $0.agent.updatingStatus(.working) }
+        model.sessions[deviceID]?.agents = working
+        model.updateSnapshotAttention(agents: working, deviceID: deviceID)
+        var done = working[1].updatingStatus(.done)
+        done.completionSeq = 41
+        model.updateSnapshotAttention(agents: [working[0], done], deviceID: deviceID)
+        var recovering = done.updatingStatus(.idle)
+        recovering.completionSeq = nil
+        let agents = [working[0], recovering]
+        model.sessions[deviceID]?.agents = agents
+        model.updateSnapshotAttention(agents: agents, deviceID: deviceID)
+        XCTAssertTrue(model.isUnread(entries[1]))
+
+        model.selectedPane = nil
+        sidebar.settleSidebar()
+        try sidebar.clickSpaceTitle("Space 1")
+        XCTAssertEqual(model.selectedPane, entries[1].ref,
+                       "An unread result showing its dot while idle outranks a working agent")
+    }
+
+    func testRemovingADeviceForgetsItsSavedAttention() throws {
+        let fixture = try AttentionFixture()
+        let remote = Device(name: "test1", kind: .ssh(target: "test1@test.invalid"))
+        let model = fixture.model()
+        model.devices = [.local, remote]
+        try seedUnread(model, deviceID: remote.id)
+        XCTAssertEqual(AgentAttentionState.load(from: fixture.defaults).unread.map(\.deviceID), [remote.id])
+
+        model.removeDevice(remote)
+        XCTAssertTrue(model.unreadAgents.isEmpty)
+        XCTAssertEqual(AgentAttentionState.load(from: fixture.defaults), AgentAttentionState(),
+                       "A removed device leaves no badge or completion history behind")
+    }
+
+    func testChangingAConnectionTargetForgetsSavedAttention() throws {
+        let fixture = try AttentionFixture()
+        let remote = Device(name: "test1", kind: .ssh(target: "test1@test.invalid"))
+        let model = fixture.model()
+        model.devices = [.local, remote]
+        defer { model.removeDevice(remote) }
+        try seedUnread(model, deviceID: remote.id)
+
+        model.updateDevice(remote.id, name: "test1", sshTarget: "test1@test.invalid")
+        XCTAssertEqual(model.unreadAgents.map(\.deviceID), [remote.id], "A rename keeps the device's results")
+        model.updateDevice(remote.id, name: "test1", sshTarget: "test2@test.invalid")
+        XCTAssertTrue(model.unreadAgents.isEmpty)
+        XCTAssertEqual(AgentAttentionState.load(from: fixture.defaults), AgentAttentionState(),
+                       "Another host's panes cannot inherit the old host's results")
+    }
+
+    func testUnchangedSnapshotsDoNotWritePreferencesAgain() throws {
+        let fixture = try AttentionFixture(counting: true)
+        let defaults = try XCTUnwrap(fixture.defaults as? CountingDefaults)
+        let model = fixture.model()
+        let done = try seedUnread(model, deviceID: Device.local.id)
+        let writes = defaults.attentionWrites
+        XCTAssertGreaterThan(writes, 0)
+        for _ in 0..<3 {
+            XCTAssertTrue(model.updateSnapshotAttention(agents: [done], deviceID: Device.local.id).isEmpty)
+        }
+        XCTAssertEqual(defaults.attentionWrites, writes, "Polling the same snapshot must not rewrite preferences")
+        model.updateSnapshotAttention(agents: [done.updatingStatus(.working)], deviceID: Device.local.id)
+        XCTAssertEqual(defaults.attentionWrites, writes + 1, "A real change is still saved")
+    }
+
+    func testDiscoveryPrunesAttentionOfDevicesThatNoLongerExist() throws {
+        let fixture = try AttentionFixture()
+        let config = fixture.directory.appendingPathComponent("config", isDirectory: true)
+        let sessionDir = config.appendingPathComponent("sessions/test1", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessionDir, withIntermediateDirectories: true)
+        let socket = sessionDir.appendingPathComponent("herdr.sock")
+        XCTAssertTrue(FileManager.default.createFile(atPath: socket.path, contents: nil))
+        let named = try XCTUnwrap(HerdrSessionDiscovery.namedSessions(configDirectory: config)
+            .map(HerdrSessionDiscovery.device(for:)).first)
+        let removed = UUID()
+        let keys = [Device.local.id, named.id, removed].map { AgentUnreadKey(deviceID: $0, paneID: "w1:p1") }
+        AgentAttentionState(unread: Set(keys), trackers: Dictionary(uniqueKeysWithValues: keys.map {
+            ($0.deviceID, AgentCompletionTracker())
+        })).save(to: fixture.defaults)
+
+        let model = fixture.model()
+        XCTAssertEqual(model.unreadAgents, Set(keys),
+                       "Named sessions are not known at launch, so nothing is pruned before discovery")
+        model.refreshNamedSessions(configDirectory: config)
+        let kept = Set(keys.prefix(2))
+        XCTAssertEqual(model.unreadAgents, kept, "Discovery drops devices that no longer exist")
+        XCTAssertEqual(AgentAttentionState.load(from: fixture.defaults).unread, kept)
+        XCTAssertEqual(Set(AgentAttentionState.load(from: fixture.defaults).trackers.keys), Set(kept.map(\.deviceID)))
+
+        try FileManager.default.removeItem(at: socket)
+        model.refreshNamedSessions(configDirectory: config)
+        XCTAssertEqual(model.unreadAgents, [keys[0]], "A session that went away takes its results with it")
+    }
+
+    @discardableResult
+    private func seedUnread(_ model: AppModel, deviceID: UUID) throws -> AgentInfo {
+        let working = try JSONDecoder().decode(AgentInfo.self, from: JSONSerialization.data(withJSONObject: [
+            "pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1", "terminal_id": "t1",
+            "agent": "codex", "agent_status": "working"
+        ]))
+        model.updateSnapshotAttention(agents: [working], deviceID: deviceID)
+        var done = working.updatingStatus(.done)
+        done.completionSeq = 41
+        XCTAssertEqual(model.updateSnapshotAttention(agents: [done], deviceID: deviceID), [done.paneID])
+        XCTAssertEqual(model.unreadAgents, [AgentUnreadKey(deviceID: deviceID, paneID: done.paneID)])
+        return done
+    }
+
     private func finish(_ entry: AppModel.AgentEntry, in model: AppModel) {
         let deviceID = entry.device.id
         let agents = model.session(deviceID).agents
@@ -450,5 +591,39 @@ final class AgentUnreadUIUXTests: XCTestCase {
         let next = agents.map { $0.paneID == entry.agent.paneID ? $0.updatingStatus(.done) : $0 }
         model.sessions[deviceID]?.agents = next
         model.updateUnreadAgents(previous: previous, agents: next, deviceID: deviceID)
+    }
+}
+
+/// Isolated preferences and device list, so attention tests never touch the
+/// user's real `devices.json` or defaults.
+@MainActor
+private final class AttentionFixture {
+    let directory: URL
+    let defaults: UserDefaults
+    private let suite = "AgentUnreadUIUXTests.\(UUID().uuidString)"
+
+    init(counting: Bool = false) throws {
+        directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AgentUnreadUIUXTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defaults = try XCTUnwrap(counting ? CountingDefaults(suiteName: suite) : UserDefaults(suiteName: suite))
+    }
+
+    deinit {
+        UserDefaults.standard.removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: directory)
+    }
+
+    func model() -> AppModel {
+        AppModel(attentionDefaults: defaults, deviceStore: DeviceStore(directory: directory))
+    }
+}
+
+private final class CountingDefaults: UserDefaults {
+    private(set) var attentionWrites = 0
+
+    override func set(_ value: Any?, forKey defaultName: String) {
+        if defaultName == AgentAttentionState.defaultsKey { attentionWrites += 1 }
+        super.set(value, forKey: defaultName)
     }
 }

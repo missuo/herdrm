@@ -47,12 +47,28 @@ public struct AgentCompletionTracker: Codable, Equatable, Sendable {
     private struct AcknowledgedCompletion: Codable, Equatable, Sendable {
         let terminalID: String?
         let completionSeq: UInt64
+        /// Acknowledgement order, so the cap drops the oldest first.
+        let order: UInt64
     }
+
+    /// Acknowledgements outlive a pane's temporary absence and are persisted,
+    /// so a device keeps at most this many (the most recently read).
+    public static let acknowledgementLimit = 256
 
     private var observations: [String: Observation] = [:]
     private var acknowledgedCompletions: [String: AcknowledgedCompletion] = [:]
+    private var acknowledgementClock: UInt64 = 0
 
     public init() {}
+
+    /// Panes whose current terminal has reported a completion sequence. Only
+    /// these servers (protocol 22+) distinguish "read" (idle with a sequence)
+    /// from a sequence-less recovery state; older ones never send one.
+    public var sequencedPaneIDs: Set<String> {
+        Set(observations.compactMap { $0.value.completionSeq == nil ? nil : $0.key })
+    }
+
+    var acknowledgedPaneIDs: Set<String> { Set(acknowledgedCompletions.keys) }
 
     /// A replacement terminal cannot inherit the former result's unread badge.
     /// Inspect before update replaces the observation. Sequence rollback on the
@@ -70,9 +86,16 @@ public struct AgentCompletionTracker: Codable, Equatable, Sendable {
     public mutating func acknowledge(paneID: String) {
         guard let observed = observations[paneID],
               let sequence = observed.completionSeq else { return }
+        acknowledgementClock &+= 1
         acknowledgedCompletions[paneID] = AcknowledgedCompletion(
-            terminalID: observed.terminalID, completionSeq: sequence
+            terminalID: observed.terminalID, completionSeq: sequence, order: acknowledgementClock
         )
+        let excess = acknowledgedCompletions.count - Self.acknowledgementLimit
+        if excess > 0 {
+            for stale in acknowledgedCompletions.sorted(by: { $0.value.order < $1.value.order }).prefix(excess) {
+                acknowledgedCompletions[stale.key] = nil
+            }
+        }
     }
 
     /// Events can expose a short-lived active state between snapshots on
@@ -92,6 +115,10 @@ public struct AgentCompletionTracker: Codable, Equatable, Sendable {
         var completed: Set<String> = []
 
         for agent in agents {
+            // A new terminal in the pane can never match the old acknowledgement.
+            if let read = acknowledgedCompletions[agent.paneID], read.terminalID != agent.terminalID {
+                acknowledgedCompletions[agent.paneID] = nil
+            }
             guard let previous = observations[agent.paneID],
                   previous.terminalID == agent.terminalID else {
                 // First sight of a pane (or its replacement terminal) seeds a
@@ -144,12 +171,18 @@ public enum AgentUnread: Sendable {
     ///
     /// Completion first marks the pane unread. The GUI acknowledges it when
     /// opened, or immediately when its terminal is visible in the active window.
+    ///
+    /// `sequencedPaneIDs` (`AgentCompletionTracker.sequencedPaneIDs`) names the
+    /// panes whose server reports completion sequences. Only those keep their
+    /// dot through a sequence-less idle/unknown recovery state; on older
+    /// servers idle without a sequence is the ordinary read state.
     public static func applying(
         previous: [String: AgentStatus],
         agents: [AgentInfo],
         unread: Set<AgentUnreadKey>,
         deviceID: UUID,
-        completedPaneIDs: Set<String>? = nil
+        completedPaneIDs: Set<String>? = nil,
+        sequencedPaneIDs: Set<String> = []
     ) -> Set<AgentUnreadKey> {
         var next = unread
         let liveIDs = Set(agents.map(\.paneID))
@@ -165,8 +198,10 @@ public enum AgentUnread: Sendable {
                 // Reconnects can temporarily report idle/unknown without a
                 // sequence. Neither means the user read the retained result.
                 // Idle with a sequence is the server's explicit read state.
-                let recovering = agent.status == .unknown
-                    || (agent.status == .idle && agent.completionSeq == nil)
+                // Servers without sequences keep the pre-sequence behaviour.
+                let recovering = sequencedPaneIDs.contains(agent.paneID)
+                    && (agent.status == .unknown
+                        || (agent.status == .idle && agent.completionSeq == nil))
                 if !recovering { next.remove(key) }
                 continue
             }
@@ -184,12 +219,37 @@ public enum AgentUnread: Sendable {
 /// does not replay a sound or revive a result that was already read.
 public struct AgentAttentionState: Codable, Equatable, Sendable {
     public static let defaultsKey = "agents.attention"
+    /// Bump when the stored shape changes. Any other version (or none) loads
+    /// as empty state: a lost dot is better than a misread one.
+    public static let formatVersion = 1
     public var unread: Set<AgentUnreadKey>
     public var trackers: [UUID: AgentCompletionTracker]
+
+    private enum CodingKeys: String, CodingKey { case version, unread, trackers }
 
     public init(unread: Set<AgentUnreadKey> = [], trackers: [UUID: AgentCompletionTracker] = [:]) {
         self.unread = unread
         self.trackers = trackers
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let version = try container.decode(Int.self, forKey: .version)
+        guard version == Self.formatVersion else {
+            throw DecodingError.dataCorruptedError(
+                forKey: .version, in: container,
+                debugDescription: "Unsupported attention format \(version)"
+            )
+        }
+        unread = try container.decode(Set<AgentUnreadKey>.self, forKey: .unread)
+        trackers = try container.decode([UUID: AgentCompletionTracker].self, forKey: .trackers)
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.formatVersion, forKey: .version)
+        try container.encode(unread, forKey: .unread)
+        try container.encode(trackers, forKey: .trackers)
     }
 
     public static func load(from defaults: UserDefaults = .standard) -> AgentAttentionState {

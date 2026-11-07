@@ -9,8 +9,10 @@ the Sparkle update description — a release without a section here fails CI.
 
 ### Fixed
 - Keep existing unread dots visible through temporary idle/unknown recovery
-  states. Sequence-less status events no longer mistake a previous completion
-  sequence for a read acknowledgement and erase the saved dot.
+  states on servers that report completion sequences. Sequence-less status
+  events no longer mistake a previous completion sequence for a read
+  acknowledgement and erase the saved dot. On older servers, idle still
+  clears the dot as before.
 - Keep unread completion dots and read acknowledgements when the Mac app quits
   and reopens. Restored dots do not repeat completion notifications; results
   finished while the app was closed still notify once. Temporary sequence-less
