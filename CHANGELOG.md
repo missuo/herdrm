@@ -10,6 +10,7 @@ the Sparkle update description — a release without a section here fails CI.
 ### Added
 
 - **Option key can type characters in the terminal.** Settings → Terminal → *Use Option as Meta key* (on by default). Turn it off on layouts that type characters with Option, such as ⌥L → `@` and ⌥N → `~` on German. ⌥⌫ and ⌥← / ⌥→ word editing keep working either way. ([#122](https://github.com/missuo/herdrm/issues/122))
+- **Agent usage in the sidebar.** View → *Show Agent Usage* (off by default) adds a row with Claude and Codex quota windows and OpenCode's token count; View → *Agents in Usage Row* picks which agents it shows. It reads only the selected pane's device, every five minutes while the window is visible. ([#205](https://github.com/missuo/herdrm/pull/205))
 
 ## [0.7.0] - 2026-11-02
 

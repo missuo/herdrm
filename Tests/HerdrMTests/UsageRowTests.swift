@@ -5,8 +5,7 @@ import XCTest
 @testable import herdrm
 
 /// Hosts the real `SidebarUsageStats` row and answers what a user would
-/// see, the way VoiceOver reads it — the `UsageSheetHarness` conventions,
-/// sized for the sidebar footer's stats rows.
+/// hear, the way VoiceOver reads it.
 @MainActor
 private final class UsageRowHarness {
     private let root: NSHostingView<AnyView>
@@ -47,64 +46,69 @@ private final class UsageRowHarness {
     }
 }
 
-/// The sidebar's usage row: one meter per picked agent, in the machine
-/// stats row's visual language, sitting above it. Window-bearing agents
-/// fill a level-tinted bar; tokens-only agents show a labeled 7D total
-/// line over a dimmed track; nothing read dims to a dash. The whole row
-/// opens the Usage sheet.
+/// The sidebar's usage row: one meter per picked agent for the selected
+/// device. Compact on screen (`5H 34% · 1h12m`), read in words by
+/// VoiceOver ("Claude: 5-hour window 34% used, resets in 1 hour, 12
+/// minutes").
 @MainActor
 final class UsageRowTests: XCTestCase {
-    func testRowShowsBothWindowsPerAgent() throws {
+    private let studio = Device(id: UUID(), name: "Studio", kind: .ssh(target: "studio.example"))
+
+    func testVoiceOverReadsEveryWindowInWords() throws {
         let harness = try UsageRowHarness(meters: [
             UsageMeterValue(provider: .claude, windows: [
-                UsageWindowValue(label: "5H", percentUsed: 88, untilReset: "2h51m"),
-                UsageWindowValue(label: "7D", percentUsed: 40, untilReset: "1d2h"),
-            ], tokenTotal: nil),
+                UsageWindowValue(group: "session", percentUsed: 88, secondsUntilReset: 171 * 60),
+                UsageWindowValue(group: "weekly", percentUsed: 40, secondsUntilReset: nil),
+            ]),
             UsageMeterValue(provider: .codex, windows: [
-                UsageWindowValue(label: "30D", percentUsed: 12, untilReset: "6d18h"),
-            ], tokenTotal: nil),
+                UsageWindowValue(group: "30d", percentUsed: 12, secondsUntilReset: nil),
+            ]),
         ])
 
-        XCTAssertTrue(harness.labels.contains { $0.contains("CLAUDE") }, "claude meter: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("5H") && $0.contains("88%") && $0.contains("2h51m") }, "claude 5h line: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("7D") && $0.contains("40%") && $0.contains("1d2h") }, "claude 7d line: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("30D") && $0.contains("12%") && $0.contains("6d18h") }, "codex single 30d line: \(harness.labels)")
+        let row = try XCTUnwrap(harness.labels.first { $0.hasPrefix("Agent usage:") }, "\(harness.labels)")
+        XCTAssertTrue(row.contains("Claude: 5-hour window 88% used, resets in 2 hours"), row)
+        XCTAssertTrue(row.contains("weekly window 40% used"), row)
+        XCTAssertTrue(row.contains("Codex: 30-day window 12% used"), row)
+        XCTAssertFalse(row.contains("5H") || row.contains("CLAUDE") || row.contains("·"), "compact text leaked into speech: \(row)")
     }
 
     func testUnpickedAgentsDoNotRender() throws {
         let harness = try UsageRowHarness(meters: [
             UsageMeterValue(provider: .claude, windows: [
-                UsageWindowValue(label: "5H", percentUsed: 88, untilReset: nil),
-            ], tokenTotal: nil),
+                UsageWindowValue(group: "session", percentUsed: 88, secondsUntilReset: nil),
+            ]),
         ])
 
-        XCTAssertTrue(harness.labels.contains { $0.contains("CLAUDE") }, "\(harness.labels)")
-        XCTAssertFalse(harness.labels.contains { $0.contains("CODEX") }, "unpicked codex absent: \(harness.labels)")
+        let row = try XCTUnwrap(harness.labels.first { $0.hasPrefix("Agent usage:") }, "\(harness.labels)")
+        XCTAssertTrue(row.contains("Claude"), row)
+        XCTAssertFalse(row.contains("Codex"), "unpicked codex absent: \(row)")
     }
 
-    /// Tokens-only agents have no honest percent: a labeled line — the
-    /// total over the 7-day period every tokens-only source reads — above
-    /// a dimmed track, level with window columns' first row, and a dash
-    /// when even the total is missing.
-    func testTokensOnlyAgentsShowTotalOrDash() throws {
+    func testTokensOnlyAndUnreadAgentsInWords() throws {
         let harness = try UsageRowHarness(meters: [
-            UsageMeterValue(provider: .opencode, windows: [], tokenTotal: "12M"),
-            UsageMeterValue(provider: .gemini, windows: [], tokenTotal: nil),
+            UsageMeterValue(provider: .opencode, tokens: 1_200_000),
+            UsageMeterValue(provider: .gemini),
         ])
 
-        XCTAssertTrue(harness.labels.contains { $0.contains("OPENCODE") && $0.contains("12M") }, "opencode total: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("7D") && $0.contains("12M") }, "opencode labeled line: \(harness.labels)")
-        XCTAssertTrue(harness.labels.contains { $0.contains("GEMINI") && $0.contains("—") }, "gemini dimmed: \(harness.labels)")
+        let row = try XCTUnwrap(harness.labels.first { $0.hasPrefix("Agent usage:") }, "\(harness.labels)")
+        let count = NumberFormatter.localizedString(from: 1_200_000, number: .decimal)
+        XCTAssertTrue(row.contains("OpenCode: \(count) tokens in the last 7 days"), row)
+        XCTAssertTrue(row.contains("Gemini: no reading yet"), row)
     }
 
-    /// Nothing read: every meter dims to a dash. The row isn't tappable
-    /// yet, so there's no open-through-the-dim to check.
-    func testNothingReadDimsEveryMeter() throws {
-        let harness = try UsageRowHarness(meters: [
-            UsageMeterValue(provider: .claude, windows: [], tokenTotal: nil),
-        ])
+    // MARK: - Values (no window)
 
-        XCTAssertTrue(harness.labels.contains { $0.contains("CLAUDE") && $0.contains("—") }, "\(harness.labels)")
+    func testCompactVisualForms() {
+        let session = UsageWindowValue(group: "session", percentUsed: 34, secondsUntilReset: 72 * 60)
+        XCTAssertEqual(session.label, "5H")
+        XCTAssertEqual(session.untilReset, "1h12m")
+        XCTAssertEqual(UsageWindowValue.label("weekly"), "7D")
+        XCTAssertEqual(UsageWindowValue.label("30d"), "30D")
+        XCTAssertEqual(UsageWindowValue.compactDuration(45 * 60), "45m")
+        XCTAssertEqual(UsageWindowValue.compactDuration((26 * 3600) + (2 * 60)), "1d2h")
+        XCTAssertEqual(UsageWindowValue.compactDuration(-(10 * 60)), "0m", "past resets clamp")
+        XCTAssertNil(UsageWindowValue(group: "session", percentUsed: 1, secondsUntilReset: nil).untilReset)
+        XCTAssertEqual(UsageMeterValue(provider: .opencode, tokens: 12_000_000).tokenTotal, "12M")
     }
 
     /// The compact token tiers everywhere usage shows a number: k, M, G,
@@ -113,146 +117,133 @@ final class UsageRowTests: XCTestCase {
         XCTAssertEqual(UsageFormat.compact(943), "943")
         XCTAssertEqual(UsageFormat.compact(12_000), "12k")
         XCTAssertEqual(UsageFormat.compact(1_234_500), "1.2M")
-        XCTAssertEqual(UsageFormat.compact(12_000_000), "12M")
         XCTAssertEqual(UsageFormat.compact(1_500_000_000), "1.5G")
         XCTAssertEqual(UsageFormat.compact(3_400_000_000_000), "3.4T")
         XCTAssertEqual(UsageFormat.compact(7_800_000_000_000_000), "7.8P")
     }
 
-    /// Tokens-only meters source their total from the quota readings —
-    /// the row never waits on a history fetch. OpenCode's stats ride along
-    /// with its quota read; a provider without readings yet stays dimmed.
-    func testTokenTotalComesFromQuotaStates() {
-        func reading(_ provider: UsageProvider, tokens: UsageTokens?) -> AgentUsageReading {
-            AgentUsageReading(id: provider.rawValue, provider: provider, windows: [], tokens: tokens, fetchedAt: Date())
-        }
-        let tokens = UsageTokens(input: 4_000_000, output: 400_000, reasoning: 0, cacheRead: 800_000, cacheWrite: 0)
-        let states: [UUID: [UsageProvider: UsageProviderState]] = [
-            Device.local.id: [.opencode: .readings([reading(.opencode, tokens: tokens)])],
-            UUID(): [.opencode: .readings([reading(.opencode, tokens: tokens)])],
-        ]
-        XCTAssertEqual(SidebarView.tokenTotal(.opencode, states: states), "10.4M", "sums across devices")
-
-        var unread = states
-        unread[Device.local.id]?[.opencode] = .loading
-        XCTAssertEqual(SidebarView.tokenTotal(.opencode, states: unread), "5.2M", "only readings count")
-
-        XCTAssertNil(SidebarView.tokenTotal(.gemini, states: states), "a provider without readings stays dimmed")
-    }
-
-    /// `45m`, `2h51m`, `1d2h` — the countdown lines carry; nil without a
-    /// reset time.
-    func testUntilResetFormatting() {
+    /// Meters read only the given device's states and only the picked
+    /// providers; token totals never add another device's readings.
+    func testMetersScopeToTheDeviceAndPick() {
         let now = Date()
-        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval(45 * 60), now: now), "45m")
-        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval(171 * 60), now: now), "2h51m")
-        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval((26 * 3600) + (2 * 60)), now: now), "1d2h")
-        XCTAssertEqual(SidebarView.untilReset(now.addingTimeInterval(-(10 * 60)), now: now), "0m", "past resets clamp")
-        XCTAssertNil(SidebarView.untilReset(nil, now: now))
-    }
-
-    /// The picked set persists as a comma list; toggling is its whole
-    /// algebra. Default: the window-bearing pair plus OpenCode's tokens.
-    func testAgentPickTogglingAndDefaults() {
-        let key = "usage.sidebarAgents"
-        // The UIUX suite hosts inside the app: standard UserDefaults is the
-        // user's real store. Snapshot and restore rather than remove — the
-        // remove-based cleanup wiped the user's picked agents on every test
-        // run, so the choice never survived a restart.
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer {
-            if let original {
-                UserDefaults.standard.set(original, forKey: key)
-            } else {
-                UserDefaults.standard.removeObject(forKey: key)
-            }
-        }
-        XCTAssertEqual(AppModel().sidebarAgents, "claude,codex,opencode", "the default pick")
-        XCTAssertEqual(SidebarUsageStats.toggling(.opencode, in: "claude,codex"), "claude,codex,opencode")
-        XCTAssertEqual(SidebarUsageStats.toggling(.codex, in: "claude,codex"), "claude")
-        XCTAssertEqual(SidebarUsageStats.toggling(.codex, in: "claude,codex,opencode"), "claude,opencode")
-        XCTAssertEqual(SidebarUsageStats.toggling(.gemini, in: ""), "gemini")
-    }
-
-    /// The parsed pick keeps `UsageProvider.allCases` order and drops junk.
-    func testParsedPickFiltersAndOrders() {
-        let key = "usage.sidebarAgents"
-        let original = UserDefaults.standard.object(forKey: key)
-        UserDefaults.standard.removeObject(forKey: key)
-        defer {
-            if let original {
-                UserDefaults.standard.set(original, forKey: key)
-            } else {
-                UserDefaults.standard.removeObject(forKey: key)
-            }
-        }
-        let model = AppModel()
-        model.sidebarAgents = "gemini,claude,nonsense"
-        XCTAssertEqual(model.sidebarAgentProviders, [.claude, .gemini])
-    }
-
-    /// Round one's refresh discipline, kept: devices standing `.failed` or
-    /// `.unknown` re-read, never-read devices get their first read, fresh
-    /// readings stand — all non-forced.
-    func testRefreshReadsFailedUnknownAndNewcomersNonForced() async throws {
-        let studio = Device(id: UUID(), name: "Studio", kind: .ssh(target: "studio.example"))
-        let fresh = Device(id: UUID(), name: "Fresh", kind: .ssh(target: "fresh.example"))
-        func reading(_ provider: UsageProvider) -> AgentUsageReading {
-            AgentUsageReading(id: provider.rawValue, provider: provider, windows: [], fetchedAt: Date())
-        }
-        let states: [UUID: [UsageProvider: UsageProviderState]] = [
-            studio.id: [
-                .claude: .failed("offline"),
-                .codex: .unknown, .gemini: .unknown, .opencode: .unknown,
-            ],
-            Device.local.id: [
-                .claude: .readings([reading(.claude)]),
-            ],
+        let tokens = UsageTokens(input: 4_000_000, output: 400_000, reasoning: 0, cacheRead: 800_000, cacheWrite: 0)
+        let states: [UsageProvider: UsageProviderState] = [
+            .claude: .readings([AgentUsageReading(
+                id: "claude", provider: .claude,
+                windows: [
+                    GrazrWindow(kind: "usage", group: "session", remaining: 66, resetsAt: now.addingTimeInterval(3600)),
+                    GrazrWindow(kind: "usage", group: "weekly", remaining: 88, resetsAt: nil),
+                ],
+                fetchedAt: now)]),
+            .opencode: .readings([AgentUsageReading(id: "opencode", provider: .opencode, tokens: tokens, fetchedAt: now)]),
+            .gemini: .readings([AgentUsageReading(id: "gemini", provider: .gemini, tokens: tokens, fetchedAt: now)]),
         ]
-        var reads: [(UUID, Bool)] = []
-        await SidebarView.refreshUsageReads(
-            states: states, devices: [studio, .local]
-        ) { device, force in
-            reads.append((device.id, force))
-        }
-        XCTAssertEqual(reads.map(\.0), [studio.id], "failed re-reads, fresh stands: \(reads)")
-        XCTAssertTrue(reads.allSatisfy { !$0.1 })
+        let meters = SidebarUsageRow.meters(states: states, device: studio, providers: [.claude, .codex, .opencode], now: now)
 
-        reads.removeAll()
-        await SidebarView.refreshUsageReads(
-            states: states, devices: [studio, .local, fresh]
-        ) { device, force in
-            reads.append((device.id, force))
-        }
-        XCTAssertEqual(reads.map(\.0), [studio.id, fresh.id], "refire reads newcomer too: \(reads)")
-        XCTAssertTrue(reads.allSatisfy { !$0.1 })
+        XCTAssertEqual(meters.map(\.provider), [.claude, .codex, .opencode], "gemini is not picked")
+        XCTAssertEqual(meters[0].windows.map(\.label), ["5H", "7D"])
+        XCTAssertEqual(meters[0].windows.map(\.percentUsed), [34, 12])
+        XCTAssertEqual(meters[1], UsageMeterValue(provider: .codex), "no readings: a dash")
+        XCTAssertEqual(meters[2].tokens, 5_200_000, "this device's readings only")
+    }
+
+    /// Readings past `UsageModel.staleAfter` are not shown as current.
+    func testStaleReadingsDimToADash() {
+        let now = Date()
+        let old = now.addingTimeInterval(-UsageModel.staleAfter - 1)
+        let states: [UsageProvider: UsageProviderState] = [
+            .claude: .readings([AgentUsageReading(
+                id: "claude", provider: .claude,
+                windows: [GrazrWindow(kind: "usage", group: "session", remaining: 66, resetsAt: nil)],
+                fetchedAt: old)]),
+        ]
+        let meters = SidebarUsageRow.meters(states: states, device: studio, providers: [.claude], now: now)
+        XCTAssertEqual(meters, [UsageMeterValue(provider: .claude)])
+    }
+
+    /// A window past its reset reads as refilled (0% used), never vanishes.
+    func testResetWindowShowsRefilled() {
+        let now = Date()
+        let states: [UsageProvider: UsageProviderState] = [
+            .claude: .readings([AgentUsageReading(
+                id: "claude", provider: .claude,
+                windows: [GrazrWindow(kind: "usage", group: "session", remaining: 3, resetsAt: now.addingTimeInterval(-120))],
+                fetchedAt: now)]),
+        ]
+        let meters = SidebarUsageRow.meters(states: states, device: studio, providers: [.claude], now: now)
+        XCTAssertEqual(meters.first?.windows.first?.percentUsed, 0)
+        XCTAssertEqual(meters.first?.windows.first?.untilReset, "0m")
+    }
+
+    /// The pick persists as a comma list in canonical order; junk drops,
+    /// nothing valid falls back to the default pick.
+    func testAgentPickParsingAndToggling() {
+        XCTAssertEqual(UsageDefaults.providers(from: UsageDefaults.defaultAgents), [.claude, .codex, .opencode])
+        XCTAssertEqual(UsageDefaults.providers(from: "gemini,claude,nonsense"), [.claude, .gemini])
+        XCTAssertEqual(UsageDefaults.providers(from: "nonsense"), [.claude, .codex, .opencode])
+        XCTAssertEqual(UsageDefaults.toggling(.opencode, in: "claude,codex"), "claude,codex,opencode")
+        XCTAssertEqual(UsageDefaults.toggling(.codex, in: "claude,codex"), "claude")
+        XCTAssertEqual(UsageDefaults.toggling(.gemini, in: "codex,claude"), "claude,codex,gemini")
     }
 }
 
-/// A window past its reset reads as refilled (0% used), never vanishes:
-/// the 5H line stays on the sidebar through a reset, and a device whose
-/// every window has reset asks for a fresh non-forced read.
-extension UsageRowTests {
-    func testResetWindowShowsRefilledInsteadOfVanishing() {
-        let now = Date()
-        let past = GrazrWindow(kind: "quota", group: "session", remaining: 3,
-                               resetsAt: now.addingTimeInterval(-120))
-        let states: [UUID: [UsageProvider: UsageProviderState]] = [
-            Device.local.id: [
-                .claude: .readings([AgentUsageReading(
-                    id: "claude", provider: .claude,
-                    windows: [past],
-                    fetchedAt: now)]),
-            ],
-        ]
-        // The selector returns the window; the meter renders it as refilled.
-        let session = UsageSelection.tightestSession(
-            states: states, devices: [.local], provider: .claude, now: now)
-        XCTAssertEqual(session?.window.group, "session", "the reset session line stays")
-        XCTAssertEqual(session?.window.left(now: now), 100, "a past-reset window reads as full")
+/// `UsageModel` over a fake store: no command runs on this machine.
+@MainActor
+final class UsageModelTests: XCTestCase {
+    private let studio = Device(id: UUID(), name: "Studio", kind: .ssh(target: "studio.example"))
 
-        // And a reading whose every window reset requests a re-read.
-        XCTAssertTrue(SidebarView.needsUsageRead(states[Device.local.id]))
+    func testRefreshReadsOnlyThePickedProviders() async {
+        let runner = FakeUsageRunner()
+        let model = UsageModel(store: runner.store())
+
+        await model.refresh(studio, providers: [.claude, .opencode])
+
+        XCTAssertEqual(Set(runner.asked), [.claude, .opencode])
+        XCTAssertEqual(Set(model.states[studio.id].map { Array($0.keys) } ?? []), [.claude, .opencode])
+        guard case .readings(let readings)? = model.states[studio.id]?[.claude] else {
+            return XCTFail("claude: \(String(describing: model.states[studio.id]?[.claude]))")
+        }
+        XCTAssertEqual(readings.first?.windows.first?.remaining, 66)
+    }
+
+    func testFailedRunBecomesFailedWithoutTouchingOthers() async {
+        let runner = FakeUsageRunner(failing: [.codex])
+        let model = UsageModel(store: runner.store())
+
+        await model.refresh(studio, providers: [.claude, .codex])
+
+        guard case .failed? = model.states[studio.id]?[.codex] else {
+            return XCTFail("codex: \(String(describing: model.states[studio.id]?[.codex]))")
+        }
+        guard case .readings? = model.states[studio.id]?[.claude] else {
+            return XCTFail("claude: \(String(describing: model.states[studio.id]?[.claude]))")
+        }
+    }
+
+    /// `watch` reads again on every tick, and stops once its task is
+    /// cancelled — the row leaving the screen, the window hiding, the
+    /// setting turning off or the device changing.
+    func testWatchRereadsPeriodicallyUntilCancelled() async throws {
+        let runner = FakeUsageRunner()
+        let model = UsageModel(store: runner.store(uncached: true))
+
+        let watch = Task { await model.watch(studio, providers: [.claude], every: 0.05) }
+        let deadline = Date().addingTimeInterval(5)
+        while runner.asked.count < 3, Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTAssertGreaterThanOrEqual(runner.asked.count, 3, "re-reads on each tick")
+
+        watch.cancel()
+        _ = await watch.value
+        let stopped = runner.asked.count
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(runner.asked.count, stopped, "no reads after cancel")
+    }
+
+    /// The default cadence is the store's cache lifetime, never faster.
+    func testRefreshCadenceMatchesTheCache() {
+        XCTAssertEqual(UsageModel.refreshInterval, 300)
+        XCTAssertGreaterThan(UsageModel.staleAfter, UsageModel.refreshInterval)
     }
 }
