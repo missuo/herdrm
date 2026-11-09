@@ -3025,6 +3025,182 @@
         }
       }
     },
+    "HERDR SESSION": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HERDR SESSION"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HERDR 会话"
+          }
+        }
+      }
+    },
+    "herdr session": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "herdr session"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "herdr 会话"
+          }
+        }
+      }
+    },
+    "default": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "default"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "default"
+          }
+        }
+      }
+    },
+    "Sessions": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Sessions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "会话"
+          }
+        }
+      }
+    },
+    "Choose a running session": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a running session"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择正在运行的会话"
+          }
+        }
+      }
+    },
+    "Finding…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Finding…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "正在查找…"
+          }
+        }
+      }
+    },
+    "Find Sessions": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Find Sessions"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查找会话"
+          }
+        }
+      }
+    },
+    "Find running sessions on this host": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Find running sessions on this host"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "查找此主机上正在运行的会话"
+          }
+        }
+      }
+    },
+    "Use letters, digits, dots, dashes and underscores only.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use letters, digits, dots, dashes and underscores only."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "只能使用字母、数字、点、短横线和下划线。"
+          }
+        }
+      }
+    },
+    "No named sessions are running on this host.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "No named sessions are running on this host."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "此主机上没有正在运行的命名会话。"
+          }
+        }
+      }
+    },
+    "Leave empty for the default session. A named session is one started with `herdr --session <name>`.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Leave empty for the default session. A named session is one started with `herdr --session <name>`."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "留空表示默认会话。命名会话是用 `herdr --session <name>` 启动的会话。"
+          }
+        }
+      }
+    },
     "SSH TARGET": {
       "localizations": {
         "en": {
@@ -3761,18 +3937,18 @@
         }
       }
     },
-    "Changing the SSH target reconnects the device": {
+    "Changing the SSH target or session reconnects the device": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Changing the SSH target reconnects the device"
+            "value": "Changing the SSH target or session reconnects the device"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "更改 SSH 目标会重新连接该设备"
+            "value": "更改 SSH 目标或会话会重新连接该设备"
           }
         }
       }

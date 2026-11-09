@@ -25,7 +25,11 @@ public actor HerdrService {
     init(device: Device, localServer: LocalHerdrServer?) {
         self.device = device
         if let target = device.sshTarget {
-            self.tunnel = SSHTunnel(target: target, credentialID: device.id)
+            self.tunnel = SSHTunnel(
+                target: target,
+                credentialID: device.id,
+                sessionName: device.sessionName
+            )
         }
         self.localServer = localServer
     }
@@ -73,6 +77,12 @@ public actor HerdrService {
         rpc = client
         everConnected = true
         return pong
+    }
+
+    /// Live named sessions on this SSH device's host (issue #190); empty for other kinds.
+    public func remoteNamedSessions() async throws -> [String] {
+        guard let tunnel else { return [] }
+        return try await tunnel.remoteNamedSessions()
     }
 
     /// Platform sniffed while bringing the SSH tunnel up (nil for local / tailcat).
@@ -885,6 +895,16 @@ public actor HerdrService {
     /// sends them in-band (also over SSH); other herdr versions ignore it.
     static let attachGraphicsEnvironmentKey = "HERDR_ATTACH_GRAPHICS"
 
+    /// Points the remote herdr CLI at a named session's socket (herdr's contractual
+    /// `HERDR_SOCKET_PATH` override, as for local named sessions); empty for the
+    /// default session. `$HOME` expands on the far side; the name is quoted anyway,
+    /// although `Device.isValidSessionName` already keeps it shell-safe.
+    static func remoteSessionExport(sessionName: String?) -> String {
+        guard let sessionName = Device.normalizedSessionName(sessionName) else { return "" }
+        let directory = shellQuoted(sessionName)
+        return "export HERDR_SOCKET_PATH=\"$HOME\"/.config/herdr/sessions/\(directory)/herdr.sock; "
+    }
+
     /// The command the embedded terminal should spawn to attach to a pane.
     /// `serverVersion` (from the device's last successful ping) lets the attach
     /// pick a herdr binary whose protocol matches the server's — see
@@ -943,7 +963,8 @@ public actor HerdrService {
                 environment.removeValue(forKey: "TERM")
                 environment.removeValue(forKey: "COLUMNS")
                 environment.removeValue(forKey: "LINES")
-                environment["HERDR_SOCKET_PATH"] = SSHTunnel.localSocketPath(for: target)
+                environment["HERDR_SOCKET_PATH"] =
+                    SSHTunnel.localSocketPath(for: target, sessionName: device.sessionName)
                 environment[Self.attachGraphicsEnvironmentKey] = "1"
                 let script = "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
                     + "exec \"$hb\" \(attachArguments)"
@@ -961,6 +982,7 @@ public actor HerdrService {
             // ssh doesn't forward the local environment, so the flag is set on
             // the far side, for the remote herdr attach client.
             let script = "\(SSHTunnel.remotePathExport); export \(Self.attachGraphicsEnvironmentKey)=1; "
+                + Self.remoteSessionExport(sessionName: device.sessionName)
                 + "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
                 + "exec \"$hb\" \(attachArguments)"
             let remote = "exec /bin/sh -c \(Self.shellQuoted(script))"

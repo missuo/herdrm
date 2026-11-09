@@ -1075,10 +1075,13 @@ struct AddDeviceSheet: View {
     @State private var target = ""
     @State private var transport: Transport = .ssh
     @State private var token = ""
+    @State private var session = ""
 
     private var canAdd: Bool {
         switch transport {
-        case .ssh: return !target.trimmingCharacters(in: .whitespaces).isEmpty
+        case .ssh:
+            return !target.trimmingCharacters(in: .whitespaces).isEmpty
+                && Device.isValidSessionName(session)
         case .tailcat: return !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -1113,6 +1116,8 @@ struct AddDeviceSheet: View {
                     Text("user@host, a ~/.ssh/config alias, or user@host:port for a custom port.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(Theme.textTertiary)
+                    Spacer().frame(height: 8)
+                    SSHSessionField(session: $session)
                 } else {
                     SheetSectionLabel("TAILCAT TOKEN")
                     TextField("tcpGFwWCD…", text: $token)
@@ -1145,9 +1150,11 @@ struct AddDeviceSheet: View {
                     switch transport {
                     case .ssh:
                         let trimmedTarget = target.trimmingCharacters(in: .whitespaces)
+                        let sessionName = Device.normalizedSessionName(session)
                         model.addDevice(
-                            name: trimmedName.isEmpty ? trimmedTarget : trimmedName,
-                            sshTarget: trimmedTarget
+                            name: trimmedName.isEmpty ? (sessionName ?? trimmedTarget) : trimmedName,
+                            sshTarget: trimmedTarget,
+                            sessionName: sessionName
                         )
                     case .tailcat:
                         model.addTailcatDevice(
@@ -1166,6 +1173,76 @@ struct AddDeviceSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 400)
+    }
+}
+
+/// The remote herdr session an SSH device talks to (issue #190). Empty is the
+/// default session. With `findSessions`, a menu lists the host's live named
+/// sessions so the name needn't be typed.
+struct SSHSessionField: View {
+    @Binding var session: String
+    var findSessions: (@MainActor () async throws -> [String])? = nil
+    @State private var found: [String]?
+    @State private var searching = false
+    @State private var searchError: String?
+
+    private var isValid: Bool { Device.isValidSessionName(session) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SheetSectionLabel("HERDR SESSION")
+            HStack(spacing: 8) {
+                TextField("default", text: $session)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(String(localized: "herdr session"))
+                if let findSessions {
+                    if let found, !found.isEmpty {
+                        Menu(String(localized: "Sessions")) {
+                            Button(String(localized: "default")) { session = "" }
+                            ForEach(found, id: \.self) { name in
+                                Button(name) { session = name }
+                            }
+                        }
+                        .fixedSize()
+                        .accessibilityLabel(String(localized: "Choose a running session"))
+                    } else {
+                        Button(searching ? String(localized: "Finding…") : String(localized: "Find Sessions")) {
+                            searching = true
+                            searchError = nil
+                            Task {
+                                do {
+                                    found = try await findSessions()
+                                } catch {
+                                    searchError = error.localizedDescription
+                                }
+                                searching = false
+                            }
+                        }
+                        .disabled(searching)
+                        .accessibilityLabel(String(localized: "Find running sessions on this host"))
+                    }
+                }
+            }
+            if !isValid {
+                Text("Use letters, digits, dots, dashes and underscores only.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.red)
+            } else if let searchError {
+                Text(searchError)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if found?.isEmpty == true {
+                Text("No named sessions are running on this host.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+            } else {
+                Text("Leave empty for the default session. A named session is one started with `herdr --session <name>`.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 
@@ -2249,11 +2326,21 @@ struct EditDeviceSheet: View {
     @State private var name = ""
     @State private var target = ""
     @State private var token = ""
+    @State private var session = ""
 
     private var canSave: Bool {
         device.isTailcat
             ? !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            : !target.trimmingCharacters(in: .whitespaces).isEmpty
+            : !target.trimmingCharacters(in: .whitespaces).isEmpty && Device.isValidSessionName(session)
+    }
+
+    /// Scanning only makes sense for the host the device is saved with: an
+    /// edited target has no credentials or tunnel yet.
+    private var findSessions: (@MainActor () async throws -> [String])? {
+        guard target.trimmingCharacters(in: .whitespaces) == device.sshTarget else { return nil }
+        let model = model
+        let id = device.id
+        return { try await model.remoteNamedSessions(for: id) }
     }
 
     var body: some View {
@@ -2263,7 +2350,7 @@ struct EditDeviceSheet: View {
                 title: String(localized: "Edit Device"),
                 subtitle: device.isTailcat
                     ? String(localized: "Changing the tailcat token reconnects the device")
-                    : String(localized: "Changing the SSH target reconnects the device")
+                    : String(localized: "Changing the SSH target or session reconnects the device")
             )
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
@@ -2281,6 +2368,8 @@ struct EditDeviceSheet: View {
                     SheetSectionLabel("SSH TARGET")
                     TextField("SSH target", text: $target)
                         .textFieldStyle(.roundedBorder)
+                    Spacer().frame(height: 8)
+                    SSHSessionField(session: $session, findSessions: findSessions)
                 }
             }
             .padding(16)
@@ -2304,7 +2393,8 @@ struct EditDeviceSheet: View {
                         model.updateDevice(
                             device.id,
                             name: trimmedName.isEmpty ? trimmedTarget : trimmedName,
-                            sshTarget: trimmedTarget
+                            sshTarget: trimmedTarget,
+                            sessionName: session
                         )
                     }
                     dismiss()
@@ -2321,6 +2411,7 @@ struct EditDeviceSheet: View {
         .onAppear {
             name = device.name
             target = device.sshTarget ?? ""
+            session = device.sessionName ?? ""
             if device.isTailcat {
                 token = ((try? TailcatCredentialStore.token(for: device.id)) ?? nil) ?? ""
             }

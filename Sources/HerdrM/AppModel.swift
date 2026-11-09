@@ -2204,8 +2204,8 @@ final class AppModel: ObservableObject {
         return service
     }
 
-    func addDevice(name: String, sshTarget: String) {
-        let device = Device(name: name, kind: .ssh(target: sshTarget))
+    func addDevice(name: String, sshTarget: String, sessionName: String? = nil) {
+        let device = Device(name: name, kind: .ssh(target: sshTarget), sessionName: sessionName)
         devices.append(device)
         store.save(devices)
         startSession(device)
@@ -2306,21 +2306,36 @@ final class AppModel: ObservableObject {
         return false
     }
 
-    /// Renames a device and/or updates its SSH target (e.g. after an IP change).
-    func updateDevice(_ id: UUID, name: String, sshTarget: String) {
+    /// Renames a device and/or updates its SSH target (e.g. after an IP change)
+    /// or the remote herdr session it talks to (issue #190).
+    func updateDevice(_ id: UUID, name: String, sshTarget: String, sessionName: String? = nil) {
         guard let index = devices.firstIndex(where: { $0.id == id }), !devices[index].isLocal else { return }
         let targetChanged = devices[index].sshTarget != sshTarget
+        let session = Device.normalizedSessionName(sessionName)
+        let sessionChanged = devices[index].sessionName != session
         devices[index].name = name
         if targetChanged {
-            forgetAttention(on: id)
             removeSSHPassword(for: id)
             devices[index].kind = .ssh(target: sshTarget)
             devices[index].osID = nil
+        }
+        // Another session is another herdr server: its panes, unread results and
+        // tunnel all start over. The host and its stored password stay.
+        devices[index].sessionName = session
+        if targetChanged || sessionChanged {
+            forgetAttention(on: id)
             stopSession(id)
             startSession(devices[index])
             probeOSIfNeeded(devices[index])
         }
         store.save(devices)
+    }
+
+    /// Live named sessions on an SSH device's host, for the Edit Device picker.
+    /// Reuses the device's own tunnel actor, so its credentials and platform probe.
+    func remoteNamedSessions(for id: UUID) async throws -> [String] {
+        guard let device = device(id), device.sshTarget != nil else { return [] }
+        return try await service(for: device).remoteNamedSessions()
     }
 
     /// Renames a tailcat device and/or replaces its token. A new token

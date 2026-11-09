@@ -58,6 +58,8 @@ public actor SSHTunnel {
     }
 
     public let target: String
+    /// The remote herdr named session (issue #190); nil is the default session.
+    public let sessionName: String?
     public private(set) var localSocketPath: String?
     /// Cached after the first successful probe; drives attach and diagnose paths.
     public private(set) var remotePlatform: RemotePlatform?
@@ -73,9 +75,10 @@ public actor SSHTunnel {
         "for d in \"$HOME\"/.nvm/versions/node/*/bin; do [ -d \"$d\" ] && PATH=\"$d:$PATH\"; done; "
         + "export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.grok/bin:/opt/homebrew/bin:/usr/local/bin:$PATH\""
 
-    public init(target: String, credentialID: UUID? = nil) {
+    public init(target: String, credentialID: UUID? = nil, sessionName: String? = nil) {
         self.target = target
         self.credentialID = credentialID
+        self.sessionName = Device.normalizedSessionName(sessionName)
     }
 
     deinit {
@@ -112,21 +115,36 @@ public actor SSHTunnel {
     }
 
     public func remoteSocketPath() async throws -> String {
-        switch try await probeRemotePlatform() {
+        Self.remoteSocketPath(platform: try await probeRemotePlatform(), sessionName: sessionName)
+    }
+
+    /// herdr's socket for a session: `~/.config/herdr/herdr.sock` for the default one,
+    /// `~/.config/herdr/sessions/<name>/herdr.sock` for a named one (herdr's
+    /// `data_dir_for`, the layout `HerdrSessionDiscovery` scans locally).
+    static func remoteSocketPath(platform: RemotePlatform, sessionName: String?) -> String {
+        switch platform {
         case .unix(let home):
+            if let sessionName {
+                return "\(home)/.config/herdr/sessions/\(sessionName)/herdr.sock"
+            }
             return "\(home)/.config/herdr/herdr.sock"
         case .windows(let home, _):
             // Display / diagnose only — OpenSSH cannot forward this path.
-            return "\(home)\\AppData\\Roaming\\herdr\\herdr.sock"
+            let base = "\(home)\\AppData\\Roaming\\herdr"
+            if let sessionName { return "\(base)\\sessions\\\(sessionName)\\herdr.sock" }
+            return "\(base)\\herdr.sock"
         }
     }
 
-    /// Deterministic local bridge/forward socket for a target (also used by attach).
-    public static func localSocketPath(for target: String) -> String {
+    /// Deterministic local bridge/forward socket for a target and session (also used
+    /// by attach). Two devices on one host but different sessions must not share it:
+    /// the second forward would unlink the first one's socket.
+    public static func localSocketPath(for target: String, sessionName: String? = nil) -> String {
         let dir = URL(fileURLWithPath: tunnelDirectory, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let key = Device.normalizedSessionName(sessionName).map { "\(target)#\($0)" } ?? target
         // Keep the path short: sockaddr_un caps at 104 bytes.
-        return dir.appendingPathComponent("\(abs(target.hashValue) % 100_000).sock").path
+        return dir.appendingPathComponent("\(abs(key.hashValue) % 100_000).sock").path
     }
 
     static var tunnelDirectory: String {
@@ -213,7 +231,7 @@ public actor SSHTunnel {
         resetErrorCapture()
 
         let platform = try await probeRemotePlatform()
-        let localSock = Self.localSocketPath(for: target)
+        let localSock = Self.localSocketPath(for: target, sessionName: sessionName)
         try? FileManager.default.removeItem(atPath: localSock)
 
         switch platform {
@@ -239,7 +257,8 @@ public actor SSHTunnel {
             localSocketPath: localSock,
             target: target,
             herdrExecutable: herdrExecutable,
-            credentialID: credentialID
+            credentialID: credentialID,
+            sessionName: sessionName ?? "default"
         )
         do {
             try bridge.start()
@@ -398,6 +417,37 @@ public actor SSHTunnel {
         guard !host.isEmpty else { return target }
         if host.contains(":"), !(host.hasPrefix("[") && host.hasSuffix("]")) { return target }
         return "ssh://\(target)"
+    }
+
+    // MARK: - Named sessions
+
+    /// The remote's live herdr named sessions (issue #190), sorted, without
+    /// `default`: every `~/.config/herdr/sessions/<name>/` holding a socket, the
+    /// same rule `HerdrSessionDiscovery` applies to this Mac. Plain sh, so it
+    /// works whatever the remote herdr version; Windows hosts aren't scanned.
+    public func remoteNamedSessions() async throws -> [String] {
+        guard case .unix = try await probeRemotePlatform() else { return [] }
+        let output = try await Self.runSSH(
+            target: target,
+            command: Self.namedSessionScanCommand,
+            timeout: 10,
+            credentialID: credentialID
+        )
+        return Self.namedSessions(inScanOutput: output)
+    }
+
+    static let namedSessionScanCommand =
+        "for s in \"$HOME\"/.config/herdr/sessions/*/herdr.sock; do "
+        + "[ -S \"$s\" ] && basename \"$(dirname \"$s\")\"; done; true"
+
+    /// Session names from the scan's output: one per line, unknown shapes and
+    /// `default` dropped, so a stray directory can't smuggle in a bad name.
+    static func namedSessions(inScanOutput output: String) -> [String] {
+        let names = output
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && Device.isValidSessionName($0) && Device.normalizedSessionName($0) != nil }
+        return Array(Set(names)).sorted()
     }
 
     // MARK: - Silent-forward diagnosis
