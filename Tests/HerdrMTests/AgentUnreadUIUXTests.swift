@@ -525,6 +525,25 @@ final class AgentUnreadUIUXTests: XCTestCase {
                        "Another host's panes cannot inherit the old host's results")
     }
 
+    func testChangingTheRemoteSessionForgetsSavedAttentionAndPersists() throws {
+        let fixture = try AttentionFixture()
+        let remote = Device(name: "test1", kind: .ssh(target: "test1@test.invalid"))
+        let model = fixture.model()
+        model.devices = [.local, remote]
+        defer { model.removeDevice(remote) }
+        try seedUnread(model, deviceID: remote.id)
+
+        model.updateDevice(remote.id, name: "renamed", sshTarget: "test1@test.invalid", sessionName: "default")
+        XCTAssertEqual(model.unreadAgents.map(\.deviceID), [remote.id],
+                       "\"default\" is the session the device already talks to")
+        model.updateDevice(remote.id, name: "renamed", sshTarget: "test1@test.invalid", sessionName: " work ")
+        XCTAssertTrue(model.unreadAgents.isEmpty, "Another session's panes cannot inherit these results")
+        XCTAssertEqual(model.device(remote.id)?.sessionName, "work")
+        XCTAssertEqual(model.device(remote.id)?.sshTarget, "test1@test.invalid")
+        let saved = DeviceStore(directory: fixture.directory).load().first { $0.id == remote.id }
+        XCTAssertEqual(saved?.sessionName, "work", "The session survives relaunch")
+    }
+
     func testUnchangedSnapshotsDoNotWritePreferencesAgain() throws {
         let fixture = try AttentionFixture(counting: true)
         let defaults = try XCTUnwrap(fixture.defaults as? CountingDefaults)
