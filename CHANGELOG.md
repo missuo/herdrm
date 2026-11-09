@@ -7,6 +7,8 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-09
+
 ### Added
 
 - **SSH devices can open a named herdr session.** Add Device and Edit Device have a *herdr session* field. Leave it empty for the default session, or enter a name started with `herdr --session <name>` on the remote. In Edit Device, *Find Sessions* lists the sessions running on that host. To see two sessions on one host, add the host twice. ([#190](https://github.com/missuo/herdrm/issues/190))
