@@ -935,6 +935,9 @@ struct SidebarView: View {
 enum SidebarDefaults {
     /// Group the Spaces section as space > tab main pane > children.
     static let groupBySpaceKey = "sidebar.groupBySpace"
+    /// Status marks as herdr's own symbols (× ◐ ✓ ○ ·) instead of the
+    /// spinner and unread dot.
+    static let statusSymbolsKey = "sidebar.statusSymbols"
     /// Leading inset per level of the pane tree.
     static let indentWidth: CGFloat = 14
     /// A space's own panes start under its name: the chevron column (20),
