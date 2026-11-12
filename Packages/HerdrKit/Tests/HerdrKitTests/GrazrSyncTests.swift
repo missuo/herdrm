@@ -239,30 +239,72 @@ final class GrazrSyncTests: XCTestCase {
         XCTAssertNil(planner.bouncing)
     }
 
-    func testARotationAwayFromALowAccountIsNotABounce() {
+    /// An account spent on the follower is not pushed there: its grazr
+    /// would rotate away at once, the newer change would push the source off
+    /// the account too, and the two would flip every round.
+    func testASwitchToAnAccountSpentOnTheFollowerIsReportedNotPushed() {
         var planner = GrazrSyncPlanner()
         let low = ["i": [GrazrWindow(kind: "five_hour", group: "session", remaining: 5, resetsAt: Date(timeIntervalSince1970: 10_000_000_000))]]
-        XCTAssertEqual(planner.observe([
-            device("a", id: A, order: gi, active: "g", windows: low, changedAt: 1000),
-            device("b", id: B, order: gi, active: "i", changedAt: 2000),
-        ], now: 0), [push(A, to: "i")])
-        planner.recordResult(device: A, problem: nil, now: 0)
-        planner.settle(device("a", id: A, order: gi, active: "i", windows: low, changedAt: 2010))
+        let a = device("a", id: A, order: gi, active: "g", windows: low, changedAt: 1000)
+        let b = device("b", id: B, order: gi, active: "i", changedAt: 2000)
+        XCTAssertEqual(planner.observe([a, b], now: 0), [push(A, problem: .spent(accountID: "i"))])
+        planner.recordResult(device: A, problem: .spent(accountID: "i"), now: 0)
 
-        XCTAssertEqual(planner.observe([
-            device("a", id: A, order: gi, active: "g", windows: low, changedAt: 2100),
-            device("b", id: B, order: gi, active: "i", changedAt: 2000),
-        ], now: 60), [push(B, to: "g")])
-        planner.recordResult(device: B, problem: nil, now: 60)
-        planner.settle(device("b", id: B, order: gi, active: "g", changedAt: 2110))
-
-        // B rotating away from g (with headroom) is one bounce, not two.
-        XCTAssertEqual(planner.observe([
-            device("a", id: A, order: gi, active: "g", windows: low, changedAt: 2100),
-            device("b", id: B, order: gi, active: "i", changedAt: 2200),
-        ], now: 120), [push(A, to: "i")])
+        // Nothing moves on either device, round after round.
+        XCTAssertEqual(planner.observe([a, b], now: 60), [])
+        XCTAssertEqual(planner.observe([a, b], now: 120), [])
+        XCTAssertEqual(planner.target?.source, B)
         XCTAssertNil(planner.pausedUntil)
-        XCTAssertNil(planner.bouncing)
+
+        // Once i has headroom on a again, a follows.
+        let refilled = device("a", id: A, order: gi, active: "g", changedAt: 1000)
+        XCTAssertEqual(planner.observe([refilled, b], now: 180), [push(A, to: "i")])
+    }
+
+    func testNamesTheSyncCannotMatchStayInTheFollowersOrder() {
+        var planner = GrazrSyncPlanner()
+        let pushes = planner.observe([
+            device("a", id: A, order: ["icloud", "gmail"], active: "i", changedAt: 2000),
+            device("b", id: B, order: ["gmail", "not yet enrolled", "icloud"], active: "i", changedAt: 1000),
+        ], now: 0)
+
+        XCTAssertEqual(pushes, [push(B, order: ["icloud", "gmail", "not yet enrolled"])])
+    }
+
+    func testAccountsKnownOnlyByFileNameAreNotMatchedAcrossDevices() {
+        func device(_ name: String, id: UUID, order: [String], changedAt: Double) -> GrazrSyncDevice {
+            GrazrSyncDevice(id: id, name: name, report: GrazrReport(
+                active: "g",
+                accounts: [
+                    GrazrAccount(id: "g", name: "gmail"), GrazrAccount(id: "i", name: "icloud"),
+                    // Two different accounts that happen to share a file name.
+                    GrazrAccount(id: "work", name: "work", idFromFile: true),
+                ],
+                order: order, changedAt: changedAt
+            ))
+        }
+        var planner = GrazrSyncPlanner()
+        let pushes = planner.observe([
+            device("a", id: A, order: ["gmail", "icloud", "work"], changedAt: 2000),
+            device("b", id: B, order: ["work", "icloud", "gmail"], changedAt: 1000),
+        ], now: 0)
+
+        XCTAssertEqual(planner.target?.orderIDs, ["g", "i"])
+        XCTAssertEqual(pushes, [push(B, order: ["gmail", "icloud", "work"])])
+    }
+
+    /// A device whose clock runs ten minutes fast does not win with a change
+    /// that, on this Mac's clock, is older than the other device's.
+    func testChangedAtIsComparedOnThisMacsClock() {
+        var planner = GrazrSyncPlanner()
+        let fast = device("a", id: A, order: gi, active: "g", changedAt: 2000)
+        _ = planner.observe([
+            GrazrSyncDevice(id: A, name: "a", report: fast.report, clockOffset: 600),
+            device("b", id: B, order: gi, active: "i", changedAt: 1500),
+        ], now: 0)
+
+        XCTAssertEqual(planner.target?.source, B)
+        XCTAssertEqual(planner.target?.activeID, "i")
     }
 
     func testALateJoinerWithOlderChangeFollowsAndWithNewerWins() {

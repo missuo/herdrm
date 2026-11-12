@@ -63,6 +63,9 @@ final class GrazrSyncCoordinator {
     /// Pushed devices whose reread failed: settled at their next read, so the
     /// state HerdrM wrote is not taken for a change of their own. Saved.
     private var unsettled: Set<UUID> = []
+    /// When each device's last report arrived (this Mac's clock), against
+    /// which its reader's own clock gives the device's offset.
+    private var readTimes: [UUID: Double] = [:]
     /// Switches that answered ok on a device that could not be reread: the
     /// next read says whether they landed. Not saved.
     private var unconfirmed: [UUID: (account: String, summary: String?, sourceName: String)] = [:]
@@ -228,7 +231,13 @@ final class GrazrSyncCoordinator {
         let group = model.devices.filter { model.sessions[$0.id]?.usesGrazr == true && isIncluded($0.id) }
         // A device that cannot be read sits this round out with its last state.
         var unread: Set<UUID> = []
-        for device in group where !(await reportLoader(device.id)) { unread.insert(device.id) }
+        for device in group {
+            if await reportLoader(device.id) {
+                readTimes[device.id] = Date().timeIntervalSince1970
+            } else {
+                unread.insert(device.id)
+            }
+        }
         guard generation == self.generation else { return }
         let known = syncDevices(group)
         guard known.count >= 2 else {
@@ -327,7 +336,7 @@ final class GrazrSyncCoordinator {
         var answered: (account: String, summary: String?)?
         if let names = push.orderNames {
             ran = true
-            switch await command(Grazr.setAccountsCommand(names: names), on: device) {
+            switch await command(Grazr.setOrderCommand(names: names), on: device) {
             case .answered(let result) where !result.ok:
                 orderProblem = result.output.contains(Grazr.needsUpdateMarker)
                     ? .needsUpdate : .refused(result.summary ?? "")
@@ -345,6 +354,7 @@ final class GrazrSyncCoordinator {
         }
         // Unread after the push: its state stays unknown, not the old one.
         let reread = ran ? await reportLoader(device.id) : false
+        if reread { readTimes[device.id] = Date().timeIntervalSince1970 }
         guard generation == self.generation else { return switchProblem ?? orderProblem }
         if ran { pushedAnything = true }
         let report = reread ? model.session(device.id).grazrReport : nil
@@ -401,8 +411,19 @@ final class GrazrSyncCoordinator {
     private func syncDevices(_ group: [Device]) -> [GrazrSyncDevice] {
         group.compactMap { device in
             guard let report = model.sessions[device.id]?.grazrReport, report.installed else { return nil }
-            return GrazrSyncDevice(id: device.id, name: device.name, report: report)
+            return GrazrSyncDevice(
+                id: device.id, name: device.name, report: report,
+                clockOffset: Self.clockOffset(readAt: report.readAt, arrivedAt: readTimes[device.id])
+            )
         }
+    }
+
+    /// How far a device's clock runs ahead of this Mac's. Within a few
+    /// seconds (the read's own round trip) it is taken as none.
+    static func clockOffset(readAt: Double?, arrivedAt: Double?) -> Double {
+        guard let readAt, let arrivedAt else { return 0 }
+        let offset = readAt - arrivedAt
+        return abs(offset) < 5 ? 0 : offset
     }
 
     // MARK: - Pure
@@ -492,8 +513,11 @@ final class GrazrSyncCoordinator {
                 text = String(localized: "\(who): \(account(id, on: member.id)) is not enrolled")
             case .pinned(let id):
                 text = String(localized: "\(who): \(account(id, on: member.id)) is pinned to an agent")
+            case .spent(let id):
+                let active = account(member.report.active, on: member.id)
+                text = String(localized: "\(who): \(account(id, on: member.id)) has no headroom there, still on \(active)")
             case .needsUpdate:
-                text = String(localized: "grazr on \(who) needs 0.4.7+senad.4 or later")
+                text = String(localized: "grazr on \(who) needs an update")
             case .refused(let words):
                 text = String(localized: "\(who): \(words)")
             }

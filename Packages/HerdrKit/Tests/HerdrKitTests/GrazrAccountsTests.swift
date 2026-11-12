@@ -18,10 +18,66 @@ final class GrazrAccountsTests: XCTestCase {
         XCTAssertNil(without.changedAt)
     }
 
+    func testReportCarriesTheDevicesClockAndWhichIDsAreFileNames() throws {
+        let report = try JSONDecoder().decode(GrazrReport.self, from: Data(#"""
+        {"installed":true,"accounts":[{"id":"uuid-1","id_from_file":false,"name":"a","windows":[]},
+        {"id":"work","id_from_file":true,"name":"work","windows":[]}],"order":[],"settings":{},"blocked":{},"now":1760000100.25}
+        """#.utf8))
+        XCTAssertEqual(report.readAt, 1760000100.25)
+        XCTAssertEqual(report.syncableAccounts.map(\.id), ["uuid-1"])
+    }
+
     #if os(macOS)
-    func testSetAccountsCommandPassesTheNamesAsOneArgument() {
-        let command = Grazr.setAccountsCommand(names: ["work", "home"])
-        XCTAssertTrue(command.contains("'set' 'ACCOUNTS' 'work home'"))
+    func testSetOrderCommandPassesEachNameAsItsOwnArgument() {
+        let command = Grazr.setOrderCommand(names: ["work", "my home"])
+        XCTAssertTrue(command.contains("python3 - 'work' 'my home' <<'GRAZR_EOF'"), command)
+    }
+
+    /// The writer's ACCOUNTS line, read back the way the reader and grazr's
+    /// own config loader split it (twice, with shlex), gives the same names:
+    /// one with a space stays one name, and quotes and backslashes survive.
+    func testSetOrderCommandWritesALineTheReaderSplitsBackIntoTheSameNames() throws {
+        let python = URL(fileURLWithPath: "/usr/bin/python3")
+        guard FileManager.default.isExecutableFile(atPath: python.path) else { throw XCTSkip("no python3") }
+        let command = Grazr.setOrderCommand(names: [])
+        // The part after the preamble, with grazr's config path stubbed.
+        guard let start = command.range(of: "def quoted(value):"),
+              let end = command.range(of: "GRAZR_EOF", range: start.upperBound..<command.endIndex)
+        else { return XCTFail("writer not found") }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let config = directory.appendingPathComponent("config.env")
+        try "THRESHOLD=10\nACCOUNTS=\"old\"  # keep me\n".write(to: config, atomically: true, encoding: .utf8)
+        let names = ["work", "my home", #"say "hi""#, #"back\slash"#, "a@b.c"]
+        let script = """
+        import json, os, re, sys, tempfile, shlex
+        names = sys.argv[1:]
+        class grazr:
+            @staticmethod
+            def _config_path(): return \(String(reflecting: config.path))
+        \(command[start.lowerBound..<end.lowerBound])
+        for line in open(grazr._config_path()):
+            key, _, rest = line.partition("=")
+            if key.strip() == "ACCOUNTS":
+                print(json.dumps(shlex.split(" ".join(shlex.split(rest, comments=True)))))
+        print(json.dumps("# keep me" in open(grazr._config_path()).read()))
+        print(json.dumps("THRESHOLD=10" in open(grazr._config_path()).read()))
+        """
+        let process = Process()
+        process.executableURL = python
+        process.arguments = ["-c", script] + names
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        try process.run()
+        process.waitUntilExit()
+        let lines = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .split(separator: "\n").map(String.init)
+        // The writer prints its result first.
+        XCTAssertEqual(lines.count, 4, "\(lines)")
+        XCTAssertEqual(try JSONDecoder().decode([String].self, from: Data(lines[1].utf8)), names)
+        XCTAssertEqual(lines[2], "true", "the line's comment is kept")
+        XCTAssertEqual(lines[3], "true", "other lines are kept")
     }
     #endif
 
@@ -332,6 +388,8 @@ final class GrazrAccountsTests: XCTestCase {
         let output = try await DeviceFileService(device: .local).run(environment + Grazr.readerCommand)
         let report = try JSONDecoder().decode(GrazrReport.self, from: output)
         XCTAssertEqual(report.order, ["work", "my work", "spare"])
+        // The device's clock, for the account sync to correct a skewed one.
+        XCTAssertEqual(try XCTUnwrap(report.readAt), Date().timeIntervalSince1970, accuracy: 60)
     }
 
     func testTheReaderReportsGrazrsFilesAndNothingSecret() async throws {
@@ -382,6 +440,7 @@ final class GrazrAccountsTests: XCTestCase {
         XCTAssertEqual(report.sortedAccounts.map(\.id), ["uuid-work", "uuid-home"])
         let work = report.sortedAccounts[0]
         XCTAssertEqual(work.organization, "Acme")
+        XCTAssertEqual(report.syncableAccounts.count, 2, "both have a Claude account id")
         XCTAssertEqual(work.windows.map(\.label), ["5h", "Fable week"])
         XCTAssertEqual(work.windows[0].resetsAt, ISO8601DateFormatter().date(from: "2026-10-01T21:50:00Z"))
         XCTAssertEqual(report.sortedAccounts[1].windows, [])

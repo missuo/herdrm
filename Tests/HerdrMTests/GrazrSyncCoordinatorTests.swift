@@ -256,7 +256,7 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(world.sent, ["studio order home,work", "studio switch home"])
         XCTAssertEqual(world.notes.count, 1, "the switch landed")
-        XCTAssertTrue(world.lineTexts.contains("grazr on studio needs 0.4.7+senad.4 or later"), "\(world.lineTexts)")
+        XCTAssertTrue(world.lineTexts.contains("grazr on studio needs an update"), "\(world.lineTexts)")
         world.sync.setEnabled(false)
     }
 
@@ -433,6 +433,7 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
         }
         XCTAssertNil(problem(true, "Rotated work -> home"))
         XCTAssertEqual(problem(false, "grazr: ACCOUNTS \(Grazr.needsUpdateMarker)"), .needsUpdate)
+        XCTAssertEqual(problem(false, "This grazr cannot pin agents. Update it to 0.4.7+senad.3 or later"), .needsUpdate)
         XCTAssertEqual(problem(false, "grazr: home is pinned to an agent"), .pinned(accountID: "id-home"))
         XCTAssertEqual(
             problem(false, "refreshing\ngrazr: home failed with 401 Unauthorized"),
@@ -442,6 +443,13 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
             problem(false, "grazr: Busy rotating already, try again"),
             .refused("grazr: Busy rotating already, try again")
         )
+    }
+
+    func testAClockWithinTheReadsRoundTripCountsAsNoOffset() {
+        XCTAssertEqual(GrazrSyncCoordinator.clockOffset(readAt: 1000, arrivedAt: 1002), 0)
+        XCTAssertEqual(GrazrSyncCoordinator.clockOffset(readAt: 1600, arrivedAt: 1000), 600)
+        XCTAssertEqual(GrazrSyncCoordinator.clockOffset(readAt: 940, arrivedAt: 1000), -60)
+        XCTAssertEqual(GrazrSyncCoordinator.clockOffset(readAt: nil, arrivedAt: 1000), 0)
     }
 
     func testLinesDescribeInSyncProblemsAndPause() {
@@ -516,7 +524,7 @@ final class GrazrSyncCoordinatorTests: XCTestCase {
             GrazrSyncCoordinator.lines(
                 planner: planner, pushes: [], results: [server: .needsUpdate], pushedAnything: true, devices: devices, now: now
             ).last?.text,
-            "grazr on server needs 0.4.7+senad.4 or later"
+            "grazr on server needs an update"
         )
 
         // Two bounces pause the sync: grazr on each undoes what was pushed to it.
@@ -636,7 +644,7 @@ private final class SyncWorld {
 
     private static func label(_ command: String) -> String {
         for account in accounts where command == Grazr.switchCommand(to: account.id) { return "switch \(account.name)" }
-        for names in [["home", "work"], ["work", "home"]] where command == Grazr.setAccountsCommand(names: names) {
+        for names in [["home", "work"], ["work", "home"]] where command == Grazr.setOrderCommand(names: names) {
             return "order \(names.joined(separator: ","))"
         }
         return "other"

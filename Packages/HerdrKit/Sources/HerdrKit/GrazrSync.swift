@@ -9,16 +9,19 @@ public struct GrazrSyncState: Sendable, Equatable, Hashable, Codable {
     /// When the device's rotation last changed (epoch seconds).
     public var changedAt: Double?
 
-    /// A name in ACCOUNTS that no enrolled account has drops out. Without
+    /// A name in ACCOUNTS that no shared account has drops out. Without
     /// ACCOUNTS grazr rotates through every account, here sorted by name.
-    public init(report: GrazrReport) {
+    /// `clockOffset` is how far the device's clock runs ahead of this Mac's;
+    /// `changedAt` is moved onto this Mac's clock, so devices compare fairly.
+    public init(report: GrazrReport, clockOffset: Double = 0) {
+        let shared = report.syncableAccounts
         var ids: [String: String] = [:]
-        for account in report.accounts where ids[account.name] == nil { ids[account.name] = account.id }
+        for account in shared where ids[account.name] == nil { ids[account.name] = account.id }
         orderIDs = report.order.isEmpty
-            ? report.accounts.sorted { $0.name < $1.name }.map(\.id).uniqued()
+            ? shared.sorted { $0.name < $1.name }.map(\.id).uniqued()
             : report.order.compactMap { ids[$0] }.uniqued()
         activeID = report.active
-        changedAt = report.changedAt
+        changedAt = report.changedAt.map { $0 - clockOffset }
     }
 
     public init(orderIDs: [String], activeID: String?, changedAt: Double?) {
@@ -33,11 +36,26 @@ public struct GrazrSyncDevice: Sendable, Equatable {
     public let id: UUID
     public let name: String
     public let report: GrazrReport
+    /// How far the device's clock runs ahead of this Mac's (seconds), from
+    /// the time its reader printed against when the report arrived.
+    public let clockOffset: Double
 
-    public init(id: UUID, name: String, report: GrazrReport) {
+    public init(id: UUID, name: String, report: GrazrReport, clockOffset: Double = 0) {
         self.id = id
         self.name = name
         self.report = report
+        self.clockOffset = clockOffset
+    }
+
+    var state: GrazrSyncState { GrazrSyncState(report: report, clockOffset: clockOffset) }
+}
+
+extension GrazrReport {
+    /// Accounts the sync can match across devices: those known by Claude's
+    /// account id. One enrolled before grazr kept that id falls back to its
+    /// file name, which two devices can share for two different accounts.
+    public var syncableAccounts: [GrazrAccount] {
+        accounts.filter { $0.idFromFile != true }
     }
 }
 
@@ -62,6 +80,9 @@ public enum GrazrSyncProblem: Sendable, Equatable {
     case notEnrolled(accountID: String)
     case blocked(accountID: String, reason: String)
     case pinned(accountID: String)
+    /// The account has no headroom on that device, whose grazr would only
+    /// rotate away from it again.
+    case spent(accountID: String)
     /// The device's grazr cannot set ACCOUNTS this way.
     case needsUpdate
     /// grazr's own refusal, in its words.
@@ -121,6 +142,7 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
     private struct Fingerprint: Sendable, Hashable {
         var state: GrazrSyncState
         var blocked: [String]
+        var spent: [String]
         var enrolled: [String]
     }
 
@@ -131,7 +153,6 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
         var fingerprint: Fingerprint
         var at: Double
         var pushedAccount: String?
-        var hadHeadroom: Bool
         var source: UUID
     }
 
@@ -172,7 +193,7 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
 
     /// One round of reports in, the pushes that bring the rest to the target out.
     public mutating func observe(_ devices: [GrazrSyncDevice], now: Double) -> [GrazrSyncPush] {
-        let states = devices.map { GrazrSyncState(report: $0.report) }
+        let states = devices.map(\.state)
         for device in devices { names[device.id] = device.name }
         let changed = zip(devices, states).filter { device, state in
             lastSeen[device.id].map { !Self.equal($0, state) } ?? true
@@ -193,7 +214,7 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
     /// For a device HerdrM just pushed: its new state is the push landing,
     /// not a change of its own to spread.
     public mutating func settle(_ device: GrazrSyncDevice) {
-        lastSeen[device.id] = GrazrSyncState(report: device.report)
+        lastSeen[device.id] = device.state
     }
 
     /// After a push ran. grazr busy rotating is passing, so the next round
@@ -262,13 +283,15 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
         target = GrazrSyncTarget(orderIDs: state.orderIDs, activeID: state.activeID, at: at, source: winner.id)
     }
 
-    /// A follower whose grazr moved off a pushed account that still had
-    /// headroom there, soon after the push. The second within `bounceSpan`
-    /// pauses the sync; true then.
+    /// A follower whose grazr moved off a pushed account soon after the push.
+    /// Only accounts with headroom there are pushed, so whatever the reason
+    /// (thresholds that differ, a reading that changed), the devices are
+    /// undoing each other. The second within `bounceSpan` pauses the sync;
+    /// true then.
     private mutating func countBounces(devices: [GrazrSyncDevice], states: [GrazrSyncState], now: Double) -> Bool {
         for (device, state) in zip(devices, states) {
             guard let attempt = attempts[device.id], let account = attempt.pushedAccount,
-                  attempt.hadHeadroom, now - attempt.at <= Self.bounceWindow, state.activeID != account
+                  now - attempt.at <= Self.bounceWindow, state.activeID != account
             else { continue }
             attempts[device.id]?.pushedAccount = nil
             bounces = bounces.filter { now - $0 <= Self.bounceSpan } + [now]
@@ -284,6 +307,8 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
 
     /// The target in the device's own terms: its order rewritten in its
     /// names, extra accounts last, and a switch or the reason it cannot.
+    /// Names in its ACCOUNTS the sync cannot match (not enrolled yet, or
+    /// enrolled without an account id) keep their place after the others.
     /// Nil for the source, a device already there, or one asked already
     /// that has not changed since.
     private mutating func push(
@@ -294,10 +319,13 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
         else { return nil }
         let report = device.report
         let date = Date(timeIntervalSince1970: now)
-        let enrolled = Set(report.accounts.map(\.id))
+        let shared = report.syncableAccounts
+        let enrolled = Set(shared.map(\.id))
         // Only blocks still in force: one lapsing is a change worth retrying for.
         let blocked = report.accounts.filter { report.block(for: $0, now: date) != nil }.map(\.id).sorted()
-        let fingerprint = Fingerprint(state: state, blocked: blocked, enrolled: enrolled.sorted())
+        // Headroom coming back is a change worth retrying for too.
+        let spent = shared.filter { !report.hasHeadroom($0, now: date) }.map(\.id).sorted()
+        let fingerprint = Fingerprint(state: state, blocked: blocked, spent: spent, enrolled: enrolled.sorted())
         if let attempt = attempts[device.id], attempt.targetAt == target.at,
            attempt.fingerprint == fingerprint, now - attempt.at < Self.retryAfter {
             return nil
@@ -305,32 +333,32 @@ public struct GrazrSyncPlanner: Sendable, Equatable {
 
         let wanted = Set(target.orderIDs)
         let order = (target.orderIDs.filter(enrolled.contains) + state.orderIDs.filter { !wanted.contains($0) }).uniqued()
+        let names = Dictionary(shared.map { ($0.id, $0.name) }) { first, _ in first }
+        let matched = Set(names.values)
         let orderNames = order == state.orderIDs
             ? nil
-            : order.compactMap { id in report.accounts.first { $0.id == id }?.name }
+            : (order.compactMap { names[$0] } + report.order.filter { !matched.contains($0) }).uniqued()
 
         var switchTo: String?
         var problem: GrazrSyncProblem?
         if let account = target.activeID, account != state.activeID {
             if !enrolled.contains(account) {
                 problem = .notEnrolled(accountID: account)
-            } else if let block = report.accounts.first(where: { $0.id == account })
+            } else if let block = shared.first(where: { $0.id == account })
                 .flatMap({ report.block(for: $0, now: date) }) {
                 problem = .blocked(accountID: account, reason: block.reason)
             } else if report.heldAccountIDs.contains(account) {
                 problem = .pinned(accountID: account)
+            } else if let entry = shared.first(where: { $0.id == account }), !report.hasHeadroom(entry, now: date) {
+                problem = .spent(accountID: account)
             } else {
                 switchTo = account
             }
         }
         guard orderNames != nil || switchTo != nil || problem != nil else { return nil }
 
-        let hadHeadroom = switchTo
-            .flatMap { id in report.accounts.first { $0.id == id } }
-            .map { report.hasHeadroom($0, now: date) } ?? false
         attempts[device.id] = Attempt(
-            targetAt: target.at, fingerprint: fingerprint, at: now,
-            pushedAccount: switchTo, hadHeadroom: hadHeadroom, source: target.source
+            targetAt: target.at, fingerprint: fingerprint, at: now, pushedAccount: switchTo, source: target.source
         )
         return GrazrSyncPush(device: device.id, orderNames: orderNames, switchTo: switchTo, problem: problem)
     }

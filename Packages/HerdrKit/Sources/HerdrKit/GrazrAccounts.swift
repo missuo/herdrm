@@ -13,7 +13,7 @@ public enum Grazr {
     /// contributes the active account's id and plan and nothing else.
     public static let readerCommand = #"""
     python3 - <<'GRAZR_EOF'
-    import glob, json, os, shlex
+    import glob, json, os, shlex, time
     from datetime import datetime
 
     home = os.path.expanduser("~")
@@ -65,6 +65,7 @@ public enum Grazr {
         identifier = oauth.get("accountUuid") or os.path.basename(path)[:-5]
         report["accounts"].append({
             "id": identifier,
+            "id_from_file": not oauth.get("accountUuid"),
             "name": entry.get("name") or entry.get("email") or "",
             "organization": entry.get("organization"),
             # grazr's copy is the profile at enrolment or the last park, so a
@@ -110,6 +111,9 @@ public enum Grazr {
     stamps = [mtime(config), rotation.get("at") if isinstance(rotation, dict) and isinstance(rotation.get("at"), (int, float)) else None]
     stamps = [stamp for stamp in stamps if stamp is not None]
     report["changed_at"] = max(stamps) if stamps else None
+    # The device's clock, so a Mac comparing changed_at across devices can
+    # correct for one that runs fast or slow.
+    report["now"] = time.time()
 
     report["pins"] = {
         pane: {"account": entry.get("account"), "running": entry.get("running")}
@@ -228,15 +232,71 @@ public enum Grazr {
         pinsCommand(["unpin", paneID])
     }
 
-    /// Sets `ACCOUNTS` in config.env to `names`, in order. Prints a
-    /// `GrazrSwitchResult`.
-    public static func setAccountsCommand(names: [String]) -> String {
-        pinsCommand(["set", "ACCOUNTS", names.joined(separator: " ")])
+    /// Sets `ACCOUNTS` in grazr's config.env to `names`, in order, keeping
+    /// every other line and the line's comment, the way `list_in_rotation`
+    /// writes it: a name that needs quoting is double-quoted inside the one
+    /// double-quoted value grazr splits twice, so "my work" stays one name.
+    /// Names are written whether or not they are enrolled, so an entry the
+    /// sync could not match is not lost. Prints a `GrazrSwitchResult`.
+    public static func setOrderCommand(names: [String]) -> String {
+        SSHTunnel.remotePathExport + "\n"
+            + "python3 - \(names.map(HerdrService.shellQuoted).joined(separator: " ")) <<'GRAZR_EOF'\n"
+            + #"""
+            import json, re, sys, tempfile
+
+            def fail(output):
+                print(json.dumps({"ok": False, "output": output}))
+                sys.exit(0)
+
+            names = sys.argv[1:]
+            if any("#" in name for name in names):
+                fail("A name listed in ACCOUNTS can't contain #: grazr's config.env reads it as a comment.")
+
+            """#
+            + pluginPreamble
+            + #"""
+
+            def quoted(value):
+                if re.fullmatch(r"[\w@.+:/-]+", value):
+                    return value
+                return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+            inner = " ".join(quoted(entry) for entry in names)
+            value = '"' + inner.replace("\\", "\\\\").replace('"', '\\"') + '"'
+            path = grazr._config_path()
+            try:
+                with open(path) as handle:
+                    lines = handle.read().splitlines(True)
+            except OSError:
+                lines = []
+            for index, line in enumerate(lines):
+                key, separator, rest = line.partition("=")
+                if separator and key.strip() == "ACCOUNTS":
+                    comment = rest[rest.index("#"):].rstrip("\n") if "#" in rest else ""
+                    lines[index] = ("ACCOUNTS=%s  %s" % (value, comment)).rstrip() + "\n"
+                    break
+            else:
+                if lines and not lines[-1].endswith("\n"):
+                    lines[-1] += "\n"
+                lines.append("ACCOUNTS=%s\n" % value)
+            directory = os.path.dirname(path)
+            os.makedirs(directory, exist_ok=True)
+            # Whole or not at all: grazr may read the file mid-write.
+            handle, temporary = tempfile.mkstemp(dir=directory, prefix=".config.env.")
+            with os.fdopen(handle, "w") as out:
+                out.write("".join(lines))
+            if os.path.exists(path):
+                os.chmod(temporary, os.stat(path).st_mode & 0o777)
+            os.replace(temporary, path)
+            print(json.dumps({"ok": True, "output": "ACCOUNTS=%s" % " ".join(names)}))
+            GRAZR_EOF
+            """#
     }
 
-    /// What a grazr from before `set ACCOUNTS` answers with, so a caller can
+    /// What HerdrM's grazr commands say when the device's grazr is too old
+    /// for them ("… Update it to 0.4.7+senad.3 or later"), so a caller can
     /// tell "update grazr" from a real failure.
-    public static let needsUpdateMarker = "can be set this way"
+    public static let needsUpdateMarker = "Update it to"
 
     public static let installPinsCommand = pinsCommand(["pins-install"])
 
@@ -521,10 +581,13 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
     /// config.env's mtime and grazr's last rotation. Nil on an older grazr or
     /// when neither exists.
     public let changedAt: Double?
+    /// The device's clock when the reader ran (epoch seconds).
+    public let readAt: Double?
 
     enum CodingKeys: String, CodingKey {
         case installed, active, accounts, order, settings, blocked, pins
         case changedAt = "changed_at"
+        case readAt = "now"
         case pinsInstalled = "pins_installed"
     }
 
@@ -539,6 +602,7 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         pins = try container.decodeIfPresent([String: GrazrPin].self, forKey: .pins) ?? [:]
         pinsInstalled = try container.decodeIfPresent(Bool.self, forKey: .pinsInstalled) ?? false
         changedAt = try container.decodeIfPresent(Double.self, forKey: .changedAt)
+        readAt = try container.decodeIfPresent(Double.self, forKey: .readAt)
     }
 
     public init(
@@ -550,7 +614,8 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         blocked: [String: GrazrBlock] = [:],
         pins: [String: GrazrPin] = [:],
         pinsInstalled: Bool = false,
-        changedAt: Double? = nil
+        changedAt: Double? = nil,
+        readAt: Double? = nil
     ) {
         self.installed = installed
         self.active = active
@@ -561,6 +626,7 @@ public struct GrazrReport: Decodable, Sendable, Equatable {
         self.pins = pins
         self.pinsInstalled = pinsInstalled
         self.changedAt = changedAt
+        self.readAt = readAt
     }
 
     /// grazr's own defaults when config.env does not say.
@@ -810,15 +876,20 @@ public struct GrazrAccount: Decodable, Sendable, Equatable, Identifiable {
     public let updated: Double?
     /// When this account's pin token lapses (unix seconds); nil without one.
     public let tokenExpires: Double?
+    /// True when grazr kept no Claude account id for it and `id` is its file
+    /// name, which another device can use for a different account.
+    public let idFromFile: Bool?
 
     enum CodingKeys: String, CodingKey {
         case id, name, organization, plan, windows, updated
         case tokenExpires = "token_expires"
+        case idFromFile = "id_from_file"
     }
 
     public init(
         id: String, name: String, organization: String? = nil, plan: GrazrPlan? = nil,
-        windows: [GrazrWindow] = [], updated: Double? = nil, tokenExpires: Double? = nil
+        windows: [GrazrWindow] = [], updated: Double? = nil, tokenExpires: Double? = nil,
+        idFromFile: Bool? = nil
     ) {
         self.id = id
         self.name = name
@@ -827,6 +898,7 @@ public struct GrazrAccount: Decodable, Sendable, Equatable, Identifiable {
         self.windows = windows
         self.updated = updated
         self.tokenExpires = tokenExpires
+        self.idFromFile = idFromFile
     }
 
     /// An agent can be pinned to it: it has a token that has not lapsed.

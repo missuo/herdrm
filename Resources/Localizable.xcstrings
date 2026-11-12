@@ -9907,18 +9907,34 @@
         }
       }
     },
-    "grazr on %@ needs 0.4.7+senad.4 or later": {
+    "grazr on %@ needs an update": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "grazr on %@ needs 0.4.7+senad.4 or later"
+            "value": "grazr on %@ needs an update"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ 上的 grazr 需要 0.4.7+senad.4 或更高版本"
+            "value": "%@ 上的 grazr 需要更新"
+          }
+        }
+      }
+    },
+    "%@: %@ has no headroom there, still on %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@: %2$@ has no headroom there, still on %3$@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%1$@：%2$@ 在该设备上已无余量，仍在 %3$@"
           }
         }
       }
