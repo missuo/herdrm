@@ -7,6 +7,8 @@ import Foundation
 /// away the pipe closes and the next write's SIGPIPE ends the remote loop.
 ///
 /// Arguments: `$1` interval in seconds, `$2` frame count (0 = forever).
+/// On Linux the header also carries `agentcg <used> <limit>`: herdr's cgroup (anon +
+/// kernel memory of every pane against its `memory.max`), when herdr runs under a cap.
 /// Frame: `@@hm-begin`, `key value` header lines, then `@@procs` / `@@args` /
 /// `@@vm` / `@@df` sections, then `@@hm-end` — see `MachineStatsParser`.
 /// Command lines are sent only where the executable name doesn't say enough:
@@ -32,8 +34,23 @@ while :; do
     read l1 l5 l15 _ < /proc/loadavg; echo "load $l1 $l5 $l15"
     read c rest < /proc/stat; echo "cpu $rest"
     while read k v _; do
-      case $k in MemTotal:|MemAvailable:|SwapTotal:|SwapFree:) echo "mem ${k%:} $v";; esac
+      case $k in MemTotal:|MemAvailable:|MemFree:|Buffers:|Cached:|SwapTotal:|SwapFree:) echo "mem ${k%:} $v";; esac
     done < /proc/meminfo
+    # Only our own herdr: on a shared host another user's server has its own cap.
+    hp=
+    for p in $(ps -eo pid=,args= | awk '$2 ~ /(^|\/)herdr$/ && $3 == "server" {print $1}'); do
+      if [ -O "/proc/$p" ]; then hp=$p; break; fi
+    done
+    if [ -n "$hp" ]; then
+      cg=$(sed -n 's/^0:://p' "/proc/$hp/cgroup" 2>/dev/null)
+      if [ -n "$cg" ] && [ -r "/sys/fs/cgroup$cg/memory.max" ]; then
+        mx=$(cat "/sys/fs/cgroup$cg/memory.max")
+        if [ "$mx" != max ]; then
+          used=$(awk '$1=="anon"||$1=="kernel"{s+=$2} END{print s+0}' "/sys/fs/cgroup$cg/memory.stat" 2>/dev/null)
+          echo "agentcg ${used:-0} $mx"
+        fi
+      fi
+    fi
     echo "@@procs"
     cat /proc/[0-9]*/stat 2>/dev/null | awk '{c=$0; sub(/^[0-9]+ \(/,"",c); sub(/\) [^)]*$/,"",c); s=$0; sub(/.*\) /,"",s); split(s,a," "); print $1, a[2], a[12]+a[13], a[20], a[22], c}'
     echo "@@args"; ps -eo pid=,args= | awk "$want" | cut -c1-300

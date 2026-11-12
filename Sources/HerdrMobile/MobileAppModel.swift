@@ -24,6 +24,7 @@ final class MobileDeviceSession {
     private var snapshotRefreshToken: UUID?
     private var refreshRequested = false
     private var statusGeneration: UInt64 = 0
+    private var probing = false
 
     var onChange: (() -> Void)?
 
@@ -32,33 +33,72 @@ final class MobileDeviceSession {
     }
 
     func connect() async {
-        guard case .connecting = state else {
-            state = .connecting
-            onChange?()
-            do {
-                let transport: MobileTransport
-                switch device.kind {
-                case .ssh:
-                    transport = try await SSHDirectTransport.connect(device: device)
-                case .tailcat:
-                    transport = try await TailcatMobileTransport.connect(device: device)
-                }
-                let pong = try await transport.request(
-                    method: "ping", params: .object([:]), as: PingResult.self
-                )
-                guard pong.protocolVersion >= 17 else {
-                    await transport.close()
-                    throw HerdrError.incompatibleProtocol(pong.protocolVersion)
-                }
-                self.transport = transport
-                state = .connected(version: pong.version)
+        if case .connecting = state { return }
+        guard !probing else { return }
+        // Back from the background (or an app switch) the old connection is
+        // usually still up: keep it, with its open terminals, when it answers.
+        if case .connected = state, let transport {
+            probing = true
+            let alive = await Self.answers(transport)
+            probing = false
+            if alive, self.transport === transport {
+                if eventTask == nil { startEventPump() }
                 await refresh()
-                startEventPump()
-            } catch {
-                state = .failed((error as? LocalizedError)?.errorDescription ?? "\(error)")
+                return
             }
-            onChange?()
-            return
+        }
+        await dropTransport()
+        state = .connecting
+        onChange?()
+        do {
+            let transport: MobileTransport
+            switch device.kind {
+            case .ssh, .relay:
+                transport = try await SSHDirectTransport.connect(device: device)
+            case .tailcat:
+                transport = try await TailcatMobileTransport.connect(device: device)
+            }
+            let pong = try await transport.request(
+                method: "ping", params: .object([:]), as: PingResult.self
+            )
+            guard pong.protocolVersion >= 17 else {
+                await transport.close()
+                throw HerdrError.incompatibleProtocol(pong.protocolVersion)
+            }
+            self.transport = transport
+            state = .connected(version: pong.version)
+            await refresh()
+            startEventPump()
+        } catch {
+            state = .failed((error as? LocalizedError)?.errorDescription ?? "\(error)")
+        }
+        onChange?()
+    }
+
+    /// Whether `transport` still answers a ping within a few seconds.
+    private static func answers(_ transport: MobileTransport) async -> Bool {
+        await withTaskGroup(of: Bool.self) { group in
+            group.addTask {
+                (try? await transport.request(method: "ping", params: .object([:]), as: PingResult.self)) != nil
+            }
+            group.addTask {
+                try? await Task.sleep(for: .seconds(4))
+                return false
+            }
+            let first = await group.next() ?? false
+            group.cancelAll()
+            return first
+        }
+    }
+
+    /// Stops the event pump and closes the transport, keeping the snapshot so
+    /// the lists stay on screen while the connection comes back.
+    private func dropTransport() async {
+        eventTask?.cancel()
+        eventTask = nil
+        if let transport {
+            self.transport = nil
+            await transport.close()
         }
     }
 
@@ -242,6 +282,15 @@ final class MobileAppModel {
     var selectedSpaceID: String?
     var selectedAgentPaneID: String?
     var showAddDevice = false
+    /// A herdr pairing link the system opened Herdrm with (the iPhone Camera
+    /// scanned the Mac's code); Add Device pairs with it right away.
+    var pendingPairingLink: RelayPairingLink?
+
+    func openPairingURL(_ url: URL) {
+        guard let link = RelayPairingLink(url: url) else { return }
+        pendingPairingLink = link
+        showAddDevice = true
+    }
     /// Bumped by sessions to publish nested (non-Observable) state changes.
     private(set) var revision = 0
 
@@ -299,7 +348,8 @@ final class MobileAppModel {
         port: UInt16,
         username: String,
         authMethod: MobileDevice.AuthMethod,
-        password: String
+        password: String,
+        identityID: UUID? = nil
     ) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let device = MobileDevice(
@@ -307,7 +357,8 @@ final class MobileAppModel {
             host: host.trimmingCharacters(in: .whitespacesAndNewlines),
             port: port,
             username: username.trimmingCharacters(in: .whitespacesAndNewlines),
-            authMethod: authMethod
+            authMethod: authMethod,
+            identityID: identityID
         )
         if authMethod == .password {
             MobileSecretStore.setPassword(password, for: device.id)
@@ -330,6 +381,17 @@ final class MobileAppModel {
             try TailcatCredentialStore.setToken(token, for: device.id)
         } catch {
             return
+        }
+        devices.append(device)
+        store.save(devices)
+        selectDevice(device.id)
+    }
+
+    /// A Mac paired by QR code through the relay (`MobileRelay.pair`). If it
+    /// was paired before, the old entry is replaced so the Mac appears once.
+    func addRelayDevice(_ device: MobileDevice) {
+        if let old = devices.first(where: { $0.kind == .relay && $0.relay?.hostID == device.relay?.hostID }) {
+            removeDevice(old)
         }
         devices.append(device)
         store.save(devices)
@@ -397,6 +459,10 @@ final class MobileAppModel {
             Task { await TailcatBridgeManager.shared.tearDown(deviceID: device.id) }
         }
         KnownHostsStore.unpin(host: device.host, port: device.port)
+        if device.kind == .relay {
+            MobileRelay.forget(device.id)
+            if let hostID = device.relay?.hostID { KnownHostsStore.unpin(host: "relay:\(hostID)", port: 0) }
+        }
         devices.removeAll { $0.id == device.id }
         store.save(devices)
         if selectedDeviceID == device.id {
@@ -405,6 +471,112 @@ final class MobileAppModel {
             selectedAgentPaneID = nil
             connectSelected()
         }
+    }
+
+    // MARK: - New terminal / agent (same RPCs as the Mac app)
+
+    /// Why the last create failed; shown as an alert.
+    var actionError: String?
+    private(set) var isCreating = false
+
+    /// The space new tabs go into: the one on screen, else the server's
+    /// focused or first space (nil only when the server has none).
+    private var targetWorkspaceID: String? {
+        guard let snapshot = selectedSession?.snapshot else { return selectedSpaceID }
+        return selectedSpaceID ?? snapshot.focusedWorkspaceID ?? snapshot.workspaces.first?.workspaceID
+    }
+
+    func newTerminal() {
+        create { session, transport, workspaceID in
+            try await Self.newTab(transport, workspaceID: workspaceID, label: nil)
+        }
+    }
+
+    /// A fresh tab in the space plus `agent.start`. Agent names are global on
+    /// a herdr server, so a taken name retries with a short suffix.
+    func newAgent(kind: String) {
+        let label = newAgentLabel(kind: kind)
+        create { session, transport, workspaceID in
+            let paneID = try await Self.newTab(transport, workspaceID: workspaceID, label: label)
+            do {
+                do {
+                    try await Self.startAgent(transport, name: kind, kind: kind, paneID: paneID)
+                } catch HerdrError.rpc(let code, _) where code == "agent_name_taken" {
+                    let suffix = String(UUID().uuidString.prefix(4)).lowercased()
+                    try await Self.startAgent(transport, name: "\(kind)-\(suffix)", kind: kind, paneID: paneID)
+                }
+            } catch {
+                _ = try? await transport.request(method: "pane.close", params: .object(["pane_id": .string(paneID)]))
+                throw error
+            }
+            return paneID
+        }
+    }
+
+    private func create(
+        _ make: @escaping (MobileDeviceSession, MobileTransport, String?) async throws -> String
+    ) {
+        guard !isCreating, let session = selectedSession, let transport = session.transport else { return }
+        let workspaceID = targetWorkspaceID
+        isCreating = true
+        Task {
+            defer { isCreating = false }
+            do {
+                let paneID = try await make(session, transport, workspaceID)
+                await session.refresh()
+                if selectedSession === session { selectedAgentPaneID = paneID }
+            } catch {
+                actionError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+        }
+    }
+
+    /// `tab.create` in the space; with no space yet, a new space whose first
+    /// pane is used instead (as on the Mac).
+    private static func newTab(_ transport: MobileTransport, workspaceID: String?, label: String?) async throws -> String {
+        var params: [String: JSONValue] = ["focus": .bool(false)]
+        guard let workspaceID else {
+            let result = try await transport.request(method: "workspace.create", params: .object(params))
+            guard let paneID = result["root_pane"]?["pane_id"]?.stringValue
+            else { throw HerdrError.malformedResponse("workspace.create returned no root_pane.pane_id") }
+            return paneID
+        }
+        params["workspace_id"] = .string(workspaceID)
+        if let label { params["label"] = .string(label) }
+        let result = try await transport.request(method: "tab.create", params: .object(params))
+        guard let paneID = result["root_pane"]?["pane_id"]?.stringValue
+        else { throw HerdrError.malformedResponse("tab.create returned no root_pane.pane_id") }
+        return paneID
+    }
+
+    /// `agent.start`, retried for up to two seconds while the new tab's shell
+    /// is still starting (herdr answers `agent_pane_busy` until then).
+    private static func startAgent(_ transport: MobileTransport, name: String, kind: String, paneID: String) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while true {
+            do {
+                _ = try await transport.request(method: "agent.start", params: .object([
+                    "name": .string(name),
+                    "kind": .string(kind),
+                    "pane_id": .string(paneID),
+                    "args": .array([]),
+                ]))
+                return
+            } catch HerdrError.rpc(let code, let message) where code == "agent_pane_busy" {
+                guard ContinuousClock.now < deadline else { throw HerdrError.rpc(code: code, message: message) }
+                try await Task.sleep(for: .milliseconds(100))
+            }
+        }
+    }
+
+    /// Named after the space, like the Mac app ("cotabby", then "cotabby 2").
+    private func newAgentLabel(kind: String) -> String {
+        guard let snapshot = selectedSession?.snapshot else { return kind }
+        let space = targetWorkspaceID.flatMap { id in snapshot.workspaces.first { $0.workspaceID == id } }
+        let taken = Set(snapshot.agents.map { agent in
+            agent.title(tabLabel: snapshot.tabs?.first { $0.tabID == agent.tabID }?.customLabel)
+        })
+        return NewAgentLabel.make(spaceLabel: space?.label, kind: kind, taken: taken)
     }
 
     // MARK: - Derived lists (mirror the Mac sidebar)

@@ -27,6 +27,13 @@ final class MachineStatsModel: ObservableObject {
     /// Process ids of each agent pane on the watched device (`pane.process_info`).
     @Published private(set) var panePIDs: [String: Set<Int32>] = [:]
 
+    #if DEBUG
+    func _setSnapshotForTesting(_ snapshot: MachineSnapshot, device: Device) {
+        deviceID = device.id
+        apply(snapshot)
+    }
+    #endif
+
     /// Streams `device` until the calling task is cancelled (the indicator's
     /// `.task(id:)`), reconnecting with backoff when the sampler dies.
     func run(device: Device) async {

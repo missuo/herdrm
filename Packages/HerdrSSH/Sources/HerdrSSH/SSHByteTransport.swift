@@ -125,3 +125,43 @@ final class DirectTCPIPByteTransport: SSHByteTransport, @unchecked Sendable {
         }
     }
 }
+
+/// A stream descriptor the caller handed over (`SSHConnection.connect(overDescriptor:)`).
+/// There is no pump to wait for: whoever feeds the other end owns that.
+final class DescriptorByteTransport: SSHByteTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var descriptor: Int32
+
+    init(descriptor: Int32) throws {
+        guard descriptor >= 0 else { throw SSHError.connectionFailed }
+        let flags = fcntl(descriptor, F_GETFL, 0)
+        guard flags >= 0, fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0 else {
+            Darwin.close(descriptor)
+            throw SSHError.connectionFailed
+        }
+        var enabled: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_NOSIGPIPE, &enabled, socklen_t(MemoryLayout<Int32>.size))
+        self.descriptor = descriptor
+    }
+
+    func takeDescriptor() throws -> Int32 {
+        lock.lock()
+        defer { lock.unlock() }
+        guard descriptor >= 0 else { throw SSHError.connectionInvalidated }
+        let taken = descriptor
+        descriptor = -1
+        return taken
+    }
+
+    func close(timeout _: Duration) async throws { abort() }
+
+    func abort() {
+        lock.lock()
+        let fd = descriptor
+        descriptor = -1
+        lock.unlock()
+        if fd >= 0 { Darwin.close(fd) }
+    }
+
+    deinit { abort() }
+}

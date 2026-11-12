@@ -1,52 +1,39 @@
 import HerdrKit
 import SwiftUI
 
-/// iPhone: a navigation stack (lists → terminal). iPad: a split view whose
-/// sidebar mirrors the Mac app — Spaces, Agents, and a device switcher footer.
+/// Mirrors the Mac app's information architecture: a Server (device), its
+/// Spaces, then a Space's Agents (the primary thing) and Terminals (side
+/// helpers). Three columns on iPad; on iPhone the same columns collapse into a
+/// push stack (servers and spaces → agents and terminals → agent).
 struct MobileRootView: View {
     @Bindable var model: MobileAppModel
+    /// The sidebar's selection; drives the middle column (and the push on iPhone).
+    @State private var spaceRoute: SpaceRoute?
 
     var body: some View {
         NavigationSplitView {
-            SidebarListView(model: model)
-        } detail: {
-            if let device = model.selectedDevice, device.isTailcat,
-               model.selectedAgentPaneID != nil {
-                // tailcat carries herdr's control plane only — no shell, no
-                // PTY channel — so there is no terminal byte stream to attach
-                // to on iOS. Prompting stays available from the agent's row.
-                ContentUnavailableView(
-                    String(localized: "No Terminal over Tailcat"),
-                    systemImage: "terminal",
-                    description: Text(String(localized: "This device's tunnel reaches herdr's control plane only. Use an SSH device to attach to a live terminal."))
-                )
-            } else if let agent = model.selectedAgent,
-               let transport = model.selectedSession?.transport {
-                MobileTerminalScreen(
-                    transport: transport,
-                    target: .agent(paneID: agent.paneID),
-                    paneID: agent.paneID,
-                    title: agent.title(tabLabel: model.tabLabel(for: agent))
-                )
-                .id(agent.paneID)
-            } else if let pane = model.selectedTerminalPane,
-                      let terminalID = pane.terminalID,
-                      let transport = model.selectedSession?.transport {
-                MobileTerminalScreen(
-                    transport: transport,
-                    target: .terminal(terminalID: terminalID),
-                    paneID: pane.paneID,
-                    title: model.terminalLabel(for: pane)
-                )
-                .id(pane.paneID)
+            SidebarListView(model: model, spaceRoute: $spaceRoute)
+        } content: {
+            if spaceRoute != nil {
+                SpaceContentList(model: model)
             } else {
                 ContentUnavailableView(
-                    String(localized: "No Agent Selected"),
-                    systemImage: "terminal",
-                    description: Text(String(localized: "Pick an agent to attach to its terminal."))
+                    String(localized: "No Space Selected"),
+                    systemImage: "folder",
+                    description: Text(String(localized: "Pick a space to see its agents and terminals."))
                 )
             }
+        } detail: {
+            detail
         }
+        .onChange(of: spaceRoute) { _, route in
+            switch route {
+            case .space(let id): model.selectedSpaceID = id
+            case .all, nil: model.selectedSpaceID = nil
+            }
+            model.selectedAgentPaneID = nil
+        }
+        .onChange(of: model.selectedDeviceID) { _, _ in spaceRoute = nil }
         .sheet(isPresented: $model.showAddDevice) {
             AddDeviceSheet(model: model)
         }
@@ -54,13 +41,63 @@ struct MobileRootView: View {
             if model.selectedDeviceID != nil { model.connectSelected() }
         }
     }
+
+    @ViewBuilder
+    private var detail: some View {
+        if let agent = model.selectedAgent,
+           let transport = model.selectedSession?.transport {
+            // The chat answers choices and sends prompts over herdr RPCs, so it
+            // works over tailcat too; only the Terminal tab needs SSH.
+            MobileAgentDetailView(
+                transport: transport,
+                agent: agent,
+                title: agent.title(tabLabel: model.tabLabel(for: agent)),
+                terminalAvailable: model.selectedDevice?.isTailcat != true
+            )
+            .id(agent.paneID)
+        } else if let device = model.selectedDevice, device.isTailcat,
+                  model.selectedTerminalPane != nil {
+            // tailcat carries herdr's control plane only — no shell, no PTY
+            // channel — so there is no terminal byte stream to attach to on iOS.
+            ContentUnavailableView(
+                String(localized: "No Terminal over Tailcat"),
+                systemImage: "terminal",
+                description: Text(String(localized: "This device's tunnel reaches herdr's control plane only. Use an SSH device to attach to a live terminal."))
+            )
+        } else if let pane = model.selectedTerminalPane,
+                  let terminalID = pane.terminalID,
+                  let transport = model.selectedSession?.transport {
+            MobileTerminalScreen(
+                transport: transport,
+                target: .terminal(terminalID: terminalID),
+                paneID: pane.paneID,
+                title: model.terminalLabel(for: pane)
+            )
+            .id(pane.paneID)
+        } else {
+            ContentUnavailableView(
+                String(localized: "No Agent Selected"),
+                systemImage: "bubble.left.and.text.bubble.right",
+                description: Text(String(localized: "Pick an agent to chat with it, or a terminal to attach to it."))
+            )
+        }
+    }
 }
 
+/// Which spaces the middle column lists: all of the server's, or one.
+enum SpaceRoute: Hashable {
+    case all
+    case space(String)
+}
+
+/// Top level: the servers, then the selected server's spaces.
 private struct SidebarListView: View {
     @Bindable var model: MobileAppModel
+    @Binding var spaceRoute: SpaceRoute?
+    @State private var showKeys = false
 
     var body: some View {
-        List(selection: $model.selectedAgentPaneID) {
+        List(selection: $spaceRoute) {
             if model.devices.isEmpty {
                 ContentUnavailableView {
                     Label(String(localized: "No Devices"), systemImage: "desktopcomputer")
@@ -72,17 +109,21 @@ private struct SidebarListView: View {
                 }
                 .listRowSeparator(.hidden)
             } else {
+                serversSection
                 connectionSection
                 spacesSection
-                agentsSection
-                terminalsSection
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("herdrm")
+        .navigationTitle("Herdrm")
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                DeviceSwitcherMenu(model: model)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showKeys = true
+                } label: {
+                    Image(systemName: "key.horizontal")
+                }
+                .accessibilityLabel(String(localized: "Keys"))
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -90,10 +131,45 @@ private struct SidebarListView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityLabel(String(localized: "Add Device"))
             }
         }
+        .sheet(isPresented: $showKeys) { IdentitiesView() }
         .refreshable {
             await model.selectedSession?.refresh()
+        }
+    }
+
+    private var serversSection: some View {
+        Section(String(localized: "Servers")) {
+            ForEach(model.devices) { device in
+                let selected = device.id == model.selectedDeviceID
+                Button {
+                    model.selectDevice(device.id)
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "desktopcomputer")
+                            .foregroundStyle(selected ? Color.accentColor : .secondary)
+                        Text(device.name)
+                            .fontWeight(selected ? .semibold : .regular)
+                            .lineLimit(1)
+                        Spacer()
+                        if selected {
+                            ConnectionDot(state: model.selectedConnectionState)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(device.name)
+                .accessibilityValue(selected ? String(localized: "Selected") : "")
+                .accessibilityHint(String(localized: "Shows this server's spaces."))
+                .contextMenu {
+                    Button(String(localized: "Remove \(device.name)"), role: .destructive) {
+                        model.removeDevice(device)
+                    }
+                }
+            }
         }
     }
 
@@ -126,31 +202,84 @@ private struct SidebarListView: View {
 
     private var spacesSection: some View {
         Section(String(localized: "Spaces")) {
-            Button {
-                model.selectedSpaceID = nil
-            } label: {
+            NavigationLink(value: SpaceRoute.all) {
                 SpaceRow(
                     label: String(localized: "All Spaces"),
                     systemImage: "square.grid.2x2",
                     count: model.spaces.count,
-                    selected: model.selectedSpaceID == nil
+                    selected: spaceRoute == .all
                 )
             }
-            .buttonStyle(.plain)
             ForEach(model.spaces) { space in
-                Button {
-                    model.selectedSpaceID = space.workspaceID
-                } label: {
+                NavigationLink(value: SpaceRoute.space(space.workspaceID)) {
                     SpaceRow(
                         label: space.label,
                         systemImage: "folder",
                         count: nil,
-                        selected: model.selectedSpaceID == space.workspaceID
+                        selected: spaceRoute == .space(space.workspaceID)
                     )
                 }
-                .buttonStyle(.plain)
             }
         }
+    }
+}
+
+/// A space's agents first (where the work happens), then its terminals.
+private struct SpaceContentList: View {
+    @Bindable var model: MobileAppModel
+
+    var body: some View {
+        List(selection: $model.selectedAgentPaneID) {
+            agentsSection
+            terminalsSection
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle(model.selectedSpaceID.map(model.spaceName(for:)) ?? String(localized: "All Spaces"))
+        .refreshable {
+            await model.selectedSession?.refresh()
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { newMenu }
+        }
+        .alert(
+            String(localized: "Couldn't create it"),
+            isPresented: Binding(get: { model.actionError != nil }, set: { if !$0 { model.actionError = nil } })
+        ) {
+            Button(String(localized: "OK"), role: .cancel) {}
+        } message: {
+            Text(model.actionError ?? "")
+        }
+    }
+
+    private var isConnected: Bool {
+        if case .connected = model.selectedConnectionState { return true }
+        return false
+    }
+
+    /// New Agent (Claude and Codex first, the rest under More) and New Terminal,
+    /// in the space on screen.
+    private var newMenu: some View {
+        Menu {
+            Section(String(localized: "New Agent")) {
+                ForEach(AgentKinds.known.prefix(2), id: \.kind) { row in
+                    Button(row.label, systemImage: "sparkles") { model.newAgent(kind: row.kind) }
+                }
+                Menu(String(localized: "More Agents"), systemImage: "ellipsis.circle") {
+                    ForEach(AgentKinds.known.dropFirst(2), id: \.kind) { row in
+                        Button(row.label) { model.newAgent(kind: row.kind) }
+                    }
+                }
+            }
+            Button(String(localized: "New Terminal"), systemImage: "terminal") { model.newTerminal() }
+        } label: {
+            if model.isCreating {
+                ProgressView()
+            } else {
+                Image(systemName: "plus")
+            }
+        }
+        .disabled(!isConnected || model.isCreating)
+        .accessibilityLabel(String(localized: "New agent or terminal"))
     }
 
     @ViewBuilder
@@ -275,47 +404,6 @@ private struct StatusGlyph: View {
     }
 }
 
-/// Top-left device switcher: a compact chip naming the current device, with
-/// the device list, add, and remove actions in its menu.
-private struct DeviceSwitcherMenu: View {
-    @Bindable var model: MobileAppModel
-
-    var body: some View {
-        if let device = model.selectedDevice {
-            Menu {
-                ForEach(model.devices) { candidate in
-                    Button {
-                        model.selectDevice(candidate.id)
-                    } label: {
-                        if candidate.id == model.selectedDeviceID {
-                            Label(candidate.name, systemImage: "checkmark")
-                        } else {
-                            Text(candidate.name)
-                        }
-                    }
-                }
-                Divider()
-                Button(String(localized: "Add Device…")) { model.showAddDevice = true }
-                if let selected = model.selectedDevice {
-                    Button(String(localized: "Remove \(selected.name)"), role: .destructive) {
-                        model.removeDevice(selected)
-                    }
-                }
-            } label: {
-                HStack(spacing: 6) {
-                    ConnectionDot(state: model.selectedConnectionState)
-                    Text(device.name)
-                        .font(.callout.weight(.medium))
-                        .lineLimit(1)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-}
-
 private struct ConnectionDot: View {
     let state: MobileConnectionState
 
@@ -343,7 +431,8 @@ struct AddDeviceSheet: View {
     @State private var host = ""
     @State private var port = "22"
     @State private var username = ""
-    @State private var authMethod: MobileDevice.AuthMethod = .deviceKey
+    @State private var authMethod: MobileDevice.AuthMethod = .identity
+    @State private var identityID: UUID?
     @State private var password = ""
     @State private var tailcatToken = ""
     @State private var copiedKey = false
@@ -355,10 +444,12 @@ struct AddDeviceSheet: View {
         case .ssh:
             return !host.trimmingCharacters(in: .whitespaces).isEmpty
                 && !username.trimmingCharacters(in: .whitespaces).isEmpty
-                && (authMethod == .deviceKey || !password.isEmpty)
+                && (authMethod != .password || !password.isEmpty)
                 && UInt16(port) != nil
         case .tailcat:
             return !tailcatToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .relay:
+            return false // pairing adds the device itself
         }
     }
 
@@ -367,11 +458,15 @@ struct AddDeviceSheet: View {
             Form {
                 Section {
                     Picker(String(localized: "Connection"), selection: $kind) {
-                        Text(String(localized: "SSH")).tag(MobileDevice.Kind.ssh)
+                        Text(String(localized: "Direct (IP or hostname)")).tag(MobileDevice.Kind.ssh)
+                        Text(String(localized: "Pair with Mac (no public IP)")).tag(MobileDevice.Kind.relay)
                         Text(String(localized: "Tailcat")).tag(MobileDevice.Kind.tailcat)
                     }
                 }
 
+                if kind == .relay {
+                    RelayPairingSections(model: model, onPaired: { dismiss() })
+                } else {
                 Section(String(localized: "Device")) {
                     TextField(String(localized: "Name (optional)"), text: $name)
                     if kind == .ssh {
@@ -399,8 +494,12 @@ struct AddDeviceSheet: View {
                 } else {
                     sshSections
                 }
+                }
             }
             .navigationTitle(String(localized: "Add Device"))
+            // A herdrm://pair link (the Camera scanned a Mac's code) goes
+            // straight to pairing, whatever the default connection is.
+            .onAppear { if model.pendingPairingLink != nil { kind = .relay } }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -416,14 +515,18 @@ struct AddDeviceSheet: View {
                                 port: UInt16(port) ?? 22,
                                 username: username,
                                 authMethod: authMethod,
-                                password: password
+                                password: password,
+                                identityID: authMethod == .identity ? identityID : nil
                             )
                         case .tailcat:
                             model.addTailcatDevice(name: name, token: tailcatToken)
+                        case .relay:
+                            break
                         }
                         dismiss()
                     }
                     .disabled(!canAdd)
+                    .opacity(kind == .relay ? 0 : 1)
                 }
             }
         }
@@ -481,8 +584,12 @@ struct AddDeviceSheet: View {
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
             Picker(String(localized: "Authentication"), selection: $authMethod) {
-                Text(String(localized: "Device Key")).tag(MobileDevice.AuthMethod.deviceKey)
+                Text(String(localized: "SSH Key")).tag(MobileDevice.AuthMethod.identity)
+                Text(String(localized: "This Phone's Key")).tag(MobileDevice.AuthMethod.deviceKey)
                 Text(String(localized: "Password")).tag(MobileDevice.AuthMethod.password)
+            }
+            if authMethod == .identity {
+                IdentityPicker(identityID: $identityID)
             }
             if authMethod == .password {
                 SecureField(String(localized: "Password"), text: $password)
@@ -502,11 +609,11 @@ struct AddDeviceSheet: View {
                     UIPasteboard.general.string = model.deviceKeyAuthorizedLine
                     copiedKey = true
                 }
-                Text(String(localized: "On the Mac, run: echo '<key>' >> ~/.ssh/authorized_keys — or paste the line into herdrm's upcoming pairing screen."))
+                Text(String(localized: "On the server, run: echo '<key>' >> ~/.ssh/authorized_keys. A Mac without a public IP can pair by QR code instead (Pair with Mac)."))
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
-        } else {
+        } else if authMethod == .password {
             Section {
                 Text(String(localized: "The password is stored in this device's Keychain and never leaves it except to log in over SSH."))
                     .font(.footnote)

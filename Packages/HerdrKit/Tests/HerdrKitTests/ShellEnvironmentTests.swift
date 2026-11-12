@@ -131,7 +131,7 @@ final class ShellEnvironmentTests: XCTestCase {
         ])
         let service = HerdrService(device: .local, localServer: nil)
 
-        let found = await service.installedAgents(
+        let found = try await service.installedAgents(
             from: ["claude", "cursor", "codex"],
             snapshot: snapshot
         )
@@ -143,14 +143,14 @@ final class ShellEnvironmentTests: XCTestCase {
             cursor.appendingPathComponent("cursor-agent").path
         )
 
-        let overridden = await service.installedAgents(
+        let overridden = try await service.installedAgents(
             from: ["codex"],
             overrides: ["codex": "/no/such/codex"],
             snapshot: snapshot
         )
         XCTAssertTrue(overridden.isEmpty, "a missing override must not fall back to auto-detect")
 
-        let redirected = await service.installedAgents(
+        let redirected = try await service.installedAgents(
             from: ["codex"],
             overrides: ["codex": "~/bin/cursor-agent"],
             snapshot: snapshot
@@ -166,7 +166,7 @@ final class ShellEnvironmentTests: XCTestCase {
             "HOME": directory.path,
         ])
         let service = HerdrService(device: .local, localServer: nil)
-        let found = await service.installedAgents(
+        let found = try await service.installedAgents(
             from: ["pi"],
             includingIntegrationKinds: ["omp", "omp"],
             snapshot: snapshot
@@ -177,14 +177,14 @@ final class ShellEnvironmentTests: XCTestCase {
             binaries.appendingPathComponent("omp").path,
         ])
 
-        let advertised = await service.installedAgents(
+        let advertised = try await service.installedAgents(
             from: ["omp", "pi"],
             includingIntegrationKinds: ["omp"],
             snapshot: snapshot
         )
         XCTAssertEqual(advertised.map(\.kind), ["omp", "pi"])
 
-        let missing = await service.installedAgents(
+        let missing = try await service.installedAgents(
             from: ["pi"],
             includingIntegrationKinds: ["omp"],
             overrides: ["omp": directory.appendingPathComponent("missing-omp").path],

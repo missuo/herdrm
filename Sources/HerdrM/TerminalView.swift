@@ -12,6 +12,8 @@ enum TerminalDefaults {
     static let lineSpacingKey = "terminal.lineSpacing"
     /// Show every pane of the selected tab, arranged like the herdr TUI.
     static let tabLayoutKey = "terminal.tabLayout"
+    /// Which Option keys act as Meta (`TerminalOptionAsAlt` raw value).
+    static let optionAsAltKey = "terminal.optionAsAlt"
     static let defaultFontSize: Double = 12.5
     /// `NSFont.Weight` rawValue; 0 is `.regular`. Only the system monospaced font
     /// has selectable weights — named families ship fixed faces and ignore this.
@@ -58,6 +60,15 @@ enum TerminalDefaults {
     static func registerBundledFonts() {
         guard let url = Bundle.main.url(forResource: "SymbolsNerdFontMono-Regular", withExtension: "ttf") else { return }
         CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    }
+
+    static func systemMonospacedFamily(fontSize: Double, fontWeight: Double) -> String {
+        let font = NSFont.monospacedSystemFont(
+            ofSize: CGFloat(fontSize), weight: NSFont.Weight(rawValue: CGFloat(fontWeight))
+        )
+        // The system family may be private; "SF Mono" is not always discoverable.
+        // Menlo is macOS's bundled monospace fallback if AppKit omits a family.
+        return font.familyName ?? "Menlo"
     }
 
     static func font(name: String, size: Double, weight: Double = defaultFontWeight) -> NSFont {
@@ -110,12 +121,48 @@ enum TerminalDefaults {
     }
 }
 
+/// Which Option keys the terminal treats as Meta (Ghostty's
+/// `macos-option-as-alt`). Layouts that type characters with Option (German
+/// ⌥L → `@`, ⌥N → `~`) need it off. Ghostty also takes `left` / `right`, but the
+/// pinned libghostty-spm never reports which Option key is down (no
+/// NX_DEVICERALTKEYMASK → altRight), so a one-sided setting would act on both
+/// keys or neither; add those cases once the dependency reports the side.
+enum TerminalOptionAsAlt: String {
+    case both, off
+
+    var ghosttyValue: String {
+        switch self {
+        case .both: "true"
+        case .off: "false"
+        }
+    }
+}
+
 /// The process-wide Ghostty app object: every terminal surface shares it, so
 /// appearance settings land once here instead of per view. Ghostty owns the
 /// light/dark switch itself — the theme below carries both palettes and the
 /// view forwards the effective appearance.
 @MainActor
 enum GhosttyRuntime {
+    private static var symbolMappingCache: [String: [String]] = [:]
+
+    /// An empty `family` means System Mono. Its family name is private and
+    /// CTFontCreateWithName would substitute Helvetica, so take the font itself.
+    private static func symbolMappings(for family: String) -> [String] {
+        if let cached = symbolMappingCache[family] { return cached }
+        let primary = family.isEmpty
+            ? NSFont.monospacedSystemFont(ofSize: 12, weight: .regular) as CTFont
+            : CTFontCreateWithName(family as CFString, 12, nil)
+        let symbols = CTFontCreateWithName(TerminalDefaults.symbolFallbackFamily as CFString, 12, nil)
+        let mappings = TerminalFontFallback.ranges(
+            primary: CTFontCopyCharacterSet(primary), symbols: CTFontCopyCharacterSet(symbols)
+        ).map { range in
+            "U+\(String(range.lowerBound, radix: 16))-U+\(String(range.upperBound, radix: 16))=\(TerminalDefaults.symbolFallbackFamily)"
+        }
+        symbolMappingCache[family] = mappings
+        return mappings
+    }
+
     static let controller = TerminalController(
         configSource: .none,
         theme: makeTheme()
@@ -124,22 +171,26 @@ enum GhosttyRuntime {
     /// Font settings are hot-applied; surfaces pick the change up without a
     /// rebuild, so this runs from every view update — the controller dedupes.
     static func applyFontSettings(
-        fontName: String, fontSize: Double, fontWeight: Double, lineSpacing: Double, copyOnSelect: Bool
+        fontName: String, fontSize: Double, fontWeight: Double, thinStrokes: Bool,
+        lineSpacing: Double, copyOnSelect: Bool, optionAsAlt: TerminalOptionAsAlt
     ) {
         controller.setTerminalConfiguration(
             fontConfiguration(
                 fontName: fontName, fontSize: fontSize, fontWeight: fontWeight,
-                lineSpacing: lineSpacing, copyOnSelect: copyOnSelect
+                thinStrokes: thinStrokes, lineSpacing: lineSpacing, copyOnSelect: copyOnSelect,
+                optionAsAlt: optionAsAlt
             )
         )
     }
 
-    private static func fontConfiguration(
+    static func fontConfiguration(
         fontName: String,
         fontSize: Double,
         fontWeight: Double,
+        thinStrokes: Bool,
         lineSpacing: Double,
-        copyOnSelect: Bool
+        copyOnSelect: Bool,
+        optionAsAlt: TerminalOptionAsAlt = .both
     ) -> TerminalConfiguration {
         TerminalConfiguration { builder in
             builder.withFontSize(Float(fontSize))
@@ -149,13 +200,11 @@ enum GhosttyRuntime {
             builder.withCustom("copy-on-select", copyOnSelect ? "clipboard" : "false")
             builder.withCursorStyle(.block)
             builder.withCursorStyleBlink(true)
-            // The controller's base config is TerminalConfiguration.default,
-            // which enables font-thicken — counter it; fake bold at terminal
-            // sizes is what the "thin strokes" default exists to avoid.
-            builder.withFontThicken(false)
-            // Option-as-Meta: matches what the SwiftTerm embed did, and the
-            // readline chords below (⌥⌫ → ESC DEL etc.) assume it.
-            builder.withCustom("macos-option-as-alt", "true")
+            builder.withFontThicken(!thinStrokes)
+            // Option-as-Meta defaults to both keys, as the SwiftTerm embed did.
+            // The ⌥⌫/⌥←/⌥→/⌥⌦ readline chords are sent by LineBreakTerminalView
+            // itself, so they keep working whichever keys are left as Option.
+            builder.withCustom("macos-option-as-alt", optionAsAlt.ghosttyValue)
             // HerdrM owns copy only while Ghostty has a local selection. With
             // no local selection, Command-C must reach a mouse-aware pane app.
             builder.withCustom("keybind", "super+c=unbind")
@@ -169,21 +218,20 @@ enum GhosttyRuntime {
             if !fontName.isEmpty {
                 builder.withFontFamily(fontName)
             } else {
-                builder.withFontFamily("SF Mono")
+                builder.withFontFamily(TerminalDefaults.systemMonospacedFamily(
+                    fontSize: fontSize, fontWeight: fontWeight
+                ))
                 if let face = fontFaceName(forWeight: fontWeight) {
                     // Weight selection only exists for the system font; named
                     // families ship fixed faces and ignore the picker.
                     builder.withCustom("font-style", face)
                 }
             }
-            // Nerd Font icons live in Unicode's Private Use Area, which
-            // CoreText's default cascade never resolves. A second font-family
-            // entry would be Ghostty's fallback list, but Ghostty then derives
-            // cell metrics from the symbols font (square advance == line height),
-            // wrecking the grid — so the PUA ranges are codepoint-mapped instead.
-            builder.withCustom("font-codepoint-map", "U+E000-U+F8FF=\(TerminalDefaults.symbolFallbackFamily)")
-            builder.withCustom("font-codepoint-map", "U+F0000-U+FFFFD=\(TerminalDefaults.symbolFallbackFamily)")
-            builder.withCustom("font-codepoint-map", "U+100000-U+10FFFD=\(TerminalDefaults.symbolFallbackFamily)")
+            // Keep the primary face's icon proportions. Map only missing symbols
+            // without letting a fallback family change the terminal cell metrics.
+            for mapping in symbolMappings(for: fontName) {
+                builder.withCustom("font-codepoint-map", mapping)
+            }
             if lineSpacing != TerminalDefaults.defaultLineSpacing {
                 let percent = Int(((lineSpacing - 1.0) * 100).rounded())
                 builder.withCustom("adjust-cell-height", "\(percent)%")
@@ -253,10 +301,12 @@ private func terminalEnvironment(_ commandEnvironment: [String: String]) -> [Str
 final class TerminalProcessHost {
     let session: InMemoryTerminalSession
     let process = TerminalProcess()
+    private let isHerdrAttach: Bool
     /// Guards `lightAdapter`: written on the main thread (theme switch), read on
     /// the process's IO queue.
     private let adapterLock = NSLock()
     private var lightAdapter: LightTerminalANSIAdapter?
+    private var lightColorsEnabled: Bool?
     private let viewportBox = ViewportBox()
 
     /// The last grid Ghostty reported, for mapping a click to a cell.
@@ -264,8 +314,12 @@ final class TerminalProcessHost {
 
     /// Called on the main queue with the child's real exit status.
     var onExit: ((Int32?) -> Void)?
+    /// Called on the process's IO queue after each chunk of output reached the
+    /// session. Set before `start`; the session may not have parsed it yet.
+    var onOutput: (() -> Void)?
 
-    init() {
+    init(isHerdrAttach: Bool = false) {
+        self.isHerdrAttach = isHerdrAttach
         let process = self.process
         let viewportBox = self.viewportBox
         session = InMemoryTerminalSession(
@@ -299,13 +353,20 @@ final class TerminalProcessHost {
         process.terminate()
     }
 
-    /// The light theme rewrites program-emitted colors for contrast on white.
-    /// Switching themes installs a fresh adapter so a partial SGR retained at a
-    /// chunk boundary cannot prepend stale bytes to the other theme's output.
+    /// Recolor new output, then ask Herdr attach to repaint existing cells too.
+    /// Updating Ghostty's default colors alone cannot undo explicit ANSI RGB
+    /// values that the light adapter already wrote into a kept-alive surface.
     func setLightColorsEnabled(_ enabled: Bool) {
         adapterLock.lock()
+        guard lightColorsEnabled != enabled else {
+            adapterLock.unlock()
+            return
+        }
+        let needsRedraw = isHerdrAttach && lightColorsEnabled != nil
+        lightColorsEnabled = enabled
         lightAdapter = enabled ? LightTerminalANSIAdapter() : nil
         adapterLock.unlock()
+        if needsRedraw { process.requestRedraw() }
     }
 
     private func receiveOutput(_ data: Data) {
@@ -323,6 +384,7 @@ final class TerminalProcessHost {
         } else {
             session.receive(data)
         }
+        onOutput?()
     }
 }
 
@@ -334,6 +396,43 @@ private final class ViewportBox: @unchecked Sendable {
     var value: InMemoryTerminalViewport? {
         get { lock.lock(); defer { lock.unlock() }; return stored }
         set { lock.lock(); stored = newValue; lock.unlock() }
+    }
+}
+
+/// Coalesces a pane's output (IO queue) into at most one queued main-queue
+/// hop, and none while the pane does not paint thumbnails.
+private final class ThumbnailOutputSignal: @unchecked Sendable {
+    private let lock = NSLock()
+    private var enabled = false
+    private var queued = false
+
+    func setEnabled(_ value: Bool) {
+        lock.lock(); enabled = value; lock.unlock()
+    }
+
+    /// True when the caller should hop to main; the hop then calls `release()`.
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard enabled, !queued else { return false }
+        queued = true
+        return true
+    }
+
+    func release() {
+        lock.lock(); queued = false; lock.unlock()
+    }
+}
+
+/// A one-shot latch: the first `claim()` wins.
+private final class ThumbnailOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }
 
@@ -379,13 +478,21 @@ private enum ClipboardFileError: LocalizedError {
 /// press. Turning Mouse Reporting off keeps every gesture local.
 ///
 /// IME: Ghostty implements `NSTextInputClient` itself and renders the marked
-/// text in the grid; the only hook needed here is keeping ⌘/⌃ chords off the
-/// PTY while `hasMarkedText()`.
+/// text in the grid. Host hooks keep ⌘/⌃ chords off the PTY during composition
+/// and expose valid insertion ranges to external input methods.
 final class LineBreakTerminalView: AppTerminalView {
+    /// Report clicks even when this view was already the first responder.
+    var onActivate: (() -> Void)?
+
+    /// Kept-alive attaches behind another pane or panel must not receive a
+    /// deferred focus request while SwiftUI is changing the selection.
+    var allowsAttachFocus = true
     /// When false, mouse button events always stay local even if the TUI
     /// requested mouse reporting (Shift bypasses it either way).
     var mouseReportingEnabled = true
-    var appliedDarkAppearance: Bool?
+    var appliedDarkAppearance: Bool? {
+        didSet { if appliedDarkAppearance != oldValue { placeThumbnailOverlays() } }
+    }
     /// The live surface, captured by the coordinator's lifecycle delegate —
     /// `AppTerminalView.surface` is internal, so selection queries come in here.
     weak var attachedSurface: TerminalSurface?
@@ -393,7 +500,9 @@ final class LineBreakTerminalView: AppTerminalView {
     /// Ghostty's grid as its resize delegate last reported it. The session's
     /// `viewport` (from the PTY resize callback) carries columns, rows and the
     /// surface size but no cell size, so this is where cell pixels come from.
-    var gridMetrics: TerminalGridMetrics?
+    var gridMetrics: TerminalGridMetrics? {
+        didSet { placeThumbnailOverlays() }
+    }
     /// Where printed file paths resolve: the pane's working directory, and
     /// whether the pane's files are on this Mac at all. Nil disables path
     /// links (an app shell has no herdr cwd to anchor relative paths, but its
@@ -539,18 +648,29 @@ final class LineBreakTerminalView: AppTerminalView {
     override func mouseDown(with event: NSEvent) {
         hideLinkPopup()
         pendingLinkClick = nil
-        if isMouseCaptured, mouseReportingEnabled,
-           event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-               .subtracting([.capsLock, .function]) == .command,
-           let url = hoveredLink ?? linkURL(at: event) {
-            // A captured ⌘-click would reach the TUI, and fullscreen Claude
-            // Code opens links itself — with `open` on its own host, which for
-            // a remote device is the remote Mac. The whole gesture stays here.
-            pendingLinkClick = url
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .function]) == .command {
+            // Shift keeps the gesture local when a remote TUI captures the mouse.
+            let hit = linkHit(atWindowPoint: event.locationInWindow)
+            pendingLinkClick = LinkClick(
+                point: event.locationInWindow,
+                printedURL: hit?.link.url,
+                clickedRow: hit?.line
+            )
+            // A ⌘-click still selects this pane, as any other click does.
+            window?.makeFirstResponder(self)
+            onActivate?()
+            let localEvent = self.event(event, for: .local)
+            // The embedded core ignores same-position mouse updates, even
+            // when Shift changed. Re-enter with the local modifiers so its
+            // native link hover is refreshed before the press and release.
+            sendMousePos(x: -1, y: -1, modifiers: TerminalInputModifiers(from: localEvent.modifierFlags))
+            super.mouseDown(with: localEvent)
             return
         }
         // Ghostty focuses on the press; a held-back press must still do that.
         window?.makeFirstResponder(self)
+        onActivate?()
         heldPress = event
         let actions = gestureRouter.press(
             at: event.locationInWindow,
@@ -563,14 +683,25 @@ final class LineBreakTerminalView: AppTerminalView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        guard pendingLinkClick == nil else { return }
+        if let click = pendingLinkClick {
+            if hypot(event.locationInWindow.x - click.point.x, event.locationInWindow.y - click.point.y)
+                >= MouseGestureRouter.dragThreshold {
+                pendingLinkClick?.dragged = true
+            }
+            super.mouseDragged(with: self.event(event, for: .local))
+            return
+        }
         perform(gestureRouter.drag(to: event.locationInWindow), with: event)
     }
 
     override func mouseUp(with event: NSEvent) {
-        if let url = pendingLinkClick {
-            pendingLinkClick = nil
-            Self.openClickedLink(url, isLocal: pathContext?.isLocal ?? false)
+        if pendingLinkClick != nil {
+            defer { pendingLinkClick = nil }
+            super.mouseUp(with: self.event(event, for: .local))
+            if let click = pendingLinkClick, !click.opened, !click.dragged,
+               let url = click.printedURL {
+                openLink(url, kind: .unknown)
+            }
             return
         }
         defer { heldPress = nil }
@@ -579,24 +710,64 @@ final class LineBreakTerminalView: AppTerminalView {
 
     // MARK: Links under mouse capture
 
-    /// The link Ghostty reports under a ⌘-hovering pointer (URL match or
-    /// OSC 8 target). Ghostty may not report it while a TUI captures the
-    /// mouse, so `linkURL(at:)` backs it up from the screen text.
+    /// The link Ghostty reports under a ⌘-hovering pointer. This string alone
+    /// cannot distinguish an OSC 8 target from a per-row text match.
     var hoveredLink: String?
+    /// The opener is replaceable so click tests never launch an application.
+    var linkOpener: (String, Bool) -> Void = { url, isLocal in
+        LineBreakTerminalView.openClickedLink(url, isLocal: isLocal)
+    }
+
+    func openLink(_ url: String, kind: TerminalOpenURLKind) {
+        let target: String
+        // Native open-url callbacks hold the terminal lock. Read screen text
+        // before the gesture enters Ghostty, never re-enter its reader here.
+        if case .unknown = kind, let click = pendingLinkClick, let printed = click.printedURL,
+           Self.isRowMatch(url, of: printed, clickedRow: click.clickedRow) {
+            target = printed
+        } else {
+            target = url
+        }
+        pendingLinkClick?.opened = true
+        linkOpener(target, pathContext?.isLocal ?? false)
+    }
+    /// Whether `url` is Ghostty's own match of the printed URL on the clicked
+    /// row: a piece of it that runs to the end of the URL text on that row
+    /// (see `scheme_url_chars` and `no_trailing_punctuation` in Ghostty's url.zig).
+    /// The official package reports OSC 8 targets with the same `.unknown`
+    /// kind, and a target is kept as given unless it is exactly such a piece.
+    static func isRowMatch(_ url: String, of printed: String, clickedRow: String?) -> Bool {
+        if url == printed { return true }
+        guard printed.contains(url), let row = clickedRow else { return false }
+        var search = row.startIndex..<row.endIndex
+        while let found = row.range(of: url, range: search) {
+            // Ghostty's pattern leaves a trailing `.`, `,` or `:` out of its match.
+            let rest = row[found.upperBound...].prefix(while: isURLCharacter)
+            if rest.allSatisfy({ ".,:".contains($0) }) { return true }
+            search = found.upperBound..<row.endIndex
+        }
+        return false
+    }
+
+    private static func isURLCharacter(_ character: Character) -> Bool {
+        character.isLetter || character.isNumber || "-._~:/?#[]@!$&'*+,;=%".contains(character)
+    }
+
     /// A ⌘-click taken locally: its drag and release must not reach the TUI.
-    private var pendingLinkClick: String?
+    private struct LinkClick {
+        let point: NSPoint
+        let printedURL: String?
+        let clickedRow: String?
+        var opened = false
+        var dragged = false
+    }
+    private var pendingLinkClick: LinkClick?
 
     /// Ghostty's default window padding, in points.
     private static let gridPadding: CGFloat = 2
 
-    /// The URL printed under the click, reading the clicked row plus the rows
-    /// it soft-wraps into (a long URL fills its row edge to edge).
-    private func linkURL(at event: NSEvent) -> String? {
-        linkHit(atWindowPoint: event.locationInWindow)?.link.url
-    }
-
     /// The cell grid under a window point, and the link printed there.
-    private func linkHit(atWindowPoint windowPoint: NSPoint) -> (link: TerminalLink, rowRect: NSRect)? {
+    private func linkHit(atWindowPoint windowPoint: NSPoint) -> (link: TerminalLink, rowRect: NSRect, line: String?)? {
         guard let viewport = processHost?.viewport, viewport.columns > 0, viewport.rows > 0,
               let cell = cellSizePixels(viewport),
               let text = processHost?.session.readViewportText()
@@ -619,7 +790,7 @@ final class LineBreakTerminalView: AppTerminalView {
             width: bounds.width,
             height: cellHeight
         )
-        return (link, rowRect)
+        return (link, rowRect, lines.indices.contains(row) ? lines[row] : nil)
     }
 
     /// Cell size in backing pixels. Ghostty's resize delegate reports it with
@@ -633,13 +804,27 @@ final class LineBreakTerminalView: AppTerminalView {
         if viewport.cellWidthPixels > 0, viewport.cellHeightPixels > 0 {
             return (CGFloat(viewport.cellWidthPixels), CGFloat(viewport.cellHeightPixels))
         }
-        guard viewport.widthPixels > 0, viewport.heightPixels > 0 else { return nil }
+        guard viewport.widthPixels > 0, viewport.heightPixels > 0,
+              viewport.columns > 0, viewport.rows > 0
+        else { return nil }
         let scale = window?.backingScaleFactor ?? 2
         let padding = Self.gridPadding * 2 * scale
         let width = (CGFloat(viewport.widthPixels) - padding) / CGFloat(viewport.columns)
         let height = (CGFloat(viewport.heightPixels) - padding) / CGFloat(viewport.rows)
         guard width > 0, height > 0 else { return nil }
         return (width, height)
+    }
+
+    /// The cell size in points, from Ghostty's reported cell (`cellSizePixels`
+    /// reads `gridMetrics` first): the caret and the thumbnail overlays both
+    /// use this, so they cannot disagree.
+    private func cellSizePoints() -> CGSize? {
+        guard let window, let viewport = processHost?.viewport,
+              let cell = cellSizePixels(viewport)
+        else { return nil }
+        let scale = window.backingScaleFactor
+        guard scale > 0 else { return nil }
+        return CGSize(width: cell.width / scale, height: cell.height / scale)
     }
 
     static func url(in lines: [String], row: Int, column: Int, columns: Int) -> String? {
@@ -649,7 +834,8 @@ final class LineBreakTerminalView: AppTerminalView {
     /// The link printed at a cell: `text` exactly as shown (rows rejoined, no
     /// line breaks) for copying, `url` normalized for opening.
     static func link(in lines: [String], row: Int, column: Int, columns: Int) -> TerminalLink? {
-        guard let (joined, clickOffset) = joinedRow(in: lines, row: row, column: column, columns: columns),
+        guard let (joined, clickOffset) = parenthesizedLinkRows(in: lines, row: row, column: column)
+            ?? joinedRow(in: lines, row: row, column: column, columns: columns),
               let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
         else { return nil }
         let range = NSRange(joined.startIndex..., in: joined)
@@ -663,6 +849,75 @@ final class LineBreakTerminalView: AppTerminalView {
             return TerminalLink(text: matched, url: url.absoluteString)
         }
         return nil
+    }
+
+    /// Codex prints a labeled URL in parentheses and may wrap it inside its
+    /// content column. Only that explicit wrapper permits joining short rows;
+    /// a bare URL followed by another line still ends at the first row.
+    private static func parenthesizedLinkRows(
+        in lines: [String], row: Int, column: Int
+    ) -> (text: String, offset: Int)? {
+        guard lines.indices.contains(row), column >= 0 else { return nil }
+        for first in stride(from: row, through: 0, by: -1) {
+            for opening in openings(in: lines[first]) {
+                var joined = ""
+                var clickOffset: Int?
+                var parentheses = 1
+                for index in first..<lines.count {
+                    let line = lines[index]
+                    let start = index == first ? line.index(after: opening.lowerBound)
+                        : line.firstIndex(where: { !$0.isWhitespace }) ?? line.endIndex
+                    let closing = line[start...].firstIndex { character in
+                        if character == "(" { parentheses += 1 }
+                        if character == ")" { parentheses -= 1 }
+                        return parentheses == 0
+                    }
+                    let end = closing ?? line.endIndex
+                    let fragment = String(line[start..<end]).trimmingCharacters(in: .whitespaces)
+                    guard !fragment.isEmpty, !fragment.contains(where: \.isWhitespace),
+                          index == first || isURLContinuation(fragment) else { break }
+                    if index == row {
+                        var width = 0
+                        var offset = joined.utf16.count - line[..<start].utf16.count
+                        for character in line[..<end] {
+                            let next = width + cellWidth(character)
+                            if column < next {
+                                if offset >= joined.utf16.count,
+                                   offset < joined.utf16.count + fragment.utf16.count { clickOffset = offset }
+                                break
+                            }
+                            width = next
+                            offset += character.utf16.count
+                        }
+                    }
+                    joined += fragment
+                    if closing != nil {
+                        if index >= row, let clickOffset { return (joined, clickOffset) }
+                        break
+                    }
+                }
+            }
+        }
+        return nil
+    }
+
+    /// Every `(https://`, `(http://` or `(mailto:` on a row, left to right.
+    private static func openings(in line: String) -> [Range<String.Index>] {
+        var found: [Range<String.Index>] = []
+        var search = line.startIndex..<line.endIndex
+        while let range = line.range(of: #"\((?:https?://|mailto:)"#, options: .regularExpression, range: search) {
+            found.append(range)
+            search = range.upperBound..<line.endIndex
+        }
+        return found
+    }
+
+    /// A short next row continues the URL only if it reads as URL text: no
+    /// second scheme, and some URL punctuation (a plain word like `here` is
+    /// prose that follows the link, not the rest of it).
+    private static func isURLContinuation(_ fragment: String) -> Bool {
+        guard !fragment.contains("://"), !fragment.lowercased().contains("mailto:") else { return false }
+        return fragment.contains { "/%?=&#._-~".contains($0) }
     }
 
     /// The clicked row with the rows it soft-wraps into rejoined, and the UTF-16
@@ -877,6 +1132,7 @@ final class LineBreakTerminalView: AppTerminalView {
             // status-line plugins skip updates while herdr's viewport is up.
             if historyTarget > 0 { jumpHistoryToBottom() }
         }
+        setThumbnailsVisible(visible)
         guard visible != acceptsDrops else { return }
         acceptsDrops = visible
         updateDragRegistration()
@@ -886,6 +1142,7 @@ final class LineBreakTerminalView: AppTerminalView {
         if newSize != frame.size { hideLinkPopup() }
         super.setFrameSize(newSize)
         placeJumpPill()
+        placeThumbnailOverlays()
     }
 
     private func updateLinkPopup() {
@@ -931,7 +1188,350 @@ final class LineBreakTerminalView: AppTerminalView {
         linkPopup?.showCopied { [weak self] in self?.hideLinkPopup() }
     }
 
+    // MARK: Image thumbnails
+
+    /// Paints the images the user pasted into the `#N` boxes Claude Code draws
+    /// above its prompt (it fills them with a `▀` mosaic, or nothing). Only
+    /// Claude panes set this; every other pane never scans.
+    var thumbnailsEnabled = false {
+        didSet {
+            guard thumbnailsEnabled != oldValue else { return }
+            thumbnailOutputSignal.setEnabled(thumbnailsEnabled)
+            if !thumbnailsEnabled { resetThumbnails() }
+        }
+    }
+    private let thumbnailOutputSignal = ThumbnailOutputSignal()
+    private var thumbnailStore = PaneThumbnailStore()
+    /// Keyed by box number.
+    private var thumbnailOverlays: [Int: ThumbnailOverlayView] = [:]
+    /// The last scan's result, so geometry changes re-place without a rescan.
+    private var placedThumbnails: [PlacedThumbnail] = []
+    private var thumbnailPollTimer: Timer?
+    private var thumbnailBurstScheduled = false
+    /// Output arrived while a burst was armed: the burst's 250 ms scan may
+    /// have read before the session parsed it, so it arms one more scan.
+    private var thumbnailBurstDirty = false
+    private var thumbnailSurfaceVisible = true
+    /// Deliveries are numbered as they begin and recorded strictly in that
+    /// order, whichever decode finishes first: binding pairs ascending box
+    /// numbers with pending entries in record order.
+    private var thumbnailNextDelivery = 0
+    private var thumbnailNextRecord = 0
+    /// Finished deliveries waiting for an earlier one to record.
+    private var thumbnailFinishedDeliveries: [Int: (images: [(NSImage, String)], expected: Int, expiry: TimeInterval)] = [:]
+    /// Bumped by `resetThumbnails`, so a decode finishing afterwards is dropped.
+    private var thumbnailGeneration = 0
+    /// A delivery that has not recorded within this many seconds counts as
+    /// finished with no images, so a hung decode cannot stop scans for good.
+    private static let thumbnailDecodeTimeout: TimeInterval = 5
+    /// Decodes run one at a time, off the main thread.
+    private static let thumbnailDecodeQueue = DispatchQueue(label: "herdrm.thumbnail-decode", qos: .utility)
+
+    private struct ThumbnailDeliveryToken {
+        let generation: Int
+        let sequence: Int
+        /// Images Claude will attach for this delivery. Recording fewer means
+        /// Claude draws a box nothing accounts for.
+        let expectedImages: Int
+    }
+
+    /// Deliveries begun but not yet recorded. Scans wait for them: a scan
+    /// between the delivery and the record would see the new box with nothing
+    /// pending, mark it seen, and the image could never bind.
+    private var thumbnailDeliveryInFlight: Bool { thumbnailNextRecord < thumbnailNextDelivery }
+
+    /// PTY output arrived (IO queue). At most one hop to main is queued at a
+    /// time, and none while thumbnails are off.
+    nonisolated func thumbnailOutputArrived() {
+        guard thumbnailOutputSignal.claim() else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.thumbnailOutputSignal.release()
+            self.scheduleThumbnailScans()
+        }
+    }
+
+    /// Drops every pending and bound thumbnail and its overlay, and stops
+    /// polling: the process exited, the view went away, or the pane is no
+    /// longer Claude.
+    func resetThumbnails() {
+        thumbnailStore.removeAll()
+        placedThumbnails = []
+        thumbnailOverlays.values.forEach { $0.removeFromSuperview() }
+        thumbnailOverlays = [:]
+        stopThumbnailPolling()
+        thumbnailFinishedDeliveries = [:]
+        thumbnailNextRecord = thumbnailNextDelivery
+        thumbnailGeneration += 1
+        thumbnailBurstDirty = false
+    }
+
+    /// Right before a delivery: a baseline scan marks the boxes already on
+    /// screen as seen, so this paste cannot bind to them, and forgets bindings
+    /// whose box is gone. Returns the token for `endThumbnailDelivery`, or nil
+    /// when thumbnails are off or the delivery must record nothing.
+    /// `expectedImages` is how many images Claude will attach for it.
+    ///
+    /// Call it before the delivery snaps herdr's history scroll back. Scrolled
+    /// up, the viewport shows history, so no baseline can be trusted: every
+    /// pending entry, binding, seen number, in-flight decode and overlay is
+    /// dropped and this delivery records nothing. That path can then only
+    /// lose thumbnails, never draw an earlier paste into a later box.
+    private func beginThumbnailDelivery(expectedImages: Int) -> ThumbnailDeliveryToken? {
+        guard thumbnailsEnabled else { return nil }
+        guard historyTarget == 0, historySent == 0 else {
+            resetThumbnails()
+            return nil
+        }
+        scanForThumbnails(baseline: true)
+        let token = ThumbnailDeliveryToken(
+            generation: thumbnailGeneration, sequence: thumbnailNextDelivery, expectedImages: expectedImages
+        )
+        thumbnailNextDelivery += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.thumbnailDecodeTimeout) { [weak self] in
+            self?.endThumbnailDelivery(token, images: [], expiry: 0)
+        }
+        return token
+    }
+
+    /// After the delivery, with its decoded images (main thread). Records it
+    /// and every later delivery already waiting, in delivery order. A second
+    /// finish of the same delivery (the timeout, or a late decode) is ignored.
+    ///
+    /// A delivery that records fewer images than it expected (a decode
+    /// failed or timed out) resets everything: its box would be a new number
+    /// with nothing of its own pending, so a stale entry, or a later
+    /// delivery's image, would bind into it. The reset also drops the later
+    /// deliveries still in flight.
+    private func endThumbnailDelivery(
+        _ token: ThumbnailDeliveryToken,
+        images: [(NSImage, String)],
+        expiry: TimeInterval
+    ) {
+        guard token.generation == thumbnailGeneration,
+              token.sequence >= thumbnailNextRecord,
+              thumbnailFinishedDeliveries[token.sequence] == nil
+        else { return }
+        thumbnailFinishedDeliveries[token.sequence] = (images, token.expectedImages, expiry)
+        while let next = thumbnailFinishedDeliveries.removeValue(forKey: thumbnailNextRecord) {
+            guard next.images.count >= next.expected else {
+                resetThumbnails()
+                return
+            }
+            thumbnailNextRecord += 1
+            recordPendingThumbnails(next.images, expiry: next.expiry)
+        }
+    }
+
+    /// After the delivery: decodes on the decode queue, then records on main.
+    private func endThumbnailDelivery(
+        _ token: ThumbnailDeliveryToken,
+        expiry: TimeInterval,
+        decoding decode: @escaping @Sendable () -> [(NSImage, String)]
+    ) {
+        Self.thumbnailDecodeQueue.async { [weak self] in
+            let images = decode()
+            DispatchQueue.main.async { [weak self] in
+                self?.endThumbnailDelivery(token, images: images, expiry: expiry)
+            }
+        }
+    }
+
+    /// `task`'s images, or none once `seconds` pass: a hung decode must not
+    /// stall the paste queue that awaits it.
+    private nonisolated static func thumbnails(
+        of task: Task<[(NSImage, String)], Never>,
+        within seconds: TimeInterval
+    ) async -> [(NSImage, String)] {
+        await withCheckedContinuation { continuation in
+            let once = ThumbnailOnce()
+            Task {
+                let images = await task.value
+                if once.claim() { continuation.resume(returning: images) }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+                if once.claim() { continuation.resume(returning: []) }
+            }
+        }
+    }
+
+    /// Image files decode in delivery order; one that fails is left out, so
+    /// the delivery comes up short and `endThumbnailDelivery` resets.
+    private nonisolated static func decodeThumbnails(_ urls: [URL]) -> [(NSImage, String)] {
+        urls.compactMap { url in
+            ImageThumbnailer.thumbnail(contentsOf: url).map { ($0, url.lastPathComponent) }
+        }
+    }
+
+    private func recordPendingThumbnails(_ images: [(NSImage, String)], expiry: TimeInterval) {
+        guard thumbnailsEnabled else { return }
+        let now = Date()
+        for (image, name) in images {
+            thumbnailStore.record(PendingThumbnail(image: image, name: name, recordedAt: now, expiry: expiry))
+        }
+        scheduleThumbnailScans()
+    }
+
+    /// Rescans 50 ms and 250 ms from now (the session parses output after the
+    /// pump hands it over, so an immediate read can miss the box), and polls
+    /// every 500 ms until nothing is pending, bound or drawn. Output during an
+    /// armed burst adds one scan 50 ms after the 250 ms one, so a scrolling
+    /// prompt does not leave an overlay a row off until the next poll.
+    private func scheduleThumbnailScans() {
+        guard thumbnailsEnabled, thumbnailSurfaceVisible, thumbnailsNeedScanning(now: Date()) else { return }
+        if thumbnailBurstScheduled {
+            thumbnailBurstDirty = true
+        } else {
+            thumbnailBurstScheduled = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.scanForThumbnails()
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                guard let self else { return }
+                self.thumbnailBurstScheduled = false
+                self.scanForThumbnails()
+                if self.thumbnailBurstDirty {
+                    self.thumbnailBurstDirty = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                        self?.scanForThumbnails()
+                    }
+                }
+            }
+        }
+        guard thumbnailPollTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.scanForThumbnails() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        thumbnailPollTimer = timer
+    }
+
+    /// An overlay still on screen needs a scan too, even once its binding's
+    /// grace has lapsed: only a scan removes an overlay whose box is gone.
+    private func thumbnailsNeedScanning(now: Date) -> Bool {
+        thumbnailStore.needsScanning(now: now) || !thumbnailOverlays.isEmpty
+    }
+
+    private func stopThumbnailPolling() {
+        thumbnailPollTimer?.invalidate()
+        thumbnailPollTimer = nil
+    }
+
+    /// Reads the viewport, binds new boxes, and places or removes overlays.
+    /// A `baseline` scan runs right before a delivery, visible or not, and
+    /// first forgets bindings whose box is gone (Claude's counter may have
+    /// reset since). While a delivery is in flight nothing binds or is marked
+    /// seen, since that delivery's own box may already be on screen and the
+    /// in-flight delivery's baseline covered the rest; overlays still follow
+    /// their boxes and go when their box does.
+    private func scanForThumbnails(baseline: Bool = false) {
+        guard thumbnailsEnabled, attachedSurface != nil else { return }
+        guard baseline || thumbnailSurfaceVisible else { return }
+        guard let text = processHost?.session.readViewportText() else { return }
+        let now = Date()
+        let boxes = ClaudeImageBoxes.boxes(in: text)
+        if baseline { thumbnailStore.forgetAbsentBindings(present: boxes) }
+        let placed = thumbnailDeliveryInFlight
+            ? thumbnailStore.placements(for: boxes, now: now)
+            : thumbnailStore.scan(boxes, now: now)
+        placedThumbnails = placed
+        let numbers = Set(placed.map(\.box.number))
+        for number in thumbnailOverlays.keys where !numbers.contains(number) {
+            thumbnailOverlays.removeValue(forKey: number)?.removeFromSuperview()
+        }
+        for item in placed {
+            if let overlay = thumbnailOverlays[item.box.number] {
+                if overlay.image !== item.image { overlay.image = item.image }
+            } else {
+                let overlay = ThumbnailOverlayView(image: item.image, background: thumbnailBackground)
+                // Below the find bar, the jump pill and the link popup.
+                addSubview(overlay, positioned: .below, relativeTo: nil)
+                thumbnailOverlays[item.box.number] = overlay
+            }
+        }
+        placeThumbnailOverlays()
+        if !thumbnailsNeedScanning(now: now) { stopThumbnailPolling() }
+    }
+
+    /// Frames every overlay from the current cell geometry and theme; hidden
+    /// while the surface is hidden or the grid is unknown.
+    private func placeThumbnailOverlays() {
+        guard !thumbnailOverlays.isEmpty else { return }
+        let cellSize = cellSizePoints()
+        let background = thumbnailBackground
+        for item in placedThumbnails {
+            guard let overlay = thumbnailOverlays[item.box.number] else { continue }
+            if overlay.background != background { overlay.background = background }
+            guard thumbnailSurfaceVisible, let cellSize else {
+                overlay.isHidden = true
+                continue
+            }
+            let rect = ThumbnailOverlayGeometry.rect(
+                for: item.box.interior, cellSize: cellSize, padding: Self.gridPadding
+            )
+            // The geometry is top-down; this view is not flipped.
+            overlay.frame = isFlipped
+                ? rect
+                : NSRect(x: rect.minX, y: bounds.height - rect.maxY, width: rect.width, height: rect.height)
+            overlay.isHidden = false
+        }
+    }
+
+    private func setThumbnailsVisible(_ visible: Bool) {
+        guard visible != thumbnailSurfaceVisible else { return }
+        thumbnailSurfaceVisible = visible
+        if visible {
+            // Rescan before showing the cached overlays: their boxes may have
+            // gone, or moved, while the pane was hidden.
+            scanForThumbnails()
+            placeThumbnailOverlays()
+            scheduleThumbnailScans()
+        } else {
+            placeThumbnailOverlays()
+            stopThumbnailPolling()
+        }
+    }
+
+    /// The pane's own background, so the overlay covers the mosaic completely.
+    private var thumbnailBackground: NSColor {
+        Self.color(hex: appliedDarkAppearance == true
+            ? TerminalDefaults.darkBackgroundHex
+            : TerminalDefaults.lightBackgroundHex)
+    }
+
+    /// "#RRGGBB" to an sRGB colour.
+    private static func color(hex: String) -> NSColor {
+        let value = UInt32(hex.trimmingCharacters(in: CharacterSet(charactersIn: "#")), radix: 16) ?? 0
+        return NSColor(
+            srgbRed: CGFloat((value >> 16) & 0xFF) / 255,
+            green: CGFloat((value >> 8) & 0xFF) / 255,
+            blue: CGFloat(value & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+
     // MARK: Accessibility
+
+    // Report the terminal cursor as a valid insertion point when no composition
+    // is active. During IME composition, preserve the marked text's own ranges.
+    override func selectedRange() -> NSRange {
+        hasMarkedText() ? super.selectedRange() : accessibilitySelectedTextRange()
+    }
+
+    override func markedRange() -> NSRange {
+        hasMarkedText() ? super.markedRange() : NSRange(location: 0, length: 0)
+    }
+
+    override func characterIndex(for point: NSPoint) -> Int { 0 }
+
+    override func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        var rect = super.firstRect(forCharacterRange: range, actualRange: actualRange)
+        if range.length == 0 {
+            rect.size.width = 0
+        }
+        actualRange?.pointee = range
+        return rect
+    }
 
     // Dictation tools (Typeless and the like) paste with ⌘V and then look for
     // a focused text area to confirm the insert landed. Without an
@@ -1004,18 +1604,7 @@ final class LineBreakTerminalView: AppTerminalView {
     /// from ghostty's IME point (via `firstRect`), which is zero-width while
     /// nothing is selected; the cell size from the viewport.
     private func cursorCell() -> (cell: TerminalCaretGrid.Cell, rect: NSRect)? {
-        guard attachedSurface != nil, let window, let viewport = processHost?.viewport,
-              let size = TerminalCaretGrid.cellSize(
-                  columns: Int(viewport.columns),
-                  rows: Int(viewport.rows),
-                  widthPixels: CGFloat(viewport.widthPixels),
-                  heightPixels: CGFloat(viewport.heightPixels),
-                  cellWidthPixels: CGFloat(viewport.cellWidthPixels),
-                  cellHeightPixels: CGFloat(viewport.cellHeightPixels),
-                  scale: window.backingScaleFactor,
-                  padding: Self.gridPadding
-              )
-        else { return nil }
+        guard attachedSurface != nil, let window, let size = cellSizePoints() else { return nil }
         let cellWidth = size.width
         let cellHeight = size.height
         let screenRect = firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
@@ -1109,9 +1698,8 @@ final class LineBreakTerminalView: AppTerminalView {
     /// ⌘-click on a link Ghostty matched (URL regex or OSC 8). Ghostty reports
     /// the click unhandled unless the host takes it — its own fallback opener
     /// refuses OSC 8 targets on macOS — so this is the only path that opens
-    /// anything. The URL is producer-controlled terminal output and the
-    /// wrapper does not distinguish OSC 8 from regex matches, so only web and
-    /// mail schemes are opened.
+    /// anything. Only web and mail schemes are opened, along with file URLs
+    /// belonging to local panes.
     static func openClickedLink(_ string: String, isLocal: Bool) {
         guard let url = URL(string: string),
               let scheme = url.scheme?.lowercased()
@@ -1248,9 +1836,11 @@ final class LineBreakTerminalView: AppTerminalView {
             pathSyntax = .shellQuoted
         }
         if case .local = attachmentDeviceKind {
-            sendPastedText(
-                fileURLs.map { pathSyntax.format($0.path) }.joined(separator: " ") + Self.dropSuffix
-            )
+            deliverTypedPaths(of: fileURLs) {
+                sendPastedText(
+                    fileURLs.map { pathSyntax.format($0.path) }.joined(separator: " ") + Self.dropSuffix
+                )
+            }
             return
         }
         do {
@@ -1278,6 +1868,8 @@ final class LineBreakTerminalView: AppTerminalView {
 
     deinit {
         uploadTask?.cancel()
+        // The store and the overlays go with the view; only the timer outlives it.
+        thumbnailPollTimer?.invalidate()
     }
 
     // ⌘C/⌘V are intercepted here because the app has no Edit menu. Copy stays
@@ -1357,7 +1949,7 @@ final class LineBreakTerminalView: AppTerminalView {
         case .unsupported:
             pastePasteboardText()
         case .nativeClipboard:
-            forwardNativeClipboardPaste()
+            forwardNativeClipboardPaste(thumbnailOf: pasteboard)
         case .devicePaths(let pathSyntax):
             do {
                 guard let files = try Self.clipboardFiles(in: pasteboard) else {
@@ -1385,10 +1977,12 @@ final class LineBreakTerminalView: AppTerminalView {
         case .unsupported:
             pastePasteboardText()
         case .nativeClipboard:
-            forwardNativeClipboardPaste()
+            forwardNativeClipboardPaste(thumbnailsOf: fileURLs)
         case .devicePaths(let pathSyntax):
             if case .local = attachmentDeviceKind {
-                sendPastedText(fileURLs.map { pathSyntax.format($0.path) }.joined(separator: " "))
+                deliverTypedPaths(of: fileURLs) {
+                    sendPastedText(fileURLs.map { pathSyntax.format($0.path) }.joined(separator: " "))
+                }
                 return
             }
             do {
@@ -1418,11 +2012,54 @@ final class LineBreakTerminalView: AppTerminalView {
         processHost?.session.readViewportText()
     }
 
+    /// ^V for raw image data on the clipboard. The bytes are read here, on
+    /// main; only the decode runs off it.
+    private func forwardNativeClipboardPaste(thumbnailOf pasteboard: NSPasteboard) {
+        var decode: (@Sendable () -> [(NSImage, String)])?
+        if thumbnailsEnabled, let data = ImageThumbnailer.imageData(from: pasteboard) {
+            decode = { ImageThumbnailer.thumbnail(fromImageData: data).map { [($0, "clipboard")] } ?? [] }
+        }
+        forwardNativeClipboardPaste(expectedImages: 1, decodingThumbnails: decode)
+    }
+
+    /// ^V for image files copied in Finder. The pasteboard's image for them is
+    /// the file's document icon, so the thumbnails come from the files.
+    private func forwardNativeClipboardPaste(thumbnailsOf fileURLs: [URL]) {
+        let imageURLs = thumbnailsEnabled ? fileURLs.filter(Self.isImageFile) : []
+        var decode: (@Sendable () -> [(NSImage, String)])?
+        if !imageURLs.isEmpty {
+            decode = { Self.decodeThumbnails(imageURLs) }
+        }
+        forwardNativeClipboardPaste(expectedImages: imageURLs.count, decodingThumbnails: decode)
+    }
+
     /// Ask the remote program to paste from its own clipboard with a literal
-    /// ^V byte — the "native clipboard" delivery path.
-    private func forwardNativeClipboardPaste() {
+    /// ^V byte — the "native clipboard" delivery path — recording what
+    /// `decode` returns as this delivery's thumbnails. With thumbnails on but
+    /// nothing to decode (a JPEG-only or PDF clipboard), Claude may still
+    /// attach an image, so every pending entry and binding is dropped instead.
+    private func forwardNativeClipboardPaste(
+        expectedImages: Int,
+        decodingThumbnails decode: (@Sendable () -> [(NSImage, String)])?
+    ) {
+        if thumbnailsEnabled, decode == nil { resetThumbnails() }
+        let thumbnailToken = decode == nil ? nil : beginThumbnailDelivery(expectedImages: expectedImages)
         forgetHistoryScroll()
         processHost?.session.sendInput(Data([0x16]))
+        // No completion signal from Claude here, hence the short expiry.
+        if let thumbnailToken, let decode {
+            endThumbnailDelivery(thumbnailToken, expiry: 10, decoding: decode)
+        }
+    }
+
+    /// Types local paths, painting the image files among them into Claude's boxes.
+    private func deliverTypedPaths(of fileURLs: [URL], _ deliver: () -> Void) {
+        let imageURLs = thumbnailsEnabled ? fileURLs.filter(Self.isImageFile) : []
+        guard !imageURLs.isEmpty,
+              let thumbnailToken = beginThumbnailDelivery(expectedImages: imageURLs.count)
+        else { return deliver() }
+        deliver()
+        endThumbnailDelivery(thumbnailToken, expiry: 60) { Self.decodeThumbnails(imageURLs) }
     }
 
     private func enqueuePathPaste(
@@ -1452,6 +2089,12 @@ final class LineBreakTerminalView: AppTerminalView {
             let paste = pendingUploads.removeFirst()
             let files = paste.files
             defer { discardTemporaries(in: files) }
+            // Decoded alongside the upload.
+            let imageURLs = thumbnailsEnabled ? files.map(\.localURL).filter(Self.isImageFile) : []
+            let thumbnails = imageURLs.isEmpty
+                ? nil
+                : Task.detached(priority: .utility) { Self.decodeThumbnails(imageURLs) }
+            // Awaited (at most the timeout) before the temporaries go.
             do {
                 var devicePaths: [String] = []
                 for file in files {
@@ -1459,9 +2102,16 @@ final class LineBreakTerminalView: AppTerminalView {
                     devicePaths.append(try await service.stageAttachment(from: file.localURL))
                 }
                 try Task.checkCancellation()
+                let thumbnailToken = thumbnails == nil
+                    ? nil
+                    : beginThumbnailDelivery(expectedImages: imageURLs.count)
                 sendPastedText(
                     devicePaths.map(paste.pathSyntax.format).joined(separator: " ") + paste.suffix
                 )
+                if let thumbnailToken, let thumbnails {
+                    let images = await Self.thumbnails(of: thumbnails, within: Self.thumbnailDecodeTimeout)
+                    endThumbnailDelivery(thumbnailToken, images: images, expiry: 60)
+                }
             } catch is CancellationError {
                 break
             } catch {
@@ -1652,10 +2302,12 @@ struct AttachTerminalView: NSViewRepresentable {
     var serverVersion: String?
     /// nil when the server or active manifest does not advertise attachment support.
     let attachmentCapabilities: AgentAttachmentCapabilities?
+    /// herdr's agent kind for the pane (`"claude"`, …); nil for a bare shell.
+    /// Only Claude panes paint pasted images into their thumbnail boxes.
+    var agentKind: String? = nil
     var fontName: String = ""
     var fontSize: Double = TerminalDefaults.defaultFontSize
-    /// No longer maps to anything: Ghostty's renderer has no font-smoothing
-    /// toggle. The setting stays so existing preferences keep syncing.
+    /// Disable Ghostty's extra stem thickening when thin strokes are requested.
     var thinStrokes: Bool = true
     var fontWeight: Double = TerminalDefaults.defaultFontWeight
     var lineSpacing: Double = TerminalDefaults.defaultLineSpacing
@@ -1666,6 +2318,7 @@ struct AttachTerminalView: NSViewRepresentable {
     var mouseReporting: Bool = true
     /// Copies a local selection to the clipboard on mouse release.
     var copyOnSelect: Bool = true
+    var optionAsAlt: TerminalOptionAsAlt = .both
     /// False while kept alive behind another view: Ghostty then stops drawing
     /// frames for it (output is still parsed), so busy background agents do
     /// not cost full-window Metal renders.
@@ -1683,13 +2336,16 @@ struct AttachTerminalView: NSViewRepresentable {
     /// Delivers the created view so a focus tracker can observe its window's
     /// first responder without retaining the terminal itself.
     var onViewReady: ((LineBreakTerminalView) -> Void)? = nil
+    var onActivate: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> LineBreakTerminalView {
-        let host = TerminalProcessHost()
+        let host = TerminalProcessHost(isHerdrAttach: true)
         let view = LineBreakTerminalView(frame: .zero)
         view.processHost = host
+        view.onActivate = onActivate
+        host.onOutput = { [weak view] in view?.thumbnailOutputArrived() }
         configurePasteHandling(view)
         context.coordinator.view = view
         context.coordinator.host = host
@@ -1703,6 +2359,7 @@ struct AttachTerminalView: NSViewRepresentable {
         view.configuration = TerminalSurfaceOptions(backend: .inMemory(host.session))
         configureAppearance(view)
         view.setSurfaceVisible(isVisible)
+        view.allowsAttachFocus = isVisible
 
         let service = HerdrService(device: device)
         view.attachmentService = service
@@ -1715,26 +2372,21 @@ struct AttachTerminalView: NSViewRepresentable {
         if let sessionID {
             AttachViewRegistry.register(view, for: sessionID)
         }
-        // SwiftUI throws this view away and builds a new one whenever the selected
-        // agent changes (the `.id("attach-…")` in ContentView), and a fresh NSView is
-        // never first responder — so keystrokes went nowhere until the user clicked.
-        // The hop to the next runloop pass is required: while `makeNSView` runs the
-        // view has no `window` yet.
-        DispatchQueue.main.async { [weak view] in
-            guard let view, let window = view.window else { return }
-            window.makeFirstResponder(view)
-        }
+        // Registration completes a pending selection's focus request after the
+        // view joins its window. Other newly mounted panes never self-focus.
         onViewReady?(view)
         return view
     }
 
     func updateNSView(_ nsView: LineBreakTerminalView, context: Context) {
         nsView.historyService = historyService
+        nsView.onActivate = onActivate
         configurePasteHandling(nsView)
         context.coordinator.onExit = onExit
         configureAppearance(nsView)
         nsView.pathContext = TerminalPathContext(workingDirectory: workingDirectory, isLocal: device.isLocal)
         nsView.setSurfaceVisible(isVisible)
+        nsView.allowsAttachFocus = isVisible
     }
 
     /// Re-applied on update because capabilities can arrive after the terminal
@@ -1744,6 +2396,7 @@ struct AttachTerminalView: NSViewRepresentable {
         view.attachmentDeviceKind = device.kind
         view.onAttachmentError = onAttachmentError
         view.onAttachmentUploadingChanged = onAttachmentUploadingChanged
+        view.thumbnailsEnabled = agentKind == "claude"
     }
 
     static func dismantleNSView(_ nsView: LineBreakTerminalView, coordinator: Coordinator) {
@@ -1765,14 +2418,16 @@ struct AttachTerminalView: NSViewRepresentable {
             lineSpacing: lineSpacing,
             dark: dark,
             mouseReporting: mouseReporting,
-            copyOnSelect: copyOnSelect
+            copyOnSelect: copyOnSelect,
+            optionAsAlt: optionAsAlt
         )
     }
 
     final class Coordinator: NSObject, TerminalSurfaceLifecycleDelegate, TerminalSurfaceOpenURLDelegate,
         TerminalSurfaceHoverLinkDelegate, TerminalSurfaceGridResizeDelegate {
         func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
-            LineBreakTerminalView.openClickedLink(url, isLocal: view?.pathContext?.isLocal ?? false)
+            if let view { view.openLink(url, kind: kind) }
+            else { LineBreakTerminalView.openClickedLink(url, isLocal: false) }
         }
 
         /// Cell size for mapping a pointer to a cell (links under mouse capture).
@@ -1818,6 +2473,7 @@ struct AttachTerminalView: NSViewRepresentable {
         }
 
         func processDidExit(_ code: Int32?) {
+            view?.resetThumbnails()
             discardAuthorization()
             let callback = onExit
             onExit = nil  // report once
@@ -1829,16 +2485,18 @@ struct AttachTerminalView: NSViewRepresentable {
 @MainActor
 func applyTerminalAppearance(
     _ view: LineBreakTerminalView,
-    fontName: String, fontSize: Double, thinStrokes _: Bool,
+    fontName: String, fontSize: Double, thinStrokes: Bool,
     fontWeight: Double, lineSpacing: Double, dark: Bool, mouseReporting: Bool,
-    copyOnSelect: Bool
+    copyOnSelect: Bool, optionAsAlt: TerminalOptionAsAlt = .both
 ) {
     GhosttyRuntime.applyFontSettings(
         fontName: fontName,
         fontSize: fontSize,
         fontWeight: fontWeight,
+        thinStrokes: thinStrokes,
         lineSpacing: lineSpacing,
-        copyOnSelect: copyOnSelect
+        copyOnSelect: copyOnSelect,
+        optionAsAlt: optionAsAlt
     )
     view.mouseReportingEnabled = mouseReporting
     view.scrollRowHeight = CGFloat(fontSize * lineSpacing * 1.3)
@@ -1860,11 +2518,14 @@ enum AttachViewRegistry {
     private struct WeakView { weak var view: LineBreakTerminalView? }
     private static let lock = NSLock()
     private static var views: [String: WeakView] = [:]
+    @MainActor private static var selectedID: String?
 
+    @MainActor
     static func register(_ view: LineBreakTerminalView, for id: String) {
         lock.lock()
         views[id] = WeakView(view: view)
         lock.unlock()
+        if selectedID == id { scheduleFocus(id) }
     }
 
     static func unregister(_ id: String) {
@@ -1895,9 +2556,27 @@ enum AttachViewRegistry {
         return views.values.compactMap { $0.view }
     }
 
-    static func focus(_ id: String) {
+    /// Called before SwiftUI mounts a first-time attach. A nil responder is
+    /// preferable to sending keys into the previous agent during that interval.
+    @MainActor
+    static func select(_ id: String?) {
+        selectedID = id
+        for old in liveViews where self.id(for: old) != id {
+            if let window = old.window, window.firstResponder === old {
+                window.makeFirstResponder(nil)
+            }
+        }
+        if let id { scheduleFocus(id) }
+    }
+
+    @MainActor
+    static func focus(_ id: String) { select(id) }
+
+    @MainActor
+    private static func scheduleFocus(_ id: String) {
         DispatchQueue.main.async {
-            guard let view = view(for: id), let window = view.window else { return }
+            guard selectedID == id, let view = view(for: id),
+                  view.allowsAttachFocus, let window = view.window else { return }
             window.makeFirstResponder(view)
         }
     }
@@ -1939,6 +2618,7 @@ struct ShellTerminalView: NSViewRepresentable {
     var dark: Bool = false
     var mouseReporting: Bool = true
     var copyOnSelect: Bool = true
+    var optionAsAlt: TerminalOptionAsAlt = .both
     /// See `AttachTerminalView.isVisible`.
     var isVisible: Bool = true
     var onAttachmentError: (String) -> Void = { _ in }
@@ -1979,7 +2659,8 @@ struct ShellTerminalView: NSViewRepresentable {
             lineSpacing: lineSpacing,
             dark: dark,
             mouseReporting: mouseReporting,
-            copyOnSelect: copyOnSelect
+            copyOnSelect: copyOnSelect,
+            optionAsAlt: optionAsAlt
         )
 
         let command = HerdrService(device: device, autoStartLocalServer: false)
@@ -2017,7 +2698,8 @@ struct ShellTerminalView: NSViewRepresentable {
             lineSpacing: lineSpacing,
             dark: dark,
             mouseReporting: mouseReporting,
-            copyOnSelect: copyOnSelect
+            copyOnSelect: copyOnSelect,
+            optionAsAlt: optionAsAlt
         )
     }
 
@@ -2035,7 +2717,8 @@ struct ShellTerminalView: NSViewRepresentable {
     final class Coordinator: NSObject, TerminalSurfaceLifecycleDelegate, TerminalSurfaceOpenURLDelegate,
         TerminalSurfaceHoverLinkDelegate, TerminalSurfaceGridResizeDelegate {
         func terminalDidRequestOpenURL(_ url: String, kind: TerminalOpenURLKind) {
-            LineBreakTerminalView.openClickedLink(url, isLocal: view?.pathContext?.isLocal ?? false)
+            if let view { view.openLink(url, kind: kind) }
+            else { LineBreakTerminalView.openClickedLink(url, isLocal: false) }
         }
 
         /// Cell size for mapping a pointer to a cell (links under mouse capture).

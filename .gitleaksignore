@@ -1,5 +1,14 @@
 # False positives, checked 2026-10-15:
 # - project.yml: SUPublicEDKey is Sparkle's public key, published by design.
 # - SessionDriverE2ETests.swift: a property declaration (privateKey: Curve25519.Signing.PrivateKey), no key value.
+# Checked 2026-11-02: the relay's key properties (RelayHost, RelayNoise, MobileRelay) are
+# property declarations whose type is a CryptoKit private key type; no key values.
 20daf96963b282244edf1e2d2803139ade269367:Packages/HerdrSSH/Tests/HerdrSSHTests/SessionDriverE2ETests.swift:generic-api-key:1664
 8510fbe1c91c295138abf3e11123536bf44615a0:project.yml:generic-api-key:41
+126c5761025fb269ea4a98a3ec378566908f04d8:Sources/HerdrMobile/MobileRelay.swift:generic-api-key:15
+126c5761025fb269ea4a98a3ec378566908f04d8:Packages/HerdrKit/Sources/HerdrKit/RelayNoise.swift:generic-api-key:178
+126c5761025fb269ea4a98a3ec378566908f04d8:Packages/HerdrKit/Sources/HerdrKit/RelayNoise.swift:generic-api-key:234
+126c5761025fb269ea4a98a3ec378566908f04d8:Packages/HerdrKit/Sources/HerdrKit/RelayHost.swift:generic-api-key:21
+126c5761025fb269ea4a98a3ec378566908f04d8:Packages/HerdrKit/Sources/HerdrKit/RelayHost.swift:generic-api-key:22
+126c5761025fb269ea4a98a3ec378566908f04d8:Packages/HerdrKit/Sources/HerdrKit/RelayHost.swift:generic-api-key:34
+126c5761025fb269ea4a98a3ec378566908f04d8:Packages/HerdrKit/Sources/HerdrKit/RelayHost.swift:generic-api-key:35

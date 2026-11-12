@@ -22,11 +22,37 @@ private struct NewItemSheets: ViewModifier {
     }
 }
 
+/// The machine stats panel, anchored above the sidebar's device card. It is a
+/// hover panel: the card and the panel keep it open, leaving both hides it, so
+/// nothing covers the window to catch clicks.
+struct MachineStatsOverlay: View {
+    @ObservedObject var model: AppModel
+    let device: Device
+
+    var body: some View {
+        GeometryReader { geometry in
+            let bottom = SidebarFooterMetrics.height(showsStats: true) + 6
+            MachineStatsPanel(
+                model: model,
+                stats: model.machineStats,
+                device: device,
+                isPresented: $model.showMachineStats
+            )
+            .onHover { model.setMachineStatsHover(panel: $0) }
+            .frame(maxHeight: max(0, geometry.size.height - bottom - TitlebarMetrics.height - 10), alignment: .bottom)
+            .padding(.leading, 10)
+            .padding(.bottom, bottom)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+        }
+    }
+}
+
 struct RootView: View {
     // Owned by AppDelegate so it outlives the window — see AppDelegate in HerdrMApp.swift.
     @ObservedObject var model: AppModel
     // Deliberately not persisted: the app always launches with the sidebar visible.
     @State private var sidebarCollapsed = false
+    @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
@@ -43,7 +69,8 @@ struct RootView: View {
                     .onTapGesture { model.showDevicePanel = false }
                 DevicePopover(model: model, isPresented: $model.showDevicePanel)
                     .padding(.leading, 10)
-                    .padding(.bottom, 46)
+                    .padding(.bottom, SidebarFooterMetrics.height(
+                        showsStats: showsMachineStats && model.statsDevice != nil) + 6)
                     .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
                     .background(
                         Button("") { model.showDevicePanel = false }
@@ -54,25 +81,16 @@ struct RootView: View {
 
             // Machine stats panel, opening upward from the sidebar footer meters.
             if model.showMachineStats, let device = model.statsDevice {
-                Color.black.opacity(0.001)
-                    .ignoresSafeArea()
-                    .onTapGesture { model.showMachineStats = false }
-                MachineStatsPanel(
-                    model: model,
-                    stats: model.machineStats,
-                    device: device,
-                    isPresented: $model.showMachineStats
-                )
-                .padding(.leading, 10)
-                .padding(.bottom, SidebarFooterMetrics.deviceSwitcherHeight + SidebarFooterMetrics.statsHeight + 6)
-                .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
-                .background(
-                    Button("") { model.showMachineStats = false }
-                        .keyboardShortcut(.cancelAction)
-                        .hidden()
-                )
+                MachineStatsOverlay(model: model, device: device)
+                    .transition(.scale(scale: 0.96, anchor: .bottomLeading).combined(with: .opacity))
+                    .background(
+                        Button("") { model.showMachineStats = false }
+                            .keyboardShortcut(.cancelAction)
+                            .hidden()
+                    )
             }
         }
+        .paneSwitcher(model: model)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: model.showDevicePanel)
         .animation(.spring(response: 0.25, dampingFraction: 0.85), value: model.showMachineStats)
         .background(
@@ -107,6 +125,10 @@ struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             model.refreshConversationHistoryVisibility()
+            model.markVisibleAgentRead()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            model.markVisibleAgentRead()
         }
         .sheet(isPresented: $model.showAddDevice) { AddDeviceSheet(model: model) }
         .newItemSheets(model: model)
@@ -128,6 +150,21 @@ struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(model.actionError ?? "")
+        }
+        .alert(
+            model.capacityWarning?.title ?? "",
+            isPresented: Binding(
+                get: { model.capacityWarning != nil },
+                set: { if !$0 { model.capacityWarning = nil } }
+            )
+        ) {
+            Button("Start Anyway", role: .destructive) {
+                model.capacityWarning?.proceed()
+                model.capacityWarning = nil
+            }
+            Button("Cancel", role: .cancel) { model.capacityWarning = nil }
+        } message: {
+            Text(model.capacityWarning?.message ?? "")
         }
         .alert(
             model.closeRequest?.title ?? "",
@@ -155,8 +192,14 @@ struct RootView: View {
 /// Sidebar footer metrics. The device switcher is 40pt; the machine-stats block
 /// sits just above it, and the stats panel opens upward from there.
 enum SidebarFooterMetrics {
+    /// The footer with the device card's switcher line alone.
     static let deviceSwitcherHeight: CGFloat = 40
-    static let statsHeight: CGFloat = 44
+    /// What the figures line under the device name adds to the footer.
+    static let statsHeight: CGFloat = 14
+
+    static func height(showsStats: Bool) -> CGFloat {
+        deviceSwitcherHeight + (showsStats ? statsHeight : 0)
+    }
 }
 
 /// Titlebar metrics: 28pt matches the system traffic-light centerline (14pt) exactly.
@@ -323,6 +366,7 @@ struct DetailView: View {
     @ObservedObject var model: AppModel
     @Binding var sidebarCollapsed: Bool
     @State private var hasOpenedFileManager = false
+    @State private var hasOpenedProject = false
     /// Persisted here (Settings toggles the same key); the model mirrors it because
     /// selection logic there decides which panes stay attached.
     @AppStorage(TerminalDefaults.tabLayoutKey) private var tabLayoutEnabled = true
@@ -356,8 +400,9 @@ struct DetailView: View {
                         attachRetry = [:]
                     }
                 }
-                .onChange(of: model.isFileManagerActive) { _, active in
-                    if active { hasOpenedFileManager = true }
+                .onChange(of: model.detailMode) { _, mode in
+                    if mode == .files { hasOpenedFileManager = true }
+                    if mode == .project { hasOpenedProject = true }
                 }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -368,16 +413,45 @@ struct DetailView: View {
         ZStack {
             terminal
                 .clipped()
-                .opacity(model.isFileManagerActive ? 0 : 1)
-                .allowsHitTesting(!model.isFileManagerActive)
+                .opacity(model.isDetailCovered ? 0 : 1)
+                .allowsHitTesting(!model.isDetailCovered)
             if hasOpenedFileManager {
                 DeviceFilesView(model: model)
-                    .opacity(model.isFileManagerActive ? 1 : 0)
-                    .allowsHitTesting(model.isFileManagerActive)
+                    .opacity(model.detailMode == .files ? 1 : 0)
+                    .allowsHitTesting(model.detailMode == .files)
+            }
+            if hasOpenedProject {
+                ProjectView(model: model)
+                    .opacity(model.detailMode == .project ? 1 : 0)
+                    .allowsHitTesting(model.detailMode == .project)
             }
         }
         .onAppear {
-            if model.isFileManagerActive { hasOpenedFileManager = true }
+            if model.detailMode == .files { hasOpenedFileManager = true }
+            if model.detailMode == .project { hasOpenedProject = true }
+        }
+    }
+
+    /// Opens the Project panel for the selected pane's Space, and closes it
+    /// again while the panel is up. Standalone shells have no Space, so no
+    /// button.
+    @ViewBuilder
+    private var projectToggle: some View {
+        switch model.detailMode {
+        case .project:
+            TitlebarIconButton(systemName: "shippingbox", help: "Project", active: true) {
+                model.closeProject()
+            }
+            .accessibilityIdentifier("titlebar.project")
+        case .terminal:
+            if model.selectedShell == nil, let entry = model.selectedAttachedEntry {
+                TitlebarIconButton(systemName: "shippingbox", help: "Project") {
+                    model.openProject(for: entry)
+                }
+                .accessibilityIdentifier("titlebar.project")
+            }
+        case .files:
+            EmptyView()
         }
     }
 
@@ -392,7 +466,8 @@ struct DetailView: View {
                 }
             }
             Group {
-                if model.isFileManagerActive {
+                switch model.detailMode {
+                case .files:
                     Image(systemName: "folder")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.textTertiary)
@@ -400,68 +475,79 @@ struct DetailView: View {
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.text)
                     Spacer()
-                } else if let shell = model.selectedShell {
-                    Image(systemName: "terminal")
+                case .project:
+                    Image(systemName: "shippingbox")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Theme.textTertiary)
-                    Text(shell.title)
+                    ProjectTitleText(projects: model.projects, space: model.projectSpace)
                         .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(Theme.text)
-                    Text(shell.device.name)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textTertiary)
                     Spacer()
-                } else if let attached = model.selectedAttachedEntry {
-                    switch attached {
-                    case .agent(let entry):
-                        let agent = entry.agent
-                        statusGlyph(agent.status)
-                        Text(entry.title)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.text)
-                            .lineLimit(1)
-                            .layoutPriority(1)
-                            .help((agent.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
-                        Spacer(minLength: 12)
-                        AgentKindBadge(kind: agent.agent)
-                        Text("\u{b7}")
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.textGhost)
-                        Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.textTertiary)
-                            .lineLimit(1)
-                        if model.showsRowDeviceBadges {
-                            DeviceChip(device: entry.device)
-                        }
-                        statusPill(agent.status)
-                    case .terminal(let entry):
+                case .terminal:
+                    if let shell = model.selectedShell {
                         Image(systemName: "terminal")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(Theme.textTertiary)
-                        Text(entry.title)
+                        Text(shell.title)
                             .font(.system(size: 13, weight: .medium))
                             .foregroundStyle(Theme.text)
-                            .lineLimit(1)
-                            .layoutPriority(1)
-                            .help((entry.pane.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
-                        Spacer(minLength: 12)
-                        Text(model.spaceName(deviceID: entry.device.id, workspaceID: entry.pane.workspaceID))
+                        Text(shell.device.name)
                             .font(.system(size: 11.5))
                             .foregroundStyle(Theme.textTertiary)
-                            .lineLimit(1)
-                        if model.showsRowDeviceBadges {
-                            DeviceChip(device: entry.device)
+                        Spacer()
+                    } else if let attached = model.selectedAttachedEntry {
+                        switch attached {
+                        case .agent(let entry):
+                            let agent = entry.agent
+                            statusGlyph(agent.status)
+                            Text(entry.title)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                                .layoutPriority(1)
+                                .help((agent.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
+                            Spacer(minLength: 12)
+                            AgentKindBadge(kind: agent.agent)
+                            Text("\u{b7}")
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.textGhost)
+                            Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.textTertiary)
+                                .lineLimit(1)
+                            if model.showsRowDeviceBadges {
+                                DeviceChip(device: entry.device)
+                            }
+                            statusPill(agent.status)
+                        case .terminal(let entry):
+                            Image(systemName: "terminal")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(Theme.textTertiary)
+                            Text(entry.title)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                                .layoutPriority(1)
+                                .help((entry.pane.cwd as NSString?)?.abbreviatingWithTildeInPath ?? "")
+                            Spacer(minLength: 12)
+                            Text(model.spaceName(deviceID: entry.device.id, workspaceID: entry.pane.workspaceID))
+                                .font(.system(size: 11.5))
+                                .foregroundStyle(Theme.textTertiary)
+                                .lineLimit(1)
+                            if model.showsRowDeviceBadges {
+                                DeviceChip(device: entry.device)
+                            }
                         }
+                    } else {
+                        Text("No terminal selected")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                        Spacer()
                     }
-                } else {
-                    Text("No terminal selected")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
-                    Spacer()
                 }
             }
             .allowsHitTesting(false)
+            projectToggle
         }
         .padding(.leading, sidebarCollapsed ? 10 : 14)
         .padding(.trailing, 12)
@@ -514,12 +600,14 @@ struct DetailView: View {
     @AppStorage(TerminalDefaults.lineSpacingKey) private var terminalLineSpacing = TerminalDefaults.defaultLineSpacing
     @AppStorage("terminal.mouseReporting") private var terminalMouseReporting = true
     @AppStorage("terminal.copyOnSelect") private var terminalCopyOnSelect = true
+    @AppStorage(TerminalDefaults.optionAsAltKey) private var terminalOptionAsAlt = TerminalOptionAsAlt.both
     @Environment(\.colorScheme) private var colorScheme
     /// Per-entry attach state, keyed by `AttachedEntry.id`. `endedAttach` holds the exit
     /// code of a dead attach (nil code = no status, e.g. killed by a signal); a present
     /// key drives that entry's reconnect overlay. `attachRetry` is a generation the
-    /// Reconnect button bumps to rebuild just that one terminal. Per-entry so one dead
-    /// terminal's overlay never covers another and Reconnect rebuilds only its own.
+    /// Reconnect button bumps to rebuild failed terminals. Per-entry so one dead
+    /// terminal's overlay never covers another; SSH recovery retries that device's
+    /// disconnected attaches together while preserving healthy attaches.
     @State private var endedAttach: [String: Int32?] = [:]
     @State private var attachRetry: [String: Int] = [:]
     @State private var uploadingAttachment = false
@@ -544,7 +632,8 @@ struct DetailView: View {
                     dark: colorScheme == .dark,
                     mouseReporting: terminalMouseReporting,
                     copyOnSelect: terminalCopyOnSelect,
-                    isVisible: model.selectedShellID == session.id && !model.isFileManagerActive,
+                    optionAsAlt: terminalOptionAsAlt,
+                    isVisible: model.selectedShellID == session.id && !model.isDetailCovered,
                     onAttachmentError: { model.actionError = $0 },
                     onAttachmentUploadingChanged: { uploadingAttachment = $0 },
                     onExit: { _ in model.closeShellSession(session.id) }
@@ -610,7 +699,8 @@ struct DetailView: View {
                     dark: colorScheme == .dark,
                     mouseReporting: terminalMouseReporting,
                     copyOnSelect: terminalCopyOnSelect,
-                    isVisible: model.selectedShellID == nil && !model.isFileManagerActive,
+                    optionAsAlt: terminalOptionAsAlt,
+                    isVisible: model.selectedShellID == nil && !model.isDetailCovered,
                     onExit: { _ in model.shellSplitAxis = nil },
                     onViewReady: {
                         splitTracker.shellView = $0
@@ -764,6 +854,14 @@ struct DetailView: View {
         }
     }
 
+    /// A click into a terminal's input. It selects that pane in place and never
+    /// reveals it in the sidebar: the user is looking at the terminal, not the
+    /// list. `SidebarHarness` binds its input terminals through this same
+    /// function, so the sidebar tests cover this exact wiring.
+    static func inputActivation(for ref: PaneRef, in model: AppModel) -> () -> Void {
+        { [weak model] in model?.focusVisiblePane(ref) }
+    }
+
     /// One kept-alive attach. Stays in the hierarchy while hidden (opacity 0, no hit
     /// testing) so its content survives; visible panes are interactive. In a tab layout
     /// the selected pane carries a thin accent ring, the TUI's focused-border cue.
@@ -786,6 +884,7 @@ struct DetailView: View {
                 workingDirectory: model.workingDirectory(for: session.ref),
                 serverVersion: model.serverVersion(deviceID: session.device.id),
                 attachmentCapabilities: attachmentCapabilities,
+                agentKind: { if case .agent(let agentEntry) = session { agentEntry.agent.agentKindRaw } else { nil } }(),
                 fontName: terminalFontName,
                 fontSize: terminalFontSize,
                 thinStrokes: terminalThinStrokes,
@@ -794,12 +893,14 @@ struct DetailView: View {
                 dark: colorScheme == .dark,
                 mouseReporting: terminalMouseReporting,
                 copyOnSelect: terminalCopyOnSelect,
-                // A selected shell or the file manager covers the attach side.
-                isVisible: isVisible && model.selectedShellID == nil && !model.isFileManagerActive,
+                optionAsAlt: terminalOptionAsAlt,
+                // A selected shell or a covering detail mode hides the attach side.
+                isVisible: isVisible && model.selectedShellID == nil && !model.isDetailCovered,
                 historyService: model.service(for: session.device),
                 onAttachmentError: { model.actionError = $0 },
                 onAttachmentUploadingChanged: { uploadingAttachment = $0 },
-                onExit: { code in endedAttach[session.id] = code }
+                onExit: { code in endedAttach[session.id] = code },
+                onActivate: Self.inputActivation(for: session.ref, in: model)
             )
                 // Keyed on the retry generation only — NOT colorScheme. A theme toggle
                 // must re-theme live via updateNSView (as the split shell already does);
@@ -834,28 +935,8 @@ struct DetailView: View {
     /// ssh exits 255 for transport failures; everything else is the far end closing
     /// (takeover by another client, the pane going away, herdr stopping).
     private func attachEndedOverlay(_ entry: AppModel.AttachedEntry) -> some View {
-        let dropped = (endedAttach[entry.id] ?? nil) == 255
-        return VStack(spacing: 10) {
-            Image(systemName: dropped ? "bolt.horizontal.circle" : "rectangle.slash")
-                .font(.system(size: 28, weight: .light))
-                .foregroundStyle(Theme.textGhost)
-            Text(dropped ? String(localized: "Connection to \(entry.device.name) dropped") : String(localized: "Terminal session ended"))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(Theme.text)
-            Text(dropped
-                ? String(localized: "The SSH connection behind this terminal went away.")
-                : String(localized: "Another client took this pane over, or the attach closed."))
-                .font(.system(size: 11.5))
-                .foregroundStyle(Theme.textTertiary)
-            Button("Reconnect") {
-                endedAttach[entry.id] = nil
-                attachRetry[entry.id, default: 0] += 1
-            }
-            .controlSize(.small)
-            .keyboardShortcut(.defaultAction)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.terminalBackground.opacity(0.94))
+        TerminalReconnectOverlay(entry: entry, sessions: model.attachSessions,
+                                 endedAttach: $endedAttach, attachRetry: $attachRetry)
     }
 
     private var uploadIndicator: some View {
@@ -891,6 +972,45 @@ struct DetailView: View {
         }
     }
 
+}
+
+/// Recovery controls shared by every attached terminal. A network drop is
+/// different from a normal exit or a pane taken over by another client.
+struct TerminalReconnectOverlay: View {
+    let entry: AppModel.AttachedEntry
+    let sessions: [AppModel.AttachedEntry]
+    @Binding var endedAttach: [String: Int32?]
+    @Binding var attachRetry: [String: Int]
+
+    var body: some View {
+        let dropped = entry.device.sshTarget != nil && (endedAttach[entry.id] ?? nil) == 255
+        return VStack(spacing: 10) {
+            Image(systemName: dropped ? "bolt.horizontal.circle" : "rectangle.slash")
+                .font(.system(size: 28, weight: .light))
+                .foregroundStyle(Theme.textGhost)
+            Text(dropped ? String(localized: "Connection to \(entry.device.name) dropped") : String(localized: "Terminal session ended"))
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Theme.text)
+            Text(dropped
+                ? String(localized: "The SSH connection behind this terminal went away.")
+                : String(localized: "Another client took this pane over, or the attach closed."))
+                .font(.system(size: 11.5))
+                .foregroundStyle(Theme.textTertiary)
+            Button(dropped ? String(localized: "Reconnect device terminals") : String(localized: "Reconnect")) {
+                let targets = dropped ? sessions.filter {
+                    $0.device.id == entry.device.id && (endedAttach[$0.id] ?? nil) == 255
+                }.map(\.id) : [entry.id]
+                for id in targets {
+                    endedAttach[id] = nil
+                    attachRetry[id, default: 0] += 1
+                }
+            }
+            .controlSize(.small)
+            .keyboardShortcut(.defaultAction)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.terminalBackground.opacity(0.94))
+    }
 }
 
 /// The gap between two panes of a tab layout: a hairline that highlights on hover and
@@ -955,10 +1075,13 @@ struct AddDeviceSheet: View {
     @State private var target = ""
     @State private var transport: Transport = .ssh
     @State private var token = ""
+    @State private var session = ""
 
     private var canAdd: Bool {
         switch transport {
-        case .ssh: return !target.trimmingCharacters(in: .whitespaces).isEmpty
+        case .ssh:
+            return !target.trimmingCharacters(in: .whitespaces).isEmpty
+                && Device.isValidSessionName(session)
         case .tailcat: return !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
@@ -993,6 +1116,8 @@ struct AddDeviceSheet: View {
                     Text("user@host, a ~/.ssh/config alias, or user@host:port for a custom port.")
                         .font(.system(size: 10.5))
                         .foregroundStyle(Theme.textTertiary)
+                    Spacer().frame(height: 8)
+                    SSHSessionField(session: $session)
                 } else {
                     SheetSectionLabel("TAILCAT TOKEN")
                     TextField("tcpGFwWCD…", text: $token)
@@ -1025,9 +1150,11 @@ struct AddDeviceSheet: View {
                     switch transport {
                     case .ssh:
                         let trimmedTarget = target.trimmingCharacters(in: .whitespaces)
+                        let sessionName = Device.normalizedSessionName(session)
                         model.addDevice(
-                            name: trimmedName.isEmpty ? trimmedTarget : trimmedName,
-                            sshTarget: trimmedTarget
+                            name: trimmedName.isEmpty ? (sessionName ?? trimmedTarget) : trimmedName,
+                            sshTarget: trimmedTarget,
+                            sessionName: sessionName
                         )
                     case .tailcat:
                         model.addTailcatDevice(
@@ -1046,6 +1173,76 @@ struct AddDeviceSheet: View {
             .padding(.vertical, 12)
         }
         .frame(width: 400)
+    }
+}
+
+/// The remote herdr session an SSH device talks to (issue #190). Empty is the
+/// default session. With `findSessions`, a menu lists the host's live named
+/// sessions so the name needn't be typed.
+struct SSHSessionField: View {
+    @Binding var session: String
+    var findSessions: (@MainActor () async throws -> [String])? = nil
+    @State private var found: [String]?
+    @State private var searching = false
+    @State private var searchError: String?
+
+    private var isValid: Bool { Device.isValidSessionName(session) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            SheetSectionLabel("HERDR SESSION")
+            HStack(spacing: 8) {
+                TextField("default", text: $session)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(String(localized: "herdr session"))
+                if let findSessions {
+                    if let found, !found.isEmpty {
+                        Menu(String(localized: "Sessions")) {
+                            Button(String(localized: "default")) { session = "" }
+                            ForEach(found, id: \.self) { name in
+                                Button(name) { session = name }
+                            }
+                        }
+                        .fixedSize()
+                        .accessibilityLabel(String(localized: "Choose a running session"))
+                    } else {
+                        Button(searching ? String(localized: "Finding…") : String(localized: "Find Sessions")) {
+                            searching = true
+                            searchError = nil
+                            Task {
+                                do {
+                                    found = try await findSessions()
+                                } catch {
+                                    searchError = error.localizedDescription
+                                }
+                                searching = false
+                            }
+                        }
+                        .disabled(searching)
+                        .accessibilityLabel(String(localized: "Find running sessions on this host"))
+                    }
+                }
+            }
+            if !isValid {
+                Text("Use letters, digits, dots, dashes and underscores only.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.red)
+            } else if let searchError {
+                Text(searchError)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if found?.isEmpty == true {
+                Text("No named sessions are running on this host.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+            } else {
+                Text("Leave empty for the default session. A named session is one started with `herdr --session <name>`.")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 }
 
@@ -1463,6 +1660,16 @@ struct NewTerminalSheet: View {
     @State private var deviceID = Device.local.id
     @State private var workspaceID = ""
 
+    /// Only a choice in the picker resets the space. Setting the initial
+    /// device in onAppear must preserve the space that opened this sheet.
+    private var deviceSelection: Binding<UUID> {
+        Binding(get: { deviceID }, set: { id in
+            guard id != deviceID else { return }
+            deviceID = id
+            workspaceID = spaces.first?.workspaceID ?? ""
+        })
+    }
+
     private var chosenDevice: Device {
         model.device(deviceID) ?? .local
     }
@@ -1502,16 +1709,13 @@ struct NewTerminalSheet: View {
             VStack(alignment: .leading, spacing: 8) {
                 if model.showsDeviceBadges {
                     SheetSectionLabel("DEVICE")
-                    Picker("", selection: $deviceID) {
+                    Picker("DEVICE", selection: deviceSelection) {
                         ForEach(model.devices) { device in
                             Text(device.name).tag(device.id)
                         }
                     }
                     .labelsHidden()
                     .fixedSize()
-                    .onChange(of: deviceID) { _, _ in
-                        workspaceID = spaces.first?.workspaceID ?? ""
-                    }
 
                     Spacer().frame(height: 8)
                 }
@@ -1526,7 +1730,7 @@ struct NewTerminalSheet: View {
                         .foregroundStyle(Theme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    Picker("", selection: $workspaceID) {
+                    Picker("SPACE", selection: $workspaceID) {
                         ForEach(spaces) { workspace in
                             Text(workspace.label).tag(workspace.workspaceID)
                         }
@@ -1538,7 +1742,7 @@ struct NewTerminalSheet: View {
                     .fixedSize()
                 }
                 if isStandalone && allowsStandalone {
-                    Text("Runs in this app only; closing herdrm ends the shell.")
+                    Text("Runs in this app only; closing Herdrm ends the shell.")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Theme.textTertiary)
                 }
@@ -1601,6 +1805,17 @@ struct NewAgentSheet: View {
     @State private var arguments = ""
     /// A grazr account for the agent alone; "" is the shared rotation.
     @State private var grazrAccountID = ""
+
+    /// Initializing a remote device is not a user request to change spaces.
+    private var deviceSelection: Binding<UUID> {
+        Binding(get: { deviceID }, set: { id in
+            guard id != deviceID else { return }
+            deviceID = id
+            workspaceID = ""
+            grazrAccountID = ""
+            if !kinds.contains(kind) { kind = kinds.first ?? "" }
+        })
+    }
 
     private var chosenDevice: Device {
         model.device(deviceID) ?? .local
@@ -1686,18 +1901,13 @@ struct NewAgentSheet: View {
 
                 if model.showsDeviceBadges {
                     SheetSectionLabel("DEVICE")
-                    Picker("", selection: $deviceID) {
+                    Picker("DEVICE", selection: deviceSelection) {
                         ForEach(model.devices) { device in
                             Text(device.name).tag(device.id)
                         }
                     }
                     .labelsHidden()
                     .fixedSize()
-                    .onChange(of: deviceID) { _, _ in
-                        workspaceID = ""
-                        grazrAccountID = ""
-                        if !kinds.contains(kind) { kind = kinds.first ?? "" }
-                    }
 
                     Spacer().frame(height: 8)
                 }
@@ -1729,7 +1939,7 @@ struct NewAgentSheet: View {
                     case .loaded(let loadedKinds, _) where loadedKinds.isEmpty:
                         Text(chosenDevice.isLocal
                             ? String(localized: "No supported agent CLI was found on this Mac. Install one, or set a binary path in Settings → Agents.")
-                            : String(localized: "This server advertises no agent manifests."))
+                            : String(localized: "No supported agent CLI was found on this server."))
                             .foregroundStyle(Theme.textSecondary)
                             .frame(maxWidth: .infinity, minHeight: 58, alignment: .leading)
                     case .loaded(let loadedKinds, let paths):
@@ -1744,14 +1954,16 @@ struct NewAgentSheet: View {
                             }
                             .padding(1)
                         }
-                        .frame(maxHeight: 236)
+                        // Four 58-point cards per row, 8-point gaps and 1-point
+                        // padding. A max-height-only lazy grid can collapse.
+                        .frame(height: min(236, CGFloat((loadedKinds.count + 3) / 4) * 66 - 6))
                     }
                 }
 
                 Spacer().frame(height: 8)
 
                 SheetSectionLabel("SPACE")
-                Picker("", selection: $workspaceID) {
+                Picker("SPACE", selection: $workspaceID) {
                     Text("Focused space").tag("")
                     ForEach(session.workspaces) { workspace in
                         Text(workspace.label).tag(workspace.workspaceID)
@@ -2114,11 +2326,21 @@ struct EditDeviceSheet: View {
     @State private var name = ""
     @State private var target = ""
     @State private var token = ""
+    @State private var session = ""
 
     private var canSave: Bool {
         device.isTailcat
             ? !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            : !target.trimmingCharacters(in: .whitespaces).isEmpty
+            : !target.trimmingCharacters(in: .whitespaces).isEmpty && Device.isValidSessionName(session)
+    }
+
+    /// Scanning only makes sense for the host the device is saved with: an
+    /// edited target has no credentials or tunnel yet.
+    private var findSessions: (@MainActor () async throws -> [String])? {
+        guard target.trimmingCharacters(in: .whitespaces) == device.sshTarget else { return nil }
+        let model = model
+        let id = device.id
+        return { try await model.remoteNamedSessions(for: id) }
     }
 
     var body: some View {
@@ -2128,7 +2350,7 @@ struct EditDeviceSheet: View {
                 title: String(localized: "Edit Device"),
                 subtitle: device.isTailcat
                     ? String(localized: "Changing the tailcat token reconnects the device")
-                    : String(localized: "Changing the SSH target reconnects the device")
+                    : String(localized: "Changing the SSH target or session reconnects the device")
             )
             Rectangle().fill(Theme.hairline).frame(height: 1)
 
@@ -2146,6 +2368,8 @@ struct EditDeviceSheet: View {
                     SheetSectionLabel("SSH TARGET")
                     TextField("SSH target", text: $target)
                         .textFieldStyle(.roundedBorder)
+                    Spacer().frame(height: 8)
+                    SSHSessionField(session: $session, findSessions: findSessions)
                 }
             }
             .padding(16)
@@ -2169,7 +2393,8 @@ struct EditDeviceSheet: View {
                         model.updateDevice(
                             device.id,
                             name: trimmedName.isEmpty ? trimmedTarget : trimmedName,
-                            sshTarget: trimmedTarget
+                            sshTarget: trimmedTarget,
+                            sessionName: session
                         )
                     }
                     dismiss()
@@ -2186,6 +2411,7 @@ struct EditDeviceSheet: View {
         .onAppear {
             name = device.name
             target = device.sshTarget ?? ""
+            session = device.sessionName ?? ""
             if device.isTailcat {
                 token = ((try? TailcatCredentialStore.token(for: device.id)) ?? nil) ?? ""
             }

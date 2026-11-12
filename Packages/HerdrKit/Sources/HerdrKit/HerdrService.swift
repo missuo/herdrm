@@ -25,7 +25,11 @@ public actor HerdrService {
     init(device: Device, localServer: LocalHerdrServer?) {
         self.device = device
         if let target = device.sshTarget {
-            self.tunnel = SSHTunnel(target: target, credentialID: device.id)
+            self.tunnel = SSHTunnel(
+                target: target,
+                credentialID: device.id,
+                sessionName: device.sessionName
+            )
         }
         self.localServer = localServer
     }
@@ -73,6 +77,12 @@ public actor HerdrService {
         rpc = client
         everConnected = true
         return pong
+    }
+
+    /// Live named sessions on this SSH device's host (issue #190); empty for other kinds.
+    public func remoteNamedSessions() async throws -> [String] {
+        guard let tunnel else { return [] }
+        return try await tunnel.remoteNamedSessions()
     }
 
     /// Platform sniffed while bringing the SSH tunnel up (nil for local / tailcat).
@@ -181,24 +191,39 @@ public actor HerdrService {
         public let path: String
     }
 
-    /// Local CLIs visible on the login-shell search PATH, preserving manifest
-    /// order. Probe failure does not throw: lookup still walks the GUI PATH and
-    /// well-known prefixes. `overrides` maps a kind to a binary path or command
-    /// name (empty / missing = automatic). `snapshot` is a test seam; production
-    /// callers omit it and share the process-wide capture.
+    /// CLIs installed on this device, preserving manifest order. SSH devices
+    /// query the remote login shell and propagate probe failures. Local lookup
+    /// also walks the GUI PATH and well-known prefixes; `overrides` and the test
+    /// `snapshot` apply only to this Mac. Tailcat has no shell to probe.
     public func installedAgents(
         from kinds: [String],
         includingIntegrationKinds integrationKinds: [String] = [],
         overrides: [String: String] = [:],
         snapshot: ShellEnvironment? = nil
-    ) async -> [InstalledAgent] {
+    ) async throws -> [InstalledAgent] {
         // Hook-based agents may be startable without a screen-detection manifest.
-        // Still require a runnable local CLI, and preserve advertised ordering.
+        // Still require a runnable CLI, and preserve advertised ordering.
         var candidates = kinds
         for kind in integrationKinds where !candidates.contains(kind) {
             candidates.append(kind)
         }
         guard !candidates.isEmpty else { return [] }
+        switch device.kind {
+        case .ssh(let target):
+            guard let tunnel else { throw HerdrError.tunnelFailed("missing tunnel") }
+            let platform = try await tunnel.probeRemotePlatform()
+            let output = try await SSHTunnel.runSSH(
+                target: target,
+                command: RemoteAgentCatalog.command(kinds: candidates, platform: platform),
+                timeout: 15,
+                credentialID: device.id
+            )
+            return try RemoteAgentCatalog.parse(output, kinds: candidates)
+        case .tailcat:
+            throw HerdrError.fileOperationFailed("Checking installed agent CLIs is not supported over a tailcat tunnel.")
+        case .local:
+            break
+        }
         let environment: ShellEnvironment
         if let snapshot {
             environment = snapshot
@@ -870,6 +895,16 @@ public actor HerdrService {
     /// sends them in-band (also over SSH); other herdr versions ignore it.
     static let attachGraphicsEnvironmentKey = "HERDR_ATTACH_GRAPHICS"
 
+    /// Points the remote herdr CLI at a named session's socket (herdr's contractual
+    /// `HERDR_SOCKET_PATH` override, as for local named sessions); empty for the
+    /// default session. `$HOME` expands on the far side; the name is quoted anyway,
+    /// although `Device.isValidSessionName` already keeps it shell-safe.
+    static func remoteSessionExport(sessionName: String?) -> String {
+        guard let sessionName = Device.normalizedSessionName(sessionName) else { return "" }
+        let directory = shellQuoted(sessionName)
+        return "export HERDR_SOCKET_PATH=\"$HOME\"/.config/herdr/sessions/\(directory)/herdr.sock; "
+    }
+
     /// The command the embedded terminal should spawn to attach to a pane.
     /// `serverVersion` (from the device's last successful ping) lets the attach
     /// pick a herdr binary whose protocol matches the server's — see
@@ -928,7 +963,8 @@ public actor HerdrService {
                 environment.removeValue(forKey: "TERM")
                 environment.removeValue(forKey: "COLUMNS")
                 environment.removeValue(forKey: "LINES")
-                environment["HERDR_SOCKET_PATH"] = SSHTunnel.localSocketPath(for: target)
+                environment["HERDR_SOCKET_PATH"] =
+                    SSHTunnel.localSocketPath(for: target, sessionName: device.sessionName)
                 environment[Self.attachGraphicsEnvironmentKey] = "1"
                 let script = "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
                     + "exec \"$hb\" \(attachArguments)"
@@ -946,6 +982,7 @@ public actor HerdrService {
             // ssh doesn't forward the local environment, so the flag is set on
             // the far side, for the remote herdr attach client.
             let script = "\(SSHTunnel.remotePathExport); export \(Self.attachGraphicsEnvironmentKey)=1; "
+                + Self.remoteSessionExport(sessionName: device.sessionName)
                 + "\(Self.attachBinarySelection(serverVersion: serverVersion)); "
                 + "exec \"$hb\" \(attachArguments)"
             let remote = "exec /bin/sh -c \(Self.shellQuoted(script))"

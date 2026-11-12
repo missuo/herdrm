@@ -148,20 +148,42 @@ final class ClaudeTranscriptReader: @unchecked Sendable {
         self.sessionID = sessionID
     }
 
-    /// Looks in `$CLAUDE_CONFIG_DIR` first, then `~/.claude`; exits 44 when neither has it.
+    /// Looks in `$CLAUDE_CONFIG_DIR` first, then `~/.claude`, then every `CLAUDE_CONFIG_DIR`
+    /// the user's running processes were started with: an alias, wrapper or account
+    /// switcher sets it on the `claude` process alone, never in the shell that runs this.
+    /// macOS's `ps` separates the environment with spaces, so there a directory whose
+    /// path has a space is missed. Exits 44 when none has it.
     static func command(sessionID: String) -> String {
         """
         id=\(HerdrService.shellQuoted(sessionID))
-        for d in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.claude"; do
-          for f in "$d"/projects/*/"$id".jsonl; do
-            if [ -f "$f" ]; then
-              printf '\(headerPrefix)%s\\n' "$(wc -c < "$f" | tr -d ' ')"
-              exec tail -c +1 -F -- "$f"
-            fi
+        open_first() {
+          for d in "$@"; do
+            for f in "$d"/projects/*/"$id".jsonl; do
+              if [ -f "$f" ]; then
+                printf '\(headerPrefix)%s\\n' "$(wc -c < "$f" | tr -d ' ')"
+                exec tail -c +1 -F -- "$f"
+              fi
+            done
           done
-        done
+        }
+        open_first "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME/.claude"
+        IFS='
+        '
+        open_first $(
+          if [ -r /proc/self/environ ]; then
+            for e in /proc/[0-9]*/environ; do tr '\\0' '\\n' 2>/dev/null < "$e"; done
+          else
+            ps -E -ww -o command= -U "$(id -u)" 2>/dev/null | tr ' ' '\\n'
+          fi | sed -n 's/^CLAUDE_CONFIG_DIR=//p' | sort -u
+        )
         exit \(missingStatus)
         """
+    }
+
+    /// sshd runs a command in the login shell, and zsh stops it at the first glob
+    /// that matches nothing.
+    static func remoteCommand(sessionID: String) -> String {
+        "exec /bin/sh -c \(HerdrService.shellQuoted(command(sessionID: sessionID)))"
     }
 
     func start() {
@@ -177,7 +199,7 @@ final class ClaudeTranscriptReader: @unchecked Sendable {
                 "-o", "ServerAliveCountMax=3",
                 "-o", "LogLevel=ERROR",
                 SSHTunnel.sshDestination(target),
-                command,
+                Self.remoteCommand(sessionID: sessionID),
             ]
             process.environment = ProcessInfo.processInfo.environment.merging(auth.environment) { _, new in new }
         } else {

@@ -12,8 +12,14 @@ final class SidebarAgentHistoryUIUXTests: XCTestCase {
         sidebar.scroll(.offset(520))
         let target = try XCTUnwrap(sidebar.model.visibleAgents.first { $0.agent.paneID == "pane-1" })
         XCTAssertNotEqual(sidebar.model.selectedPane, target.ref)
+        let originalOffset = sidebar.scrollOffset
+        let originalRow = try sidebar.paneRowFrame(target.title)
 
         try sidebar.clickAgentHistoryButton(for: target)
+        XCTAssertEqual(sidebar.scrollOffset, originalOffset, accuracy: 1,
+                       "Opening history from a sidebar card must not recenter the space")
+        XCTAssertEqual(try sidebar.paneRowFrame(target.title).minY, originalRow.minY, accuracy: 1,
+                       "The card's history button must remain under the pointer")
 
         XCTAssertEqual(sidebar.model.selectedPane, target.ref)
         XCTAssertTrue(sidebar.model.conversationHistory.isPresented, "the native row drag host must not intercept the history button")

@@ -35,9 +35,18 @@ enum MobileTransportError: LocalizedError {
     case missingPassword
     case homeProbeFailed
     case tailcatTerminalUnsupported
+    case missingIdentity
+    case identityUnreadable(String)
+    case noIdentityAccepted
 
     var errorDescription: String? {
         switch self {
+        case .missingIdentity:
+            return String(localized: "The key chosen for this server was removed. Pick another in the server's settings.")
+        case .identityUnreadable(let name):
+            return String(localized: "Couldn't read the key “\(name)”: the passphrase may be wrong.")
+        case .noIdentityAccepted:
+            return String(localized: "The server accepted none of your keys. Add the right one under Keys, or check the user name.")
         case .hostKeyChanged(let fingerprint):
             return String(
                 localized: "This device's SSH host key changed (\(fingerprint)). If the host was reinstalled, remove and re-add the device."
@@ -58,34 +67,68 @@ enum MobileTransportError: LocalizedError {
 final class SSHDirectTransport: MobileTransport {
     private let connection: SSHConnection
     private let socketPath: String
+    /// A relay device's encrypted session; closed with the connection.
+    private let relayStream: RelayStream?
 
     private static let requestTimeout: Duration = .seconds(15)
 
-    private init(connection: SSHConnection, socketPath: String) {
+    private init(connection: SSHConnection, socketPath: String, relayStream: RelayStream?) {
         self.connection = connection
         self.socketPath = socketPath
+        self.relayStream = relayStream
     }
 
     /// Connects, verifies the pinned host key (TOFU on first contact),
     /// authenticates (device key or Keychain password), and resolves the
-    /// remote herdr socket path against the remote $HOME.
+    /// remote herdr socket path against the remote $HOME. A relay device
+    /// reaches its Mac's sshd inside an end-to-end encrypted relay session.
     static func connect(device: MobileDevice) async throws -> SSHDirectTransport {
-        let connection = try await SSHConnection.connect(
-            to: SSHEndpoint(host: device.host, port: device.port),
-            timeout: .seconds(10)
-        )
+        let connection: SSHConnection
+        var relayStream: RelayStream?
+        // The Mac's SSH host key as it reported it inside the Noise session.
+        var expectedHostKey: Data?
+        let pinHost: String
+        let pinPort: UInt16
+        if device.kind == .relay {
+            let relayPin = "relay:\(device.relay?.hostID ?? device.id.uuidString)"
+            // Direct first when the Mac has a public address; the relay is the
+            // fallback for when it doesn't answer.
+            if let direct = await MobileRelay.openDirect(device: device, pinHost: relayPin) {
+                connection = direct
+                expectedHostKey = MobileRelay.expectedHostKey(for: device.id)
+            } else {
+                let relayed = try await MobileRelay.openSSH(device: device)
+                connection = relayed.connection
+                relayStream = relayed.stream
+                expectedHostKey = relayed.hostKeyBlob
+            }
+            pinHost = "relay:\(device.relay?.hostID ?? device.id.uuidString)"
+            pinPort = 0
+        } else {
+            connection = try await SSHConnection.connect(
+                to: SSHEndpoint(host: device.host, port: device.port),
+                timeout: .seconds(10)
+            )
+            pinHost = device.host
+            pinPort = device.port
+        }
         do {
             let hostKey = connection.hostKey
             let fingerprint = Self.fingerprint(hostKey.key)
+            if let expectedHostKey, expectedHostKey != hostKey.key {
+                // The Mac vouched for another key over the authenticated
+                // channel: something between it and its sshd is not right.
+                throw MobileTransportError.hostKeyChanged(fingerprint: fingerprint)
+            }
             if let pinned = KnownHostsStore.fingerprint(
-                host: device.host, port: device.port, algorithm: hostKey.algorithm
+                host: pinHost, port: pinPort, algorithm: hostKey.algorithm
             ) {
                 guard pinned == fingerprint else {
                     throw MobileTransportError.hostKeyChanged(fingerprint: fingerprint)
                 }
             } else {
                 KnownHostsStore.pin(
-                    host: device.host, port: device.port,
+                    host: pinHost, port: pinPort,
                     algorithm: hostKey.algorithm, fingerprint: fingerprint
                 )
             }
@@ -110,6 +153,8 @@ final class SSHDirectTransport: MobileTransport {
                     password: password,
                     timeout: .seconds(15)
                 )
+            case .identity:
+                try await Self.authenticateWithIdentities(connection, device: device)
             }
 
             let socketPath: String
@@ -125,11 +170,61 @@ final class SSHDirectTransport: MobileTransport {
                 else { throw MobileTransportError.homeProbeFailed }
                 socketPath = home + "/.config/herdr/herdr.sock"
             }
-            return SSHDirectTransport(connection: connection, socketPath: socketPath)
+            return SSHDirectTransport(connection: connection, socketPath: socketPath, relayStream: relayStream)
         } catch {
             try? await connection.close(timeout: .seconds(2))
+            relayStream?.close()
             throw error
         }
+    }
+
+    /// Signs in with the device's chosen key, or tries them in turn the way
+    /// OpenSSH does: the key that worked here last, this phone's device key,
+    /// then every other imported key. The server answers each try, so the
+    /// right key is found without the user picking it.
+    @MainActor
+    static func authenticateWithIdentities(_ connection: SSHConnection, device: MobileDevice) async throws {
+        let store = SSHIdentityStore.shared
+        let reason = String(localized: "Sign in to \(device.name)")
+        if let id = device.identityID {
+            guard let identity = store.identity(id) else { throw MobileTransportError.missingIdentity }
+            let secret = try store.secret(for: identity, reason: reason)
+            do {
+                try await connection.authenticate(username: device.username, privateKey: secret.key,
+                                                  passphrase: secret.passphrase, timeout: .seconds(15))
+            } catch SSHError.privateKeyUnreadable {
+                throw MobileTransportError.identityUnreadable(identity.name)
+            }
+            store.noteWorked(identity, for: device.id)
+            return
+        }
+        enum Attempt { case deviceKey, identity(SSHIdentity) }
+        let identities = store.candidates(for: device.id)
+        var order: [Attempt] = [.deviceKey] + identities.map { .identity($0) }
+        if let known = identities.first, store.lastWorked(for: device.id) == known.id {
+            order = [.identity(known), .deviceKey] + identities.dropFirst().map { .identity($0) }
+        }
+        let deviceKey = DeviceKey.ensure()
+        for attempt in order {
+            do {
+                switch attempt {
+                case .deviceKey:
+                    try await connection.authenticate(
+                        username: device.username, publicKey: DeviceKey.publicKeyBlob(deviceKey),
+                        signer: { try deviceKey.signature(for: $0) }, timeout: .seconds(15))
+                case .identity(let identity):
+                    // Skipped when Face ID is cancelled or the key can't be read.
+                    guard let secret = try? store.secret(for: identity, reason: reason) else { continue }
+                    try await connection.authenticate(username: device.username, privateKey: secret.key,
+                                                      passphrase: secret.passphrase, timeout: .seconds(15))
+                    store.noteWorked(identity, for: device.id)
+                }
+                return
+            } catch SSHError.authenticationFailed, SSHError.privateKeyUnreadable {
+                continue // the server said no to this one; try the next
+            }
+        }
+        throw MobileTransportError.noIdentityAccepted
     }
 
     static func fingerprint(_ key: Data) -> String {
@@ -261,6 +356,7 @@ final class SSHDirectTransport: MobileTransport {
 
     func close() async {
         try? await connection.close(timeout: .seconds(3))
+        relayStream?.close()
     }
 }
 
@@ -342,5 +438,16 @@ enum MobileAttach {
         }
         let script = "\(pathExport); \(markerPrintf); exec \(attach)"
         return "/bin/sh -c \(ShellQuoting.quoted(script))"
+    }
+}
+
+// MARK: - Short remote commands (agent chat)
+
+/// The chat reads agent transcripts with one short command per poll
+/// (`MobileCommandRunning`, in MobileAgentChat.swift). Only SSH has a shell.
+extension SSHDirectTransport: MobileCommandRunning {
+    func runCommand(_ command: String, timeout: Duration) async throws -> (stdout: Data, status: Int32) {
+        let result = try await connection.execute(command, timeout: timeout)
+        return (result.stdout, result.exitStatus)
     }
 }

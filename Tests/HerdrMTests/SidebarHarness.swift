@@ -14,10 +14,12 @@ final class SidebarHarness {
     enum ScrollTarget { case top, bottom, offset(CGFloat) }
 
     let model: AppModel
+    private let attentionSuiteName: String?
     private let root: NSHostingView<AnyView>
     private let window: NSWindow
     private let scroll: NSScrollView
     private var signatures: [Header: [Double]] = [:]
+    private var inputTerminals: [PaneRef: LineBreakTerminalView] = [:]
 
     /// - Parameters: number of fake workspaces / agents shown in the sidebar.
     /// - Parameter agentTokens: pane `tokens` map given to every fake agent
@@ -25,8 +27,12 @@ final class SidebarHarness {
     /// - Parameter sheets: attach the app's New Agent / New Terminal / New Space
     ///   sheets, so a button press can be followed to the sheet it opens.
     /// - Parameter pinnedHeaders: learn the header titles for `pinnedHeader`; needs a list long enough to scroll.
-    init(spaces: Int, agents: Int, terminals: Int = 0, agentTokens: [String: String]? = nil, agentKinds: [String] = [], sheets: Bool = false, appearance: NSAppearance.Name = .darkAqua, pinnedHeaders: Bool = true, width: CGFloat = 260, height: CGFloat = 600) throws {
-        model = try Self.fakeModel(spaces: spaces, agents: agents, terminals: terminals, agentTokens: agentTokens, agentKinds: agentKinds)
+    init(spaces: Int, agents: Int, terminals: Int = 0, agentTokens: [String: String]? = nil, agentKinds: [String] = [], device: Device = .local, sheets: Bool = false, appearance: NSAppearance.Name = .darkAqua, pinnedHeaders: Bool = true, width: CGFloat = 260, height: CGFloat = 600, attentionDefaults: UserDefaults? = nil, configureModel: ((AppModel) throws -> Void)? = nil) throws {
+        let suiteName = attentionDefaults == nil ? "SidebarHarness.attention.\(UUID().uuidString)" : nil
+        attentionSuiteName = suiteName
+        let defaults = attentionDefaults ?? UserDefaults(suiteName: suiteName!)!
+        model = try Self.fakeModel(spaces: spaces, agents: agents, terminals: terminals, agentTokens: agentTokens, agentKinds: agentKinds, device: device, attentionDefaults: defaults)
+        try configureModel?(model)
         let sidebar = SidebarView(model: model, collapsed: .constant(false), width: width).frame(width: width, height: height)
         root = NSHostingView(rootView: sheets ? AnyView(sidebar.newItemSheets(model: model)) : AnyView(sidebar))
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height), styleMask: [.titled], backing: .buffered, defer: false)
@@ -42,11 +48,27 @@ final class SidebarHarness {
     }
 
     deinit {
+        if let attentionSuiteName { UserDefaults.standard.removePersistentDomain(forName: attentionSuiteName) }
         window.sheets.forEach { window.endSheet($0) }
         window.close()
     }
 
     // MARK: - Actions
+
+    func showReconnectOverlay(_ view: TerminalReconnectOverlay) {
+        root.rootView = AnyView(view)
+        root.layoutSubtreeIfNeeded()
+        settle()
+    }
+
+    /// Click a named action at the top of the sidebar through real hit-testing.
+    func clickAction(named name: String) throws {
+        let button = try XCTUnwrap(AccessibilityProbe.elements(in: window).first {
+            $0.role == "AXButton" && $0.name == name && $0.frame != nil
+        }, "no sidebar action \(name)")
+        try click(atScreen: XCTUnwrap(button.frame))
+        settle(seconds: 0.8)
+    }
 
     func scroll(_ target: ScrollTarget) {
         let y: CGFloat
@@ -88,6 +110,112 @@ final class SidebarHarness {
         settle()
     }
 
+    /// Inspect focus immediately after the row click, before SwiftUI has time to
+    /// mount a terminal for an agent that has never been opened.
+    func clickAgentTitleWithoutSettling(_ title: String) throws {
+        try click(atScreen: paneRowFrame(title))
+    }
+
+    func clickTerminalTitleWithoutSettling(_ title: String) throws {
+        try click(atScreen: paneRowFrame(title))
+    }
+
+    func pressPaneTitle(_ title: String) throws {
+        AccessibilityProbe.press(try paneTitle(title))
+        settle()
+    }
+
+    func paneRowFrame(_ title: String) throws -> CGRect {
+        try XCTUnwrap(paneTitle(title).frame)
+    }
+
+    private func paneTitle(_ title: String) throws -> AccessibilityProbe.Element {
+        try XCTUnwrap(AccessibilityProbe.elements(in: window)
+            .filter {
+                let name = $0.name ?? ""
+                return $0.role == "AXButton" && (name == title || name.hasPrefix(title + ", "))
+                    && $0.frame != nil
+            }
+            .max { $0.frame!.width < $1.frame!.width },
+            "no pane row \(title)\n\(accessibilityDump)")
+    }
+
+    /// Let synchronous sidebar tests finish layout and scroll animations.
+    func settleSidebar() {
+        settle()
+    }
+
+    func mountTerminal(_ view: LineBreakTerminalView, focus: Bool = false) {
+        root.addSubview(view)
+        if focus { window.makeFirstResponder(view) }
+    }
+
+    /// Real terminal mouse handling beside the sidebar, without starting a
+    /// PTY, SSH connection or agent. Keep the sidebar's existing geometry.
+    func mountInputTerminals(for panes: [PaneRef]) {
+        let sidebarSize = root.frame.size
+        let paneWidth: CGFloat = 280
+        let contentSize = NSSize(width: sidebarSize.width + paneWidth * CGFloat(panes.count),
+                                 height: sidebarSize.height)
+        let content = NSView(frame: NSRect(origin: .zero, size: contentSize))
+        root.removeFromSuperview()
+        window.contentView = content
+        window.setContentSize(contentSize)
+        root.autoresizingMask = []
+        root.frame = NSRect(origin: .zero, size: sidebarSize)
+        content.addSubview(root)
+        for (index, pane) in panes.enumerated() {
+            let view = LineBreakTerminalView(frame: NSRect(
+                x: sidebarSize.width + paneWidth * CGFloat(index) + 10, y: 12,
+                width: paneWidth - 20, height: sidebarSize.height - 24))
+            view.mouseReportingEnabled = false
+            // DetailView.attachChild's own activation binding, not a copy.
+            view.onActivate = DetailView.inputActivation(for: pane, in: model)
+            content.addSubview(view)
+            inputTerminals[pane] = view
+        }
+        settle()
+    }
+
+    func clickInputTerminal(_ pane: PaneRef) throws {
+        let view = try XCTUnwrap(inputTerminals[pane], "no input terminal for \(pane)")
+        let point = view.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), to: nil)
+        let content = try XCTUnwrap(window.contentView)
+        let target = try XCTUnwrap(content.hitTest(content.superview?.convert(point, from: nil) ?? point))
+        XCTAssertTrue(target === view, "The click must reach the actual terminal view")
+        let (down, up) = try mouseClick(at: point)
+        target.mouseDown(with: down)
+        target.mouseUp(with: up)
+        settle()
+        XCTAssertTrue(window.firstResponder === view, "The input terminal must still receive keyboard focus")
+    }
+
+    var terminalFirstResponder: NSResponder? { window.firstResponder }
+
+    func activateWindow() {
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        // The command-line test host has no NSApplication.run() loop. Drain
+        // its AppKit events so the requested activation actually takes effect.
+        let deadline = Date().addingTimeInterval(1)
+        while Date() < deadline && !(NSApp.isActive && window.isKeyWindow) {
+            if let event = NSApp.nextEvent(matching: .any, until: Date().addingTimeInterval(0.05),
+                                          inMode: .default, dequeue: true) {
+                NSApp.sendEvent(event)
+            }
+        }
+        settle()
+    }
+
+    func settleTerminalFocus() async {
+        // Let deferred AppKit focus run even when the test itself is executing
+        // on the main dispatch queue, where a nested RunLoop cannot drain it.
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        settle()
+    }
+
     /// Click, with the mouse, the disclosure chevron on a space's row (grouped mode).
     func clickSpaceDisclosure(_ space: String) throws {
         try click(atScreen: XCTUnwrap(spaceDisclosure(space).frame))
@@ -123,11 +251,65 @@ final class SidebarHarness {
         settle(seconds: 0.8) // the sheet slides out
     }
 
+    /// Choose a device using the native popup's selection action.
+    func selectSheetDevice(from current: String, to name: String) throws {
+        let sheet = try XCTUnwrap(window.sheets.first)
+        let popup = try XCTUnwrap(Self.popup(named: current, in: XCTUnwrap(sheet.contentView)))
+        let menu = try XCTUnwrap(popup.menu)
+        let index = menu.indexOfItem(withTitle: name)
+        XCTAssertNotEqual(index, -1, "no device \(name)")
+        guard index != -1 else { return }
+        // SwiftUI's picker binding is updated by the menu item's action,
+        // not by selecting the NSPopUpButton's displayed item programmatically.
+        menu.performActionForItem(at: index)
+        settle()
+    }
+
+    private static func popup(named title: String, in view: NSView) -> NSPopUpButton? {
+        if let popup = view as? NSPopUpButton, popup.titleOfSelectedItem == title { return popup }
+        return view.subviews.lazy.compactMap { popup(named: title, in: $0) }.first
+    }
+
     /// The texts on the sheet attached to the sidebar's window; empty when there is none.
     var sheetTexts: [String] {
         let all = AccessibilityProbe.elements(in: window)
         guard let start = all.firstIndex(where: { $0.role == "AXSheet" }) else { return [] }
         return all[start...].filter { $0.role == "AXStaticText" }.compactMap { $0.value ?? $0.name }
+    }
+
+    var sheetButtonNames: [String] {
+        let all = AccessibilityProbe.elements(in: window)
+        guard let start = all.firstIndex(where: { $0.role == "AXSheet" }) else { return [] }
+        return all[start...].filter { $0.role == "AXButton" }.compactMap(\.name)
+    }
+
+    /// Hit-test the actual sheet, so a clipped or covered agent choice cannot
+    /// pass just because its accessibility action exists.
+    func clickSheetButton(named name: String) throws {
+        let sheet = try XCTUnwrap(window.sheets.first)
+        let all = AccessibilityProbe.elements(in: window)
+        let start = try XCTUnwrap(all.firstIndex { $0.role == "AXSheet" })
+        let button = try XCTUnwrap(all[start...].first { $0.role == "AXButton" && $0.name == name })
+        let frame = try XCTUnwrap(button.frame)
+        XCTAssertGreaterThan(frame.height, 0)
+        let screenTop = try XCTUnwrap(NSScreen.screens.first).frame.maxY
+        let point = sheet.convertPoint(fromScreen: NSPoint(x: frame.midX, y: screenTop - frame.midY))
+        let content = try XCTUnwrap(sheet.contentView)
+        let target = try XCTUnwrap(content.hitTest(content.superview?.convert(point, from: nil) ?? point))
+        let down = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseDown, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: sheet.windowNumber, context: nil, eventNumber: 1, clickCount: 1, pressure: 1))
+        let up = try XCTUnwrap(NSEvent.mouseEvent(
+            with: .leftMouseUp, location: point, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime + 0.05,
+            windowNumber: sheet.windowNumber, context: nil, eventNumber: 2, clickCount: 1, pressure: 0))
+        if target.acceptsFirstMouse(for: down) {
+            sheet.sendEvent(down)
+            sheet.sendEvent(up)
+        } else {
+            target.mouseDown(with: down)
+            target.mouseUp(with: up)
+        }
+        settle()
     }
 
     /// What VoiceOver reads for the disclosure chevron on a space's row.
@@ -153,7 +335,7 @@ final class SidebarHarness {
     private func spaceTitle(_ space: String) throws -> AccessibilityProbe.Element {
         try XCTUnwrap(
             AccessibilityProbe.elements(in: window)
-                .filter { ($0.name ?? "").hasPrefix(space) && $0.frame != nil }
+                .filter { ($0.name == space || $0.name?.hasPrefix(space + ",") == true) && $0.frame != nil }
                 .max { $0.frame!.width < $1.frame!.width },
             "no row \(space)\n\(accessibilityDump)"
         )
@@ -191,6 +373,38 @@ final class SidebarHarness {
 
     // MARK: - Observations
 
+    /// A space is revealed only when its row clears the pinned section header
+    /// and fits inside the real scroll viewport; an off-screen AX node is not enough.
+    func visibleSpaceRow(_ name: String) -> Bool {
+        let row = AccessibilityProbe.elements(in: window)
+            .filter { ($0.name == name || $0.name?.hasPrefix(name + ",") == true) && $0.frame != nil }
+            .max { $0.frame!.width < $1.frame!.width }
+        guard let frame = row?.frame, frame.height > 0 else { return false }
+        let inWindow = scroll.contentView.convert(scroll.contentView.bounds, to: nil)
+        let onScreen = window.convertToScreen(inWindow)
+        let screenTop = NSScreen.screens.first?.frame.maxY ?? 0
+        let visible = CGRect(x: onScreen.minX, y: screenTop - onScreen.maxY + 28,
+                             width: onScreen.width, height: max(0, onScreen.height - 28))
+        return visible.contains(frame)
+    }
+
+    /// An Agent or Terminal row, by the same viewport rule as `visibleSpaceRow`.
+    func visiblePaneRow(_ title: String) -> Bool {
+        visibleSpaceRow(title)
+    }
+
+    func paneRowIsSelected(_ title: String) throws -> Bool {
+        try paneTitle(title).isSelected == true
+    }
+
+    func spaceRowIsSelected(_ name: String) throws -> Bool {
+        try spaceTitle(name).isSelected == true
+    }
+
+    func spaceRowFrame(_ name: String) throws -> CGRect {
+        try XCTUnwrap(spaceTitle(name).frame)
+    }
+
     /// Whether the CPU / RAM / DISK meters are in the sidebar footer.
     var showsMachineStats: Bool {
         AccessibilityProbe.elements(in: window).contains { $0.identifier == "sidebar.machineStats" }
@@ -220,6 +434,13 @@ final class SidebarHarness {
     /// Names VoiceOver reads for the buttons on a section header.
     func headerButtons(_ header: Header) -> [String] {
         headerButtonElements(header).compactMap(\.name)
+    }
+
+    /// Names of the sidebar's top action rows (New Agent … Search), top to bottom.
+    func actionRowNames() -> [String] {
+        AccessibilityProbe.elements(in: window)
+            .filter { $0.role == "AXButton" && $0.identifier == nil }
+            .compactMap(\.name)
     }
 
     /// Names of the buttons on the sheet attached to the sidebar's window; empty when there is none.
@@ -308,9 +529,12 @@ final class SidebarHarness {
         return out
     }
 
-    /// Ink is thin, so most of a region is background.
+    /// Ink is thin, so most of a region is background. An empty sample
+    /// (the region landed off-render on this run) returns a neutral 1.0 so
+    /// the contrast assertions fail as failures — subscripting an empty
+    /// array here trapped SIGTRAP and took the whole suite down with it.
     private static func background(_ values: [Double]) -> Double {
-        values.sorted()[values.count / 2]
+        values.isEmpty ? 1.0 : values.sorted()[values.count / 2]
     }
 
     /// Contrast of the pixel that differs most from the background.
@@ -339,10 +563,9 @@ final class SidebarHarness {
 
     // MARK: - Fake data
 
-    private static func fakeModel(spaces: Int, agents: Int, terminals: Int, agentTokens: [String: String]?, agentKinds: [String]) throws -> AppModel {
-        let model = AppModel()
-        let device = Device.local
-        model.devices = [device]
+    private static func fakeModel(spaces: Int, agents: Int, terminals: Int, agentTokens: [String: String]?, agentKinds: [String], device: Device, attentionDefaults: UserDefaults) throws -> AppModel {
+        let model = AppModel(attentionDefaults: attentionDefaults)
+        model.devices = device == .local ? [device] : [.local, device]
         var state = DeviceSessionState()
         state.workspaces = try (0..<spaces).map { i in
             try decode(WorkspaceInfo.self, ["workspace_id": "ws-\(i)", "number": i + 1, "label": "Space \(i + 1)"])

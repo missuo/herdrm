@@ -44,6 +44,9 @@ public enum SSHError: Error, Sendable, Equatable {
     case connectionFailed
     case algorithmNegotiationFailed
     case authenticationFailed
+    /// The private key couldn't be read: wrong passphrase, or a format this
+    /// build doesn't understand. The connection stays usable.
+    case privateKeyUnreadable
     case timedOut
     case cancelled
     case channelFailed

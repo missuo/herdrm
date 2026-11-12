@@ -190,15 +190,26 @@ final class AppModel: ObservableObject {
     private var conversationLastVisible = false
     private var conversationResumeNeedsLatest = false
     @Published var selectedSpace: SpaceRef?
+    /// Explicit navigation can reveal a pane's row even when it is selected.
+    /// Terminal input focus and status refreshes never increment this.
+    @Published private(set) var sidebarRevealGeneration = 0
+    /// Sidebar selection and terminal input focus preserve the list's position.
+    @Published private(set) var sidebarSelectionGeneration = 0
     @Published var selectedPane: PaneRef? {
         didSet {
-            // Leaving a finished agent marks it viewed. Staying on it while
-            // the turn ends must not swallow the unread flag.
-            if let old = oldValue, old != selectedPane {
-                unreadAgents.remove(AgentUnreadKey(deviceID: old.deviceID, paneID: old.paneID))
+            // Refreshes can change selection in a background or covered window.
+            // Only a visible result or an explicit navigation action is read.
+            markVisibleAgentRead()
+            if selectedPane != oldValue {
+                // Release the previous terminal during the selection event. The
+                // first attach can take time to mount; it must not leave input
+                // going to the agent we just left.
+                AttachViewRegistry.select(selectedAttachedEntry?.id)
             }
             noteVisibleAttachSessions()
+            if selectedPane != oldValue { widenSpaceFilterToSelectedPane() }
             if let pane = selectedPane, pane != oldValue {
+                recordRecentPane(pane)
                 snapPaneViewportToBottom(pane)
                 refreshSelectedTabLayout()
             }
@@ -277,6 +288,14 @@ final class AppModel: ObservableObject {
     @Published private(set) var unreadAgents: Set<AgentUnreadKey> = []
     /// New Agent's Recent list: the last launches, newest first.
     @Published private(set) var recentLaunches: [RecentAgentLaunch] = RecentAgentLaunches.load()
+    /// Panes in the order they were last selected, newest first, for ⌃Tab.
+    /// Kept across launches; a device's closed panes drop out when it reports.
+    @Published private(set) var recentPanes: [RecentPane]
+    private let recentPanesDefaults: UserDefaults
+    /// The open ⌃Tab session; nil when no switch is in progress.
+    @Published private(set) var paneSwitcher: RecentSwitcher<PaneRef>?
+    /// The switcher panel is on screen. A quick tap switches without showing it.
+    @Published var paneSwitcherShown = false
 
     @Published var showAddDevice = false
     @Published var showNewAgent = false
@@ -286,9 +305,28 @@ final class AppModel: ObservableObject {
     /// from that space's menu; the sheet reads it once, then clears it.
     @Published var newItemSpace: SpaceRef?
     @Published var showSearch = false
-    @Published var isFileManagerActive = false {
-        didSet { synchronizeConversationHistory() }
+    /// What the right pane shows. `.terminal` is the attached terminal; the other
+    /// modes cover it with a view of their own.
+    enum DetailMode: Equatable { case terminal, files, project }
+    @Published var detailMode: DetailMode = .terminal {
+        didSet {
+            if detailMode != .project { projectSpaceOverride = nil }
+            synchronizeConversationHistory()
+            if detailMode == .terminal { markVisibleAgentRead() }
+        }
     }
+    /// The Space "Project…" was opened on. Kept apart from `selectedSpace`, the
+    /// sidebar's filter, so opening a Project never narrows the sidebar or
+    /// leaves it listing a different Space than the selected pane.
+    @Published private(set) var projectSpaceOverride: SpaceRef?
+    /// True while the file manager specifically is showing. Setting it is the
+    /// shorthand the many "go back to the terminal" sites use.
+    var isFileManagerActive: Bool {
+        get { detailMode == .files }
+        set { detailMode = newValue ? .files : .terminal }
+    }
+    /// True whenever something other than the terminal fills the right pane.
+    var isDetailCovered: Bool { detailMode != .terminal }
     @Published var shellSplitAxis: SplitAxis?
     /// Set by `reveal` when a jump lands while the local-shell split is open, and consumed once the
     /// main window is key again. Only an actual jump sets it: dismissing the search with
@@ -321,11 +359,39 @@ final class AppModel: ObservableObject {
         didSet { synchronizeConversationHistory() }
     }
     /// In-window device panel (NSPopover crashes in ViewBridge on macOS 26+ betas).
-    @Published var showDevicePanel = false
+    @Published var showDevicePanel = false {
+        // Switching devices takes over the card; the hover details step aside.
+        didSet { if showDevicePanel { setMachineStatsHover(card: false, panel: false, immediately: true) } }
+    }
     /// Machine stats under the terminal: the sampler state lives in its own object so its
     /// two-second ticks don't republish the whole app model.
     let machineStats = MachineStatsModel()
+    /// Per-Space project probes behind the Project detail view.
+    let projects = ProjectInspectorModel()
     @Published var showMachineStats = false
+    private var machineStatsHoverCard = false
+    private var machineStatsHoverPanel = false
+    private var machineStatsHoverTask: Task<Void, Never>?
+
+    /// Hovering the device card shows the machine stats panel above it, after a
+    /// short pause so passing over the card to click it doesn't flash it. The
+    /// pointer may cross the gap into the panel; leaving both hides it.
+    func setMachineStatsHover(card: Bool? = nil, panel: Bool? = nil, immediately: Bool = false) {
+        if let card { machineStatsHoverCard = card }
+        if let panel { machineStatsHoverPanel = panel }
+        machineStatsHoverTask?.cancel()
+        let wanted = (machineStatsHoverCard || machineStatsHoverPanel) && !showDevicePanel
+        guard wanted != showMachineStats else { return }
+        if immediately {
+            showMachineStats = wanted
+            return
+        }
+        machineStatsHoverTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: wanted ? 450_000_000 : 250_000_000)
+            guard let self, !Task.isCancelled else { return }
+            self.showMachineStats = wanted && !self.showDevicePanel
+        }
+    }
     @Published var deviceToEdit: Device?
     @Published var sshAuthenticationRequest: SSHAuthenticationRequest?
     @Published var spaceToRename: SpaceEntry?
@@ -337,6 +403,11 @@ final class AppModel: ObservableObject {
     @Published var grazrSyncStatus: GrazrSyncStatus = .off
     /// Keeps every grazr device on one order and one active account.
     lazy var grazrSync = GrazrSyncCoordinator(model: self)
+    /// Agent usage behind the sidebar's opt-in usage row, in its own object
+    /// like `machineStats`, so a reading re-renders only the row. A `var`
+    /// so tests can hand in a model whose store runs no real commands;
+    /// set it before the sidebar mounts.
+    var usage = UsageModel()
     /// The install's tailcat client public key ("nodekey:…") for hosts' allow
     /// lists. Loaded on demand, so users without tailcat devices never create one.
     @Published var tailcatClientPublicKey: String?
@@ -351,24 +422,49 @@ final class AppModel: ObservableObject {
     }
     @Published var closeRequest: CloseRequest?
 
-    private let store = DeviceStore()
+    /// New Agent on a host with no room left (`HostCapacity.Level.critical`): the
+    /// alert names the reasons and starts the agent only if asked to.
+    struct CapacityWarning {
+        let title: String
+        let message: String
+        let proceed: () -> Void
+    }
+    @Published var capacityWarning: CapacityWarning?
+
+    private let store: DeviceStore
     private var services: [UUID: HerdrService] = [:]
     private var sessionTasks: [UUID: Task<Void, Never>] = [:]
     private var refreshDebounces: [UUID: Task<Void, Never>] = [:]
     private var refreshDebounceTokens: [UUID: UUID] = [:]
     private var refreshDebouncePending: Set<UUID> = []
+    /// Consecutive failed snapshots per device, for the retry backoff.
+    private var refreshFailures: [UUID: Int] = [:]
     private var snapshotRefreshTasks: [UUID: Task<Bool, Never>] = [:]
     private var snapshotRefreshTokens: [UUID: UUID] = [:]
     private var refreshRequested: Set<UUID> = []
     private var statusGenerations: [UUID: UInt64] = [:]
     private var previousStatuses: [UUID: [String: AgentStatus]] = [:]
+    // Reconnects and relaunches keep this history: restoring an old done state
+    // is not a new completion. New sequences still arrive while we are offline.
+    private var completionTrackers: [UUID: AgentCompletionTracker] = [:]
+    private let attentionDefaults: UserDefaults
+    private var savedAttention: AgentAttentionState
     /// Claude panes already checked for the usage-credits dialog during their
     /// current blocked spell, per device. A pane leaves when it stops being
     /// blocked, so a later spell is checked again.
     private var modelSwitchChecked: [UUID: Set<String>] = [:]
 
-    init() {
-        let loaded = DeviceStore().load()
+    init(recentPanesDefaults: UserDefaults = .standard, attentionDefaults: UserDefaults = .standard,
+         deviceStore: DeviceStore = DeviceStore()) {
+        store = deviceStore
+        self.attentionDefaults = attentionDefaults
+        let attention = AgentAttentionState.load(from: attentionDefaults)
+        savedAttention = attention
+        unreadAgents = attention.unread
+        completionTrackers = attention.trackers
+        self.recentPanesDefaults = recentPanesDefaults
+        recentPanes = RecentPanes.load(from: recentPanesDefaults)
+        let loaded = deviceStore.load()
         devices = loaded
         // Restore the device filter only if that device still exists;
         // otherwise fall back to All Devices.
@@ -383,6 +479,38 @@ final class AppModel: ObservableObject {
 
     func device(_ id: UUID) -> Device? {
         devices.first { $0.id == id }
+    }
+
+    /// What the Project view probes for a Space: every pane directory in it, the focused one first.
+    /// The Space the Project pane shows: the sidebar's Space filter, else the Space of the
+    /// selected pane, so Project works with no filter set.
+    var projectSpace: SpaceRef? {
+        if let projectSpaceOverride { return projectSpaceOverride }
+        if let selectedSpace { return selectedSpace }
+        guard let selected = selectedPane else { return nil }
+        let state = session(selected.deviceID)
+        let workspace = state.agents.first { $0.paneID == selected.paneID }?.workspaceID
+            ?? state.panes.first { $0.paneID == selected.paneID }?.workspaceID
+        return workspace.map { SpaceRef(deviceID: selected.deviceID, workspaceID: $0) }
+    }
+
+    func projectContext(for space: SpaceRef) -> ProjectContext? {
+        guard let device = device(space.deviceID) else { return nil }
+        let state = session(space.deviceID)
+        guard let label = state.workspaces.first(where: { $0.workspaceID == space.workspaceID })?.label else { return nil }
+        let agents = state.agents.filter { $0.workspaceID == space.workspaceID }
+        let panes = state.panes.filter { $0.workspaceID == space.workspaceID }
+        var focused: String?
+        if let selected = selectedPane, selected.deviceID == space.deviceID {
+            focused = agents.first { $0.paneID == selected.paneID }?.cwd ?? panes.first { $0.paneID == selected.paneID }?.cwd
+        }
+        if focused?.isEmpty != false { focused = agents.first { $0.focused == true }?.cwd }
+        if focused?.isEmpty == true { focused = nil }
+        var cwds: [String] = []
+        for cwd in [focused] + agents.map(\.cwd) + panes.map(\.cwd) {
+            if let cwd, !cwd.isEmpty, !cwds.contains(cwd) { cwds.append(cwd) }
+        }
+        return ProjectContext(device: device, workspaceLabel: label, cwds: cwds, focusedCwd: focused)
     }
 
     func session(_ id: UUID) -> DeviceSessionState {
@@ -601,6 +729,73 @@ final class AppModel: ObservableObject {
         unreadAgents.contains(AgentUnreadKey(deviceID: entry.device.id, paneID: entry.agent.paneID))
     }
 
+    private func markSelectedAgentRead() {
+        guard let pane = selectedPane else { return }
+        // The tracker already holds the incoming snapshot, while sessions may
+        // still hold the previous one when a visible result is auto-read.
+        completionTrackers[pane.deviceID]?.acknowledge(paneID: pane.paneID)
+        unreadAgents.remove(AgentUnreadKey(deviceID: pane.deviceID, paneID: pane.paneID))
+        saveAttention()
+    }
+
+    private func saveAttention() {
+        let attention = AgentAttentionState(unread: unreadAgents, trackers: completionTrackers)
+        guard attention != savedAttention else { return }
+        attention.save(to: attentionDefaults)
+        savedAttention = attention
+    }
+
+    private func forgetAttention(on deviceID: UUID) {
+        completionTrackers[deviceID] = nil
+        unreadAgents = unreadAgents.filter { $0.deviceID != deviceID }
+        saveAttention()
+    }
+
+    /// Saved attention outlives the device list: devices removed while the app
+    /// was closed, and named sessions that never came back. Named sessions are
+    /// not persisted, so this waits for discovery instead of running at launch.
+    private func forgetAttentionOfMissingDevices() {
+        let known = Set(devices.map(\.id))
+        completionTrackers = completionTrackers.filter { known.contains($0.key) }
+        unreadAgents = unreadAgents.filter { known.contains($0.deviceID) }
+        saveAttention()
+    }
+
+    /// A result already visible in the active terminal needs no unread badge.
+    /// Background windows and covering detail views keep their unread state.
+    func markVisibleAgentRead() {
+        guard NSApplication.shared.isActive, !isDetailCovered, selectedShellID == nil,
+              let entry = selectedAttachedEntry,
+              AttachViewRegistry.view(for: entry.id)?.window?.isKeyWindow == true
+        else { return }
+        markSelectedAgentRead()
+    }
+
+    func updateUnreadAgents(previous: [String: AgentStatus], agents: [AgentInfo], deviceID: UUID,
+                            completedPaneIDs: Set<String>? = nil) {
+        unreadAgents = AgentUnread.applying(previous: previous, agents: agents,
+                                           unread: unreadAgents, deviceID: deviceID,
+                                           completedPaneIDs: completedPaneIDs,
+                                           sequencedPaneIDs: completionTrackers[deviceID]?.sequencedPaneIDs ?? [])
+        markVisibleAgentRead()
+        saveAttention()
+    }
+
+    /// Snapshots carry completion_seq; status events do not. Both the badge and
+    /// the notification consume this one result, including after a reconnect.
+    @discardableResult
+    func updateSnapshotAttention(agents: [AgentInfo], deviceID: UUID) -> Set<String> {
+        let replaced = completionTrackers[deviceID]?.replacedPaneIDs(in: agents) ?? []
+        if !replaced.isEmpty {
+            unreadAgents = unreadAgents.filter { $0.deviceID != deviceID || !replaced.contains($0.paneID) }
+        }
+        let completed = completionTrackers[deviceID, default: AgentCompletionTracker()]
+            .update(agents: agents)
+        updateUnreadAgents(previous: previousStatuses[deviceID] ?? [:], agents: agents,
+                           deviceID: deviceID, completedPaneIDs: completed)
+        return completed
+    }
+
     // MARK: - Sidebar tree
 
     /// One sidebar row: an agent or terminal entry at a depth in the pane tree.
@@ -810,15 +1005,40 @@ final class AppModel: ObservableObject {
         return nil
     }
 
+    /// The right-hand terminal's location, separate from the sidebar's filter.
+    /// Standalone shells and covering panels do not display an attached pane.
+    var displayedPaneSpace: SpaceRef? {
+        guard !isDetailCovered, selectedShellID == nil,
+              let entry = selectedAttachedEntry else { return nil }
+        return SpaceRef(deviceID: entry.device.id, workspaceID: entry.workspaceID)
+    }
+
+    /// The Space highlight is the Agent/Terminal list filter, so it must
+    /// always contain the selected row. Every path that selects a pane outside
+    /// the filter (a grouped-tree row in another space, the machine-stats
+    /// panel, a new agent, a refresh fallback) lands here and widens the
+    /// filter to All Spaces, the same rule `reveal` applies.
+    private func widenSpaceFilterToSelectedPane() {
+        guard let space = selectedSpace, let entry = selectedAttachedEntry,
+              entry.device.id != space.deviceID || entry.workspaceID != space.workspaceID
+        else { return }
+        selectedSpace = nil
+    }
+
+    private func revealDisplayedSpaceInSidebar() {
+        guard displayedPaneSpace != nil else { return }
+        sidebarRevealGeneration += 1
+    }
+
     var isClaudeHistorySelected: Bool {
-        guard !isFileManagerActive, selectedShellID == nil,
+        guard !isDetailCovered, selectedShellID == nil,
               let entry = selectedEntry else { return false }
         return ["claude", "claude-code"].contains(entry.agent.agent.lowercased())
     }
 
     /// A sidebar action belongs to its live pane, even when another agent is
     /// currently selected. Bind that pane before presenting any saved messages.
-    func toggleConversationHistory(for ref: PaneRef) {
+    func toggleConversationHistory(for ref: PaneRef, revealInSidebar: Bool = true) {
         guard device(ref.deviceID) != nil,
               let agent = session(ref.deviceID).agents.first(where: { $0.paneID == ref.paneID }),
               ["claude", "claude-code"].contains(agent.agent.lowercased()) else { return }
@@ -826,7 +1046,7 @@ final class AppModel: ObservableObject {
             conversationHistory.close()
             return
         }
-        selectAgent(ref)
+        selectAgent(ref, revealInSidebar: revealInSidebar)
         synchronizeConversationHistory()
         conversationHistory.open()
     }
@@ -1134,6 +1354,7 @@ final class AppModel: ObservableObject {
               let next = TabLayoutGeometry.neighbor(of: selected.paneID, in: layout.root, direction: direction)
         else { return }
         selectedPane = PaneRef(deviceID: selected.deviceID, paneID: next)
+        markSelectedAgentRead()
     }
 
     /// Keyboard focus to the next (+1) or previous (-1) pane in the tab's reading
@@ -1144,6 +1365,7 @@ final class AppModel: ObservableObject {
         guard let index = order.firstIndex(of: selected.paneID), order.count > 1 else { return }
         let next = order[((index + offset) % order.count + order.count) % order.count]
         selectedPane = PaneRef(deviceID: selected.deviceID, paneID: next)
+        markSelectedAgentRead()
     }
 
     /// The sidebar's confirmed close, for the selected pane. In a tab layout the
@@ -1165,12 +1387,15 @@ final class AppModel: ObservableObject {
         requestClosePane(entry.ref, name: name, selectAfter: fallback)
     }
 
-    /// The keyboard landed in another pane of the shown tab: make it the selection,
-    /// so the sidebar, unread marks and viewport snap follow. Selection stays a
-    /// herdrm-side notion; herdr's own focus is left alone, as it is for sidebar clicks.
+    /// The keyboard landed in a visible pane: update selection and unread marks
+    /// in place. Moving input focus must not move the sidebar away from its rows.
     func focusVisiblePane(_ ref: PaneRef) {
-        guard ref != selectedPane, visiblePaneRefs.contains(ref) else { return }
-        selectedPane = ref
+        guard visiblePaneRefs.contains(ref) else { return }
+        if ref != selectedPane {
+            sidebarSelectionGeneration += 1
+            selectedPane = ref
+        }
+        markSelectedAgentRead()
     }
 
     private var firstVisiblePaneRef: PaneRef? {
@@ -1214,18 +1439,28 @@ final class AppModel: ObservableObject {
     /// The space a New Agent / New Terminal sheet should open on.
     func takeNewItemSpace() -> SpaceRef? {
         defer { newItemSpace = nil }
-        return newItemSpace ?? selectedSpace
+        return newItemSpace ?? selectedSpace ?? selectedAttachedEntry.map {
+            SpaceRef(deviceID: $0.device.id, workspaceID: $0.workspaceID)
+        }
     }
 
-    func selectSpace(_ ref: SpaceRef?) {
-        isFileManagerActive = false
+    func selectSpace(_ ref: SpaceRef?, revealInSidebar: Bool = true) {
+        if !revealInSidebar { sidebarSelectionGeneration += 1 }
+        defer {
+            if revealInSidebar { revealDisplayedSpaceInSidebar() }
+        }
         selectedSpace = ref
         selectedShellID = nil
         if let entry = selectedAttachedEntry {
-            if ref == nil { return }
-            if entry.device.id == ref!.deviceID && entry.workspaceID == ref!.workspaceID { return }
+            if ref == nil || (entry.device.id == ref!.deviceID && entry.workspaceID == ref!.workspaceID) {
+                isFileManagerActive = false
+                markSelectedAgentRead()
+                return
+            }
         }
         selectedPane = preferredVisibleAgent()?.ref ?? firstVisiblePaneRef
+        isFileManagerActive = false
+        markSelectedAgentRead()
     }
 
     func setDeviceFilter(_ id: UUID?) {
@@ -1243,7 +1478,8 @@ final class AppModel: ObservableObject {
     private func preferredVisibleAgent() -> AgentEntry? {
         let agents = visibleAgents
         if let blocked = agents.first(where: { $0.agent.status == .blocked }) { return blocked }
-        if let unread = agents.first(where: { $0.agent.status == .done && isUnread($0) }) {
+        // Same rule as the dot: an unread result also shows while idle/unknown.
+        if let unread = agents.first(where: { $0.agent.status != .working && isUnread($0) }) {
             return unread
         }
         if let working = agents.first(where: { $0.agent.status == .working }) { return working }
@@ -1252,13 +1488,15 @@ final class AppModel: ObservableObject {
 
     /// Jump target used by the search sheet and by notification clicks.
     func reveal(_ ref: PaneRef) {
-        isFileManagerActive = false
         if let filter = deviceFilter, filter != ref.deviceID {
             deviceFilter = nil
         }
         selectedSpace = nil
         selectedPane = ref
         selectedShellID = nil
+        isFileManagerActive = false
+        markSelectedAgentRead()
+        revealDisplayedSpaceInSidebar()
         // Only the search sheet needs the deferred request: its dismissal restores the
         // parent window's previous responder after the view tree has asked for focus.
         // `showSearch` is still true here — SearchView calls this before dismissing.
@@ -1271,6 +1509,92 @@ final class AppModel: ObservableObject {
         if shellSplitAxis != nil, showSearch { pendingSplitAgentFocus = true }
     }
 
+    // MARK: - Recent switcher (⌃Tab)
+
+    private func recordRecentPane(_ pane: PaneRef) {
+        recentPanes = RecentPanes.recording(RecentPane(deviceID: pane.deviceID, paneID: pane.paneID), into: recentPanes)
+        RecentPanes.save(recentPanes, to: recentPanesDefaults)
+    }
+
+    private func pruneRecentPanes(deviceID: UUID, keeping paneIDs: Set<String>) {
+        let pruned = RecentPanes.pruning(recentPanes, deviceID: deviceID, keeping: paneIDs)
+        guard pruned != recentPanes else { return }
+        recentPanes = pruned
+        RecentPanes.save(recentPanes, to: recentPanesDefaults)
+    }
+
+    private func forgetRecentPanes(on deviceID: UUID) {
+        recentPanes = RecentPanes.removingDevice(deviceID, from: recentPanes)
+        RecentPanes.save(recentPanes, to: recentPanesDefaults)
+    }
+
+    /// Every agent and herdr terminal on every device, whatever the device
+    /// filter says (like ⌘K): the most recently selected first, then the rest
+    /// in device and tab order. A disconnected device keeps its last snapshot,
+    /// so its panes stay listed.
+    var switcherEntries: [AttachedEntry] {
+        let all: [AttachedEntry] = devices.flatMap { device in
+            let agents = session(device.id).agents
+                .map { agentEntry(device: device, agent: $0) }
+                .sorted {
+                    let w0 = workspaceRank(deviceID: device.id, workspaceID: $0.agent.workspaceID)
+                    let w1 = workspaceRank(deviceID: device.id, workspaceID: $1.agent.workspaceID)
+                    if w0 != w1 { return w0 < w1 }
+                    return tabRank(deviceID: device.id, tabID: $0.agent.tabID)
+                        < tabRank(deviceID: device.id, tabID: $1.agent.tabID)
+                }
+            return agents.map(AttachedEntry.agent) + terminalEntries(for: device).map(AttachedEntry.terminal)
+        }
+        let byRef = Dictionary(all.map { ($0.ref, $0) }, uniquingKeysWith: { first, _ in first })
+        let recent = recentPanes.map { PaneRef(deviceID: $0.deviceID, paneID: $0.paneID) }
+        return RecentPanes.ordered(all.map(\.ref), recent: recent).compactMap { byRef[$0] }
+    }
+
+    /// The pane the detail area is showing, if any: not while a standalone
+    /// shell or the file manager covers it.
+    private var paneOnScreen: PaneRef? {
+        selectedShellID == nil && !isFileManagerActive ? selectedPane : nil
+    }
+
+    /// ⌃Tab (`backward` for ⌃⇧Tab). The first press opens a session on the
+    /// previous pane; each further press steps through the list and shows it.
+    func paneSwitcherTab(backward: Bool) {
+        if paneSwitcher != nil {
+            paneSwitcher?.step(backward: backward)
+            paneSwitcherShown = true
+            return
+        }
+        paneSwitcher = RecentSwitcher(items: switcherEntries.map(\.ref), current: paneOnScreen, backward: backward)
+    }
+
+    /// ↑/↓ in the open panel.
+    func paneSwitcherStep(backward: Bool) {
+        paneSwitcher?.step(backward: backward)
+    }
+
+    /// Releasing ⌃ (or Return, or a click): go to the highlighted pane.
+    func commitPaneSwitch() {
+        guard let ref = paneSwitcher?.selection else { return }
+        endPaneSwitch()
+        // The list was fixed when it opened; the pane may have closed since.
+        guard attachedEntry(for: ref) != nil else { return }
+        reveal(ref)
+    }
+
+    func choosePaneSwitch(_ ref: PaneRef) {
+        paneSwitcher?.highlight(ref)
+        commitPaneSwitch()
+    }
+
+    func cancelPaneSwitch() {
+        endPaneSwitch()
+    }
+
+    private func endPaneSwitch() {
+        paneSwitcher = nil
+        paneSwitcherShown = false
+    }
+
     // MARK: - Shell terminals
 
     func openFileManager() {
@@ -1278,10 +1602,33 @@ final class AppModel: ObservableObject {
         selectedShellID = nil
     }
 
-    func selectAgent(_ ref: PaneRef) {
-        isFileManagerActive = false
+    /// Shows the Project pane, on `space` when one is given.
+    func openProject(_ space: SpaceRef?) {
+        detailMode = .project
+        projectSpaceOverride = space
+        selectedShellID = nil
+    }
+
+    /// The Project panel for the Space a pane lives in: the titlebar button
+    /// and the agent/terminal row menus open it from the pane, not from a
+    /// Space row.
+    func openProject(for entry: AttachedEntry) {
+        openProject(SpaceRef(deviceID: entry.device.id, workspaceID: entry.workspaceID))
+    }
+
+    /// Back to the terminal that was selected before the panel covered it.
+    func closeProject() {
+        guard detailMode == .project else { return }
+        detailMode = .terminal
+    }
+
+    func selectAgent(_ ref: PaneRef, revealInSidebar: Bool = true) {
+        if !revealInSidebar { sidebarSelectionGeneration += 1 }
         selectedPane = ref
         selectedShellID = nil
+        isFileManagerActive = false
+        markSelectedAgentRead()
+        if revealInSidebar { revealDisplayedSpaceInSidebar() }
     }
 
     var selectedShell: ShellSession? {
@@ -1290,7 +1637,7 @@ final class AppModel: ObservableObject {
 
     /// The host the machine stats follow: the selected pane's device.
     var statsDevice: Device? {
-        guard !isFileManagerActive else { return nil }
+        guard !isDetailCovered else { return nil }
         guard let device = selectedShell?.device ?? selectedAttachedEntry?.device else { return nil }
         return MachineStatsStream.isSupported(device) ? device : nil
     }
@@ -1308,8 +1655,8 @@ final class AppModel: ObservableObject {
     }
 
     func selectShell(_ id: UUID) {
-        isFileManagerActive = false
         selectedShellID = id
+        isFileManagerActive = false
         ShellViewRegistry.focus(id)
     }
 
@@ -1360,8 +1707,8 @@ final class AppModel: ObservableObject {
     /// Merges live herdr named sessions in as extra Local devices (issue #81)
     /// and drops ones whose session went away. Discovered, never persisted:
     /// named sessions come and go, unlike user-added SSH/tailcat devices.
-    func refreshNamedSessions() {
-        let discovered = HerdrSessionDiscovery.namedSessions()
+    func refreshNamedSessions(configDirectory: URL? = nil) {
+        let discovered = HerdrSessionDiscovery.namedSessions(configDirectory: configDirectory)
             .map(HerdrSessionDiscovery.device(for:))
         let discoveredIDs = Set(discovered.map(\.id))
         // Named-session devices already present, by id.
@@ -1375,7 +1722,9 @@ final class AppModel: ObservableObject {
         // Remove named-session devices whose session is gone.
         for device in devices where device.isNamedSession && !discoveredIDs.contains(device.id) {
             stopSession(device.id)
+            forgetAttention(on: device.id)
             attachSessions.removeAll { $0.device.id == device.id }
+            forgetRecentPanes(on: device.id)
             devices.removeAll { $0.id == device.id }
             if deviceFilter == device.id { deviceFilter = nil }
             if selectedSpace?.deviceID == device.id { selectedSpace = nil }
@@ -1383,6 +1732,7 @@ final class AppModel: ObservableObject {
                 selectedPane = preferredVisibleAgent()?.ref ?? firstVisiblePaneRef
             }
         }
+        forgetAttentionOfMissingDevices()
     }
 
     /// Runs one device's session: connect, snapshot, event stream, and reconnect
@@ -1570,13 +1920,71 @@ final class AppModel: ObservableObject {
     func reauthenticateGrazrAccount(_ account: GrazrAccount, on device: Device, workspaceID: String? = nil) {
         Task {
             await openGrazrTerminal(
-                install: Grazr.installReauthCommand,
+                install: Grazr.installEnrolCommand,
                 invocation: Grazr.reauthInvocation(accountID: account.id, name: account.name),
                 label: String(localized: "grazr sign-in"),
                 on: device,
                 workspaceID: workspaceID
             )
         }
+    }
+
+    /// Saves the login Claude is using on `device` as a grazr account named
+    /// `name`, listed in ACCOUNTS when `listInRotation`, with nothing to type:
+    /// grazr's enrol, pre-answered. Returns grazr's refusal, nil when saved.
+    func saveGrazrLogin(name: String, listInRotation: Bool, on device: Device) async -> String? {
+        do {
+            let output = try await DeviceFileService(device: device)
+                .run(Grazr.saveLoginCommand(name: name, listInRotation: listInRotation))
+            let result = try JSONDecoder().decode(GrazrSwitchResult.self, from: output)
+            await loadGrazrReport(deviceID: device.id)
+            if result.ok { return nil }
+            return result.summary ?? String(localized: "grazr could not save the login")
+        } catch {
+            return actionErrorMessage(error, device: device)
+        }
+    }
+
+    /// Adds another Claude account to grazr on `device`: a terminal there runs
+    /// grazr's enrol with `claude auth login` in an isolated config dir, so the
+    /// account Claude is on is left alone, and the new login is enrolled as
+    /// `name`. Once it appears in grazr's records, says so.
+    func addGrazrAccount(name: String, listInRotation: Bool, on device: Device, workspaceID: String? = nil) {
+        Task {
+            let known = Set((session(device.id).grazrReport?.accounts ?? []).map(\.id))
+            guard let paneID = await openGrazrTerminal(
+                install: Grazr.installEnrolCommand,
+                invocation: Grazr.enrolInvocation(name: name, listInRotation: listInRotation),
+                label: String(localized: "grazr sign-in"),
+                on: device,
+                workspaceID: workspaceID
+            ) else { return }
+            if await waitForGrazrAccount(named: name, besides: known, signInPane: paneID, on: device) {
+                NotificationManager.shared.postPluginResult(
+                    title: String(localized: "grazr: account added"),
+                    body: String(localized: "\(name) is enrolled on \(device.name)"),
+                    deviceName: device.name
+                )
+            }
+        }
+    }
+
+    /// Waits for an account named `name` that grazr did not know before to be
+    /// enrolled from the terminal in `signInPane`: true once it is there,
+    /// false when that terminal closes without one or after a quarter of an hour.
+    private func waitForGrazrAccount(
+        named name: String, besides known: Set<String>, signInPane: String, on device: Device
+    ) async -> Bool {
+        let service = service(for: device)
+        let deadline = Date().addingTimeInterval(15 * 60)
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            await loadGrazrReport(deviceID: device.id)
+            let accounts = session(device.id).grazrReport?.accounts ?? []
+            if accounts.contains(where: { $0.name == name && !known.contains($0.id) }) { return true }
+            if (try? await service.readPane(paneID: signInPane)) == nil { return false }
+        }
+        return false
     }
 
     /// Signs `account` in for pinned agents, in a terminal on the device:
@@ -1732,20 +2140,22 @@ final class AppModel: ObservableObject {
             sessions[deviceID]?.attachmentCapabilities =
                 AgentAttachmentCapabilityRegistry(manifests: manifests)
             let advertised = manifests.map(\.agent)
-            if device(deviceID)?.isLocal == true {
+            let catalogDevice = await service.device
+            if case .tailcat = catalogDevice.kind {
+                // Tailcat carries only the RPC socket, with no remote shell.
+                sessions[deviceID]?.agentCatalog = .loaded(kinds: advertised)
+            } else {
                 // Herdr supports OMP through its lifecycle extension, so it has
                 // no screen-detection manifest in server.agent_manifests.
-                let found = await service.installedAgents(
+                let found = try await service.installedAgents(
                     from: advertised,
                     includingIntegrationKinds: ["omp"],
-                    overrides: AgentBinaryOverrides.load()
+                    overrides: catalogDevice.isLocal ? AgentBinaryOverrides.load() : [:]
                 )
                 sessions[deviceID]?.agentCatalog = .loaded(
                     kinds: found.map(\.kind),
                     paths: Dictionary(uniqueKeysWithValues: found.map { ($0.kind, $0.path) })
                 )
-            } else {
-                sessions[deviceID]?.agentCatalog = .loaded(kinds: advertised)
             }
         } catch {
             sessions[deviceID]?.agentCatalog = .failed(error.localizedDescription)
@@ -1761,6 +2171,11 @@ final class AppModel: ObservableObject {
     /// Tears down every live tunnel. Awaited from the app's terminate hook — `stopSession`
     /// fires its disconnect in a detached `Task`, which never runs when the process is exiting.
     func shutdownAllSessions() async {
+        refreshDebounces.values.forEach { $0.cancel() }
+        refreshDebounces.removeAll()
+        refreshDebounceTokens.removeAll()
+        refreshDebouncePending.removeAll()
+        refreshFailures.removeAll()
         conversationViewportMutations.discardPending()
         conversationHistory.stop()
         await claudeTranscripts.stopAll()
@@ -1788,6 +2203,7 @@ final class AppModel: ObservableObject {
         refreshDebounces[id] = nil
         refreshDebounceTokens[id] = nil
         refreshDebouncePending.remove(id)
+        refreshFailures[id] = nil
         snapshotRefreshTasks[id]?.cancel()
         snapshotRefreshTasks[id] = nil
         snapshotRefreshTokens[id] = nil
@@ -1800,8 +2216,8 @@ final class AppModel: ObservableObject {
         return service
     }
 
-    func addDevice(name: String, sshTarget: String) {
-        let device = Device(name: name, kind: .ssh(target: sshTarget))
+    func addDevice(name: String, sshTarget: String, sessionName: String? = nil) {
+        let device = Device(name: name, kind: .ssh(target: sshTarget), sessionName: sessionName)
         devices.append(device)
         store.save(devices)
         startSession(device)
@@ -1902,20 +2318,36 @@ final class AppModel: ObservableObject {
         return false
     }
 
-    /// Renames a device and/or updates its SSH target (e.g. after an IP change).
-    func updateDevice(_ id: UUID, name: String, sshTarget: String) {
+    /// Renames a device and/or updates its SSH target (e.g. after an IP change)
+    /// or the remote herdr session it talks to (issue #190).
+    func updateDevice(_ id: UUID, name: String, sshTarget: String, sessionName: String? = nil) {
         guard let index = devices.firstIndex(where: { $0.id == id }), !devices[index].isLocal else { return }
         let targetChanged = devices[index].sshTarget != sshTarget
+        let session = Device.normalizedSessionName(sessionName)
+        let sessionChanged = devices[index].sessionName != session
         devices[index].name = name
         if targetChanged {
             removeSSHPassword(for: id)
             devices[index].kind = .ssh(target: sshTarget)
             devices[index].osID = nil
+        }
+        // Another session is another herdr server: its panes, unread results and
+        // tunnel all start over. The host and its stored password stay.
+        devices[index].sessionName = session
+        if targetChanged || sessionChanged {
+            forgetAttention(on: id)
             stopSession(id)
             startSession(devices[index])
             probeOSIfNeeded(devices[index])
         }
         store.save(devices)
+    }
+
+    /// Live named sessions on an SSH device's host, for the Edit Device picker.
+    /// Reuses the device's own tunnel actor, so its credentials and platform probe.
+    func remoteNamedSessions(for id: UUID) async throws -> [String] {
+        guard let device = device(id), device.sshTarget != nil else { return [] }
+        return try await service(for: device).remoteNamedSessions()
     }
 
     /// Renames a tailcat device and/or replaces its token. A new token
@@ -1950,7 +2382,9 @@ final class AppModel: ObservableObject {
         TailcatCredentialStore.removeToken(for: device.id)
         if sshAuthenticationRequest?.deviceID == device.id { sshAuthenticationRequest = nil }
         stopSession(device.id)
+        forgetAttention(on: device.id)
         attachSessions.removeAll { $0.device.id == device.id }
+        forgetRecentPanes(on: device.id)
         devices.removeAll { $0.id == device.id }
         store.save(devices)
         if deviceFilter == device.id { deviceFilter = nil }
@@ -2003,10 +2437,8 @@ final class AppModel: ObservableObject {
                 refreshRequested.insert(deviceID)
                 return true
             }
-            unreadAgents = AgentUnread.applying(
-                previous: previousStatuses[deviceID] ?? [:],
+            let completed = updateSnapshotAttention(
                 agents: snapshot.agents,
-                unread: unreadAgents,
                 deviceID: device.id
             )
             notifyTransitions(
@@ -2014,7 +2446,8 @@ final class AppModel: ObservableObject {
                 from: previousStatuses[deviceID] ?? [:],
                 to: snapshot.agents,
                 workspaces: snapshot.workspaces,
-                tabs: snapshot.tabs ?? []
+                tabs: snapshot.tabs ?? [],
+                completedPaneIDs: completed
             )
             autoSwitchModels(device: device, agents: snapshot.agents)
             previousStatuses[deviceID] = Dictionary(
@@ -2039,6 +2472,7 @@ final class AppModel: ObservableObject {
                 $0.device.id == deviceID
                     && (!paneIDs.contains($0.ref.paneID) || attachedEntry(for: $0.ref)?.id != $0.id)
             }
+            pruneRecentPanes(deviceID: deviceID, keeping: paneIDs)
             if let tabs = snapshot.tabs {
                 let tabIDs = Set(tabs.map(\.tabID))
                 tabLayouts = tabLayouts.filter { $0.key.deviceID != deviceID || tabIDs.contains($0.key.tabID) }
@@ -2076,7 +2510,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func scheduleRefresh(_ deviceID: UUID) {
+    func scheduleRefresh(_ deviceID: UUID, delayNanoseconds: UInt64 = 200_000_000) {
         // Coalesce from the leading edge instead of resetting the timer for
         // every event. A busy pane can emit continuously; a trailing debounce
         // would never fire until output stopped, hiding the working state.
@@ -2087,15 +2521,34 @@ final class AppModel: ObservableObject {
         let token = UUID()
         refreshDebounceTokens[deviceID] = token
         refreshDebounces[deviceID] = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 200_000_000)
+            try? await Task.sleep(nanoseconds: delayNanoseconds)
             guard let self, !Task.isCancelled,
                   self.refreshDebounceTokens[deviceID] == token
             else { return }
-            await self.refresh(deviceID)
+            let succeeded: Bool
+            if case .connected = self.session(deviceID).connection,
+               self.services[deviceID] != nil {
+                succeeded = await self.refresh(deviceID)
+            } else {
+                succeeded = false
+            }
             if self.refreshDebounceTokens[deviceID] == token {
                 let needsTrailing = self.refreshDebouncePending.remove(deviceID) != nil
                 self.refreshDebounceTokens[deviceID] = nil
                 self.refreshDebounces[deviceID] = nil
+                guard case .connected = self.session(deviceID).connection,
+                      self.services[deviceID] != nil else { return }
+                if !succeeded {
+                    // The completion event may be the last event. Retry its
+                    // confirmation snapshot without polling at the event rate,
+                    // backing off (2 s, 4 s, … 60 s) while it keeps failing.
+                    let failures = (self.refreshFailures[deviceID] ?? 0) + 1
+                    self.refreshFailures[deviceID] = failures
+                    let seconds = min(60, 2 << min(failures - 1, 5))
+                    self.scheduleRefresh(deviceID, delayNanoseconds: UInt64(seconds) * 1_000_000_000)
+                    return
+                }
+                self.refreshFailures[deviceID] = nil
                 if needsTrailing {
                     self.scheduleRefresh(deviceID)
                 }
@@ -2112,7 +2565,7 @@ final class AppModel: ObservableObject {
     }
 
     @discardableResult
-    private func applyAgentStatusEvent(_ event: HerdrEvent, deviceID: UUID) -> Bool {
+    func applyAgentStatusEvent(_ event: HerdrEvent, deviceID: UUID) -> Bool {
         guard let paneID = event.payload["data"]?["pane_id"]?.stringValue,
               let statusRaw = event.payload["data"]?["agent_status"]?.stringValue,
               let device = device(deviceID),
@@ -2124,18 +2577,26 @@ final class AppModel: ObservableObject {
         guard state.agents[index].status != status else { return true }
         let previous = previousStatuses[deviceID] ?? [:]
         state.agents[index] = state.agents[index].updatingStatus(status)
-        unreadAgents = AgentUnread.applying(
+        // Status events carry no completion sequence. In particular, an idle
+        // recovery event must not reuse the prior done sequence as a read ack.
+        state.agents[index].completionSeq = nil
+        // Older servers have no completion sequence. Retain active-state
+        // evidence even when the event arrives between two snapshots; done
+        // still waits for the snapshot and cannot consume a completion here.
+        completionTrackers[deviceID]?.observeActivity(paneID: paneID, status: status)
+        updateUnreadAgents(
             previous: previous,
             agents: state.agents,
-            unread: unreadAgents,
-            deviceID: deviceID
+            deviceID: deviceID,
+            completedPaneIDs: []
         )
         notifyTransitions(
             device: device,
             from: previous,
             to: state.agents,
             workspaces: state.workspaces,
-            tabs: state.tabs
+            tabs: state.tabs,
+            completedPaneIDs: []
         )
         autoSwitchModels(device: device, agents: state.agents)
         var nextStatuses = previous
@@ -2160,19 +2621,20 @@ final class AppModel: ObservableObject {
         "pane.agent_detected",
     ]
 
-    /// Notifies when an agent newly becomes blocked (needs input) or done (finished
-    /// while unwatched). Initial snapshots don't notify — only real transitions do.
+    /// Blocked events can notify immediately. Completion notifications wait for
+    /// a snapshot with a new completion sequence, rather than a replayed status.
     private func notifyTransitions(
         device: Device,
         from previous: [String: AgentStatus],
         to agents: [AgentInfo],
         workspaces: [WorkspaceInfo],
-        tabs: [TabInfo]
+        tabs: [TabInfo],
+        completedPaneIDs: Set<String>
     ) {
-        guard !previous.isEmpty else { return }
         for agent in agents {
-            guard let old = previous[agent.paneID], old != agent.status else { continue }
-            guard agent.status == .blocked || agent.status == .done else { continue }
+            let newlyBlocked = agent.status == .blocked
+                && previous[agent.paneID] != nil && previous[agent.paneID] != .blocked
+            guard newlyBlocked || completedPaneIDs.contains(agent.paneID) else { continue }
             let tabLabel = tabs.first { $0.tabID == agent.tabID }?.customLabel
             NotificationManager.shared.post(
                 agent: agent,
@@ -2405,6 +2867,89 @@ final class AppModel: ObservableObject {
                     self.actionError = self.actionErrorMessage(error, device: device)
                 }
             }
+        }
+    }
+
+    /// Closes every space the sidebar lists (the device filter's scope).
+    func requestCloseAllSpaces() {
+        let spaces = visibleSpaces
+        guard !spaces.isEmpty else { return }
+        closeRequest = CloseRequest(
+            title: String(localized: "Close all \(spaces.count) spaces\(closeAllScope)?"),
+            message: String(localized: "Every terminal and agent in them will be closed.")
+        ) { [weak self] in
+            guard let self else { return }
+            self.closeAll(spaces.map { ($0.device, $0.workspace.workspaceID) }) { service, workspaceID in
+                try await service.closeWorkspace(workspaceID: workspaceID)
+            }
+            if let selected = self.selectedSpace, spaces.contains(where: { $0.ref == selected }) {
+                self.selectedSpace = nil
+            }
+        }
+    }
+
+    /// Closes every agent the Agents section lists.
+    func requestCloseAllAgents() {
+        let agents = visibleAgents
+        guard !agents.isEmpty else { return }
+        closeRequest = CloseRequest(
+            title: String(localized: "Close all \(agents.count) agents\(closeAllScope)?"),
+            message: String(localized: "Each agent and whatever it is running will be terminated. A space left with no panes closes too.")
+        ) { [weak self] in
+            self?.closeAll(agents.map { ($0.device, $0.agent.paneID) }) { service, paneID in
+                try await service.closePane(paneID: paneID)
+            }
+        }
+    }
+
+    /// Closes every terminal the Terminals section lists.
+    func requestCloseAllTerminals() {
+        let terminals = visibleTerminals
+        guard !terminals.isEmpty else { return }
+        closeRequest = CloseRequest(
+            title: String(localized: "Close all \(terminals.count) terminals\(closeAllScope)?"),
+            message: String(localized: "Each terminal and whatever it is running will be terminated. A space left with no panes closes too.")
+        ) { [weak self] in
+            self?.closeAll(terminals.map { ($0.device, $0.pane.paneID) }) { service, paneID in
+                try await service.closePane(paneID: paneID)
+            }
+        }
+    }
+
+    /// " in Space 3", " on Mac Studio", or nothing for every device.
+    private var closeAllScope: String {
+        if let space = selectedSpace {
+            return String(localized: " in \(spaceName(deviceID: space.deviceID, workspaceID: space.workspaceID))")
+        }
+        if let device = filteredDevice, devices.count > 1 {
+            return String(localized: " on \(device.name)")
+        }
+        return ""
+    }
+
+    /// Runs `close` for each target, device by device, then refreshes each
+    /// device once. The first failure is shown; the rest still run.
+    private func closeAll(_ targets: [(Device, String)], close: @escaping (HerdrService, String) async throws -> Void) {
+        Task {
+            var firstError: String?
+            var devices: [Device] = []
+            for (device, _) in targets where !devices.contains(where: { $0.id == device.id }) {
+                devices.append(device)
+            }
+            for device in devices {
+                let service = service(for: device)
+                for target in targets where target.0.id == device.id {
+                    do {
+                        try await close(service, target.1)
+                    } catch HerdrError.rpc(let code, _) where code == "pane_not_found" || code == "workspace_not_found" {
+                        // Closed already, along with a pane or space closed before it.
+                    } catch {
+                        if firstError == nil { firstError = actionErrorMessage(error, device: device) }
+                    }
+                }
+                await refresh(device.id)
+            }
+            if let firstError { actionError = firstError }
         }
     }
 
@@ -2705,9 +3250,27 @@ final class AppModel: ObservableObject {
         args: [String],
         grazrAccount: GrazrAccount? = nil,
         recordedArguments: [String]? = nil,
-        closingPane: String? = nil
+        closingPane: String? = nil,
+        ignoringCapacity: Bool = false
     ) {
         Task {
+            // A host whose agents are about to be OOM-killed asks first. A host that
+            // cannot be sampled in time starts the agent as before.
+            if !ignoringCapacity, let capacity = await hostCapacity(device), capacity.level == .critical {
+                capacityWarning = CapacityWarning(
+                    title: String(localized: "\(device.name) is full"),
+                    message: HostCapacityFormat.summary(capacity, device: device.name)
+                        + "\n\n" + HostCapacityFormat.levelHelp(.critical),
+                    proceed: { [weak self] in
+                        self?.startNewAgent(
+                            device: device, kind: kind, workspaceID: workspaceID, args: args,
+                            grazrAccount: grazrAccount, recordedArguments: recordedArguments,
+                            closingPane: closingPane, ignoringCapacity: true
+                        )
+                    }
+                )
+                return
+            }
             // An account not signed in for pinned agents yet is signed in
             // first; the agent starts once grazr has the token.
             if let grazrAccount, !grazrAccount.hasToken(now: Date()) {
@@ -2766,6 +3329,29 @@ final class AppModel: ObservableObject {
                 }
                 actionError = actionErrorMessage(error, device: device)
             }
+        }
+    }
+
+    /// One sample of `device` for New Agent's capacity check, or nil when the host
+    /// is not Linux, cannot be sampled, or takes longer than `timeout`.
+    private func hostCapacity(_ device: Device, timeout: Double = 4) async -> HostCapacity? {
+        guard MachineStatsStream.isSupported(device) else { return nil }
+        return await withTaskGroup(of: HostCapacity?.self) { group in
+            group.addTask {
+                do {
+                    for try await sample in MachineStatsStream.samples(device: device, frames: 1) {
+                        return MachineStatsComputer.snapshot(previous: nil, current: sample).capacity
+                    }
+                } catch {}
+                return nil
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                return nil
+            }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first
         }
     }
 

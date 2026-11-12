@@ -13,7 +13,7 @@ public enum Grazr {
     /// contributes the active account's id and plan and nothing else.
     public static let readerCommand = #"""
     python3 - <<'GRAZR_EOF'
-    import glob, json, os
+    import glob, json, os, shlex
     from datetime import datetime
 
     home = os.path.expanduser("~")
@@ -76,16 +76,26 @@ public enum Grazr {
             "token_expires": (tokens.get(identifier) or {}).get("expires_at") if isinstance(tokens, dict) else None,
         })
 
+    order = None
     try:
         with open(config) as handle:
             for line in handle:
+                key, separator, rest = line.partition("=")
+                if separator and key.strip() == "ACCOUNTS":
+                    # One double-quoted value grazr splits again, names inside it
+                    # quoted when they need it: split twice, as grazr and herdrm's
+                    # own list_in_rotation do, so "my work" stays one name.
+                    try:
+                        order = shlex.split(" ".join(shlex.split(rest, comments=True)))
+                    except ValueError:
+                        order = None
                 line = line.split("#", 1)[0].strip()
                 if "=" in line:
                     key, value = line.split("=", 1)
                     report["settings"][key.strip()] = value.strip().strip("\"'")
     except Exception:
         pass
-    report["order"] = report["settings"].get("ACCOUNTS", "").split()
+    report["order"] = order if order is not None else report["settings"].get("ACCOUNTS", "").split()
 
     for identifier, entry in (load(os.path.join(state, "blocked.json"), {}) or {}).items():
         if isinstance(entry, dict):
@@ -275,50 +285,107 @@ public enum Grazr {
             .joined(separator: " ")
     }
 
-    /// Where `installReauthCommand` puts the sign-in script on the device.
-    public static let reauthScriptPath = "~/.cache/herdrm/grazr-reauth.py"
-
-    /// Writes the sign-in script that `reauthInvocation` runs in a terminal.
-    /// It goes to a file first so the terminal shows one short line, not the
-    /// script pasted into the shell.
-    public static var installReauthCommand: String {
-        "mkdir -p ~/.cache/herdrm && cat > \(reauthScriptPath) <<'GRAZR_EOF'\n"
+    /// Saves the login Claude is using on the device as `name`: grazr's enrol
+    /// pre-answered with "s" and the name, nothing to type. With
+    /// `listInRotation`, the name is added to ACCOUNTS in config.env, which
+    /// grazr itself leaves to the user. Prints a `GrazrSwitchResult`; grazr's
+    /// refusals ("Could not enrol: …") are its last line.
+    public static func saveLoginCommand(name: String, listInRotation: Bool) -> String {
+        SSHTunnel.remotePathExport + "\n"
+            + "python3 - \(HerdrService.shellQuoted(name)) \(listInRotation ? "list" : "keep") <<'GRAZR_EOF'\n"
             + #"""
-            import json, sys
+            import json, re, sys
 
-            target, name = sys.argv[1], sys.argv[2]
+            name, listing = sys.argv[1], sys.argv[2] == "list"
+
+            def fail(output):
+                print(json.dumps({"ok": False, "output": output}))
+                sys.exit(0)
+
+            if listing and "#" in name:
+                fail("A name listed in ACCOUNTS can't contain #: grazr's config.env reads it as a comment.")
+
+            """#
+            + pluginPreamble
+            + listInRotationSnippet
+            + #"""
+
+            grazr.read_key = lambda *args: "s"
+            grazr.input = lambda prompt="": print(prompt + name) or name
+            enrol_from = grazr._enrol_from
+
+            def listed(runtime, source):
+                code = enrol_from(runtime, source)
+                if code == 0 and listing:
+                    print(list_in_rotation(name))
+                return code
+
+            grazr._enrol_from = listed
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                code = grazr.main(["grazr.py", "enrol"])
+            print(json.dumps({"ok": code == 0, "output": output.getvalue()}))
+            GRAZR_EOF
+            """#
+    }
+
+    /// Where `installEnrolCommand` puts the sign-in script on the device.
+    public static let enrolScriptPath = "~/.cache/herdrm/grazr-enrol.py"
+
+    /// Writes the sign-in script that `enrolInvocation` and `reauthInvocation`
+    /// run in a terminal. It goes to a file first so the terminal shows one
+    /// short line, not the script pasted into the shell.
+    public static var installEnrolCommand: String {
+        "mkdir -p ~/.cache/herdrm && cat > \(enrolScriptPath) <<'GRAZR_EOF'\n"
+            + #"""
+            import json, re, sys
+
+            # The name to enrol under; the account the sign-in must be, or ""
+            # for any; whether to list the name in ACCOUNTS afterwards.
+            name, expected, listing = sys.argv[1], sys.argv[2], sys.argv[3] == "list"
 
             def fail(message):
                 print(message + "\n\npress return to close")
                 sys.stdin.readline()
                 sys.exit(1)
 
+            if listing and "#" in name:
+                fail("A name listed in ACCOUNTS can't contain #: grazr's config.env reads it as a comment.")
+
             """#
             + pluginPreamble
+            + listInRotationSnippet
             + #"""
 
             # grazr's enrol, pre-answered: "l" logs in with an isolated config
-            # dir, leaving the account Claude is on alone, and the name is the
-            # account's own. Re-enrolling lifts grazr's block on it.
+            # dir, leaving the account Claude is on alone, and the name is
+            # given. Re-enrolling an account lifts grazr's block on it.
             key = grazr.read_key
             grazr.read_key = lambda *args: "l"
             grazr.input = lambda prompt="": print(prompt + name) or name
             enrol_from = grazr._enrol_from
 
-            def same_account(runtime, source):
-                try:
-                    with open(os.path.join(source, ".claude.json")) as handle:
-                        signed = json.load(handle).get("oauthAccount") or {}
-                except Exception:
-                    signed = {}
-                if signed.get("accountUuid") != target:
-                    print("\nThat login is %s, not %s, so nothing changed. Sign in as %s."
-                          % (signed.get("emailAddress") or "another account", name, name))
-                    return 1
-                return enrol_from(runtime, source)
+            def checked(runtime, source):
+                if expected:
+                    try:
+                        with open(os.path.join(source, ".claude.json")) as handle:
+                            signed = json.load(handle).get("oauthAccount") or {}
+                    except Exception:
+                        signed = {}
+                    if signed.get("accountUuid") != expected:
+                        print("\nThat login is %s, not %s, so nothing changed. Sign in as %s."
+                              % (signed.get("emailAddress") or "another account", name, name))
+                        return 1
+                code = enrol_from(runtime, source)
+                if code == 0 and listing:
+                    print(list_in_rotation(name))
+                return code
 
-            grazr._enrol_from = same_account
-            print("Sign in to Claude as %s. Claude's current account is left as it is.\n" % name)
+            grazr._enrol_from = checked
+            if expected:
+                print("Sign in to Claude as %s. Claude's current account is left as it is.\n" % name)
+            else:
+                print("Sign in to the Claude account to add as %s. Claude's current account is left as it is.\n" % name)
             code = grazr.main(["grazr.py", "enrol"])
             print("\npress any key to close")
             key()
@@ -327,16 +394,71 @@ public enum Grazr {
             """#
     }
 
-    /// The line typed into a fresh terminal on the device; the tab closes
+    /// The line typed into a fresh terminal on the device to add an account:
+    /// a sign-in to any Claude account, enrolled as `name`. The tab closes
     /// with the script.
-    public static func reauthInvocation(accountID: String, name: String) -> String {
-        "exec python3 \(reauthScriptPath) \(HerdrService.shellQuoted(accountID)) \(HerdrService.shellQuoted(name))"
+    public static func enrolInvocation(name: String, listInRotation: Bool) -> String {
+        "exec python3 \(enrolScriptPath) \(HerdrService.shellQuoted(name)) '' \(listInRotation ? "list" : "keep")"
     }
+
+    /// The line typed into a fresh terminal on the device to sign an enrolled
+    /// account in again: the sign-in must be that account.
+    public static func reauthInvocation(accountID: String, name: String) -> String {
+        "exec python3 \(enrolScriptPath) \(HerdrService.shellQuoted(name)) \(HerdrService.shellQuoted(accountID)) keep"
+    }
+
+    /// `list_in_rotation(name)`: adds a name to ACCOUNTS in grazr's config.env,
+    /// keeping every other line as it is, the way grazr's own `set` does. The
+    /// list is one double-quoted value grazr splits again, so a name that
+    /// needs quoting is double-quoted inside it, escaped for the outer pair.
+    /// Returns what it did, for the terminal or the result.
+    private static let listInRotationSnippet = #"""
+
+    def list_in_rotation(name):
+        path = grazr._config_path()
+        try:
+            with open(path) as handle:
+                lines = handle.read().splitlines(True)
+        except OSError:
+            lines = []
+
+        def quoted(value):
+            if re.fullmatch(r"[\w@.+:/-]+", value):
+                return value
+            return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+        def line_for(names, comment=""):
+            inner = " ".join(quoted(entry) for entry in names)
+            outer = '"' + inner.replace("\\", "\\\\").replace('"', '\\"') + '"'
+            return ("ACCOUNTS=%s  %s" % (outer, comment)).rstrip() + "\n"
+
+        for index, line in enumerate(lines):
+            key, separator, rest = line.partition("=")
+            if not separator or key.strip() != "ACCOUNTS":
+                continue
+            names = shlex.split(" ".join(shlex.split(rest, comments=True)))
+            if name in names:
+                return "%s is already in ACCOUNTS" % name
+            names.append(name)
+            comment = rest[rest.index("#"):].rstrip("\n") if "#" in rest else ""
+            lines[index] = line_for(names, comment)
+            break
+        else:
+            names = [name]
+            if lines and not lines[-1].endswith("\n"):
+                lines[-1] += "\n"
+            lines.append(line_for(names))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as handle:
+            handle.write("".join(lines))
+        return "Listed in ACCOUNTS: %s" % ", ".join(names)
+
+    """#
 
     /// Finds grazr through `herdr plugin list` and sets the environment herdr
     /// gives a plugin action, then imports grazr's modules. Expects `fail`.
     private static let pluginPreamble = #"""
-    import contextlib, io, os, shutil, subprocess
+    import contextlib, io, os, shlex, shutil, subprocess
 
     home = os.path.expanduser("~")
     herdr = shutil.which("herdr")

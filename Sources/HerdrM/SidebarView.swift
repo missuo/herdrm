@@ -27,6 +27,10 @@ struct SidebarView: View {
     @ObservedObject var model: AppModel
     @Binding var collapsed: Bool
     var width: CGFloat = SidebarWidth.defaultWidth
+    /// Whether the footer shows the usage row (View ▸ Show Agent Usage).
+    /// Off by default: on, it runs provider commands on the selected device.
+    @AppStorage(UsageDefaults.showKey) private var showsUsageStats = false
+    @AppStorage(UsageDefaults.agentsKey) private var usageAgents = UsageDefaults.defaultAgents
     @State private var deviceButtonHovered = false
     @State private var draggingSpaceID: String?
     @State private var spaceDrop: (id: String, after: Bool)?
@@ -95,117 +99,192 @@ struct SidebarView: View {
 
             // Section headers pin at the top and hand off with a scroll-linked
             // fade (StickySectionHeaders). Each section = header + rows + gap.
-            ScrollView {
-                VStack(spacing: 1) {
-                    StickySection(background: { VisualEffectView(material: .sidebar) }) {
-                        // Title + chevron used to be a decorative HStack with no
-                        // tap target, so the chevron promised a disclosure that
-                        // never fired. Trailing New Space stays a sibling Button
-                        // so it does not toggle the section.
-                        groupHeader("Spaces", expanded: $spacesExpanded) {
-                            SidebarHeaderButton(systemName: "folder.badge.plus", title: "New Space") {
-                                model.showNewSpace = true
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 1) {
+                        StickySection(background: { VisualEffectView(material: .sidebar) }) {
+                            // Title + chevron used to be a decorative HStack with no
+                            // tap target, so the chevron promised a disclosure that
+                            // never fired. Trailing New Space stays a sibling Button
+                            // so it does not toggle the section.
+                            groupHeader("Spaces", expanded: $spacesExpanded) {
+                                SidebarHeaderButton(systemName: "folder.badge.plus", title: "New Space") {
+                                    model.showNewSpace = true
+                                }
+                            }
+                            .accessibilityIdentifier("sidebar.section.spaces")
+                        } content: {
+                            if spacesExpanded {
+                                allSpacesRow
+                                ForEach(model.visibleSpaces) { entry in
+                                    SpaceRowView(
+                                        entry: entry,
+                                        model: model,
+                                        grouped: groupBySpace,
+                                        draggingSpaceID: $draggingSpaceID,
+                                        spaceDrop: $spaceDrop
+                                    )
+                                    .id(SidebarScrollID.space(entry.ref))
+                                    if groupBySpace, model.isSpaceExpanded(entry) {
+                                        ForEach(model.spaceTreeRows(entry)) { row in
+                                            treeRow(row)
+                                        }
+                                    }
+                                }
+                            }
+                            Spacer().frame(height: 10)
+                        }
+
+                        StickySection(background: { VisualEffectView(material: .sidebar) }) {
+                            groupHeader("Agents", expanded: $agentsExpanded) {
+                                SidebarHeaderButton(systemName: "square.and.pencil", title: "New Agent") {
+                                    model.showNewAgent = true
+                                }
+                            }
+                            .accessibilityIdentifier("sidebar.section.agents")
+                        } content: {
+                            if agentsExpanded {
+                                if model.visibleAgents.isEmpty {
+                                    Text(emptyAgentsHint)
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Theme.textGhost)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(8)
+                                }
+                                // Either kind: a shell split off an agent lists here, under it.
+                                ForEach(model.agentSectionRows) { row in
+                                    sectionRow(row)
+                                }
+                            }
+                            if terminalsSectionVisible {
+                                Spacer().frame(height: 10)
                             }
                         }
-                        .accessibilityIdentifier("sidebar.section.spaces")
-                    } content: {
-                        if spacesExpanded {
-                            allSpacesRow
-                            ForEach(model.visibleSpaces) { entry in
-                                SpaceRowView(
-                                    entry: entry,
-                                    model: model,
-                                    grouped: groupBySpace,
-                                    draggingSpaceID: $draggingSpaceID,
-                                    spaceDrop: $spaceDrop
-                                )
-                                if groupBySpace, model.isSpaceExpanded(entry) {
-                                    ForEach(model.spaceTreeRows(entry)) { row in
-                                        treeRow(row)
+
+                        if terminalsSectionVisible {
+                            StickySection(background: { VisualEffectView(material: .sidebar) }) {
+                                groupHeader("Terminals", expanded: $terminalsExpanded) {
+                                    SidebarHeaderButton(systemName: "terminal", title: "New Terminal") {
+                                        model.showNewTerminal = true
+                                    }
+                                }
+                                .accessibilityIdentifier("sidebar.section.terminals")
+                            } content: {
+                                if terminalsExpanded {
+                                    ForEach(model.terminalSectionRows) { row in
+                                        sectionRow(row)
+                                    }
+                                    ForEach(model.shellSessions) { session in
+                                        shellRow(session)
+                                            .contextMenu {
+                                                Button("Close Terminal", role: .destructive) {
+                                                    model.closeShellSession(session.id)
+                                                }
+                                            }
                                     }
                                 }
                             }
                         }
-                        Spacer().frame(height: 10)
                     }
-
-                    StickySection(background: { VisualEffectView(material: .sidebar) }) {
-                        groupHeader("Agents", expanded: $agentsExpanded) {
-                            SidebarHeaderButton(systemName: "square.and.pencil", title: "New Agent") {
-                                model.showNewAgent = true
-                            }
-                        }
-                        .accessibilityIdentifier("sidebar.section.agents")
-                    } content: {
-                        if agentsExpanded {
-                            if model.visibleAgents.isEmpty {
-                                Text(emptyAgentsHint)
-                                    .font(.system(size: 11.5))
-                                    .foregroundStyle(Theme.textGhost)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(8)
-                            }
-                            // Either kind: a shell split off an agent lists here, under it.
-                            ForEach(model.agentSectionRows) { row in
-                                sectionRow(row)
-                            }
-                        }
-                        if terminalsSectionVisible {
-                            Spacer().frame(height: 10)
-                        }
-                    }
-
-                    if terminalsSectionVisible {
-                        StickySection(background: { VisualEffectView(material: .sidebar) }) {
-                            groupHeader("Terminals", expanded: $terminalsExpanded) {
-                                SidebarHeaderButton(systemName: "terminal", title: "New Terminal") {
-                                    model.showNewTerminal = true
-                                }
-                            }
-                            .accessibilityIdentifier("sidebar.section.terminals")
-                        } content: {
-                            if terminalsExpanded {
-                                ForEach(model.terminalSectionRows) { row in
-                                    sectionRow(row)
-                                }
-                                ForEach(model.shellSessions) { session in
-                                    shellRow(session)
-                                        .contextMenu {
-                                            Button("Close Terminal", role: .destructive) {
-                                                model.closeShellSession(session.id)
-                                            }
-                                        }
-                                }
-                            }
-                        }
+                    .padding(.horizontal, 10)
+                    .stickySectionHeaders()
+                }
+                .clipped()
+                .onChange(of: spaceRevealTarget, initial: true) { previous, target in
+                    // Sidebar clicks and terminal input focus update highlights
+                    // in place. Explicit navigation can still reveal the pane.
+                    guard previous.selectionGeneration == target.selectionGeneration
+                            || previous.generation != target.generation,
+                          let row = revealRow(target) else { return }
+                    // Centred, so the row clears the pinned section header.
+                    proxy.scrollTo(row, anchor: .center)
+                }
+                .onChange(of: spacesExpanded) { _, expanded in
+                    // Re-show the reveal row when it is one of the rows just expanded.
+                    if expanded, let row = revealRow(spaceRevealTarget), row.isInSpacesSection {
+                        proxy.scrollTo(row, anchor: .center)
                     }
                 }
-                .padding(.horizontal, 10)
-                .stickySectionHeaders()
             }
-            .clipped()
 
             Spacer(minLength: 0)
-            if showsMachineStats, let device = model.statsDevice {
+            if showsUsageStats, let device = model.statsDevice {
                 Rectangle().fill(Theme.hairline).frame(height: 1)
-                SidebarMachineStats(
-                    stats: model.machineStats,
+                // Reads the selected device only — turning the row on never
+                // means reads on every configured host.
+                SidebarUsageRow(
+                    usage: model.usage,
                     device: device,
-                    isOpen: model.showMachineStats
-                ) {
-                    model.showMachineStats.toggle()
-                }
+                    providers: UsageDefaults.providers(from: usageAgents)
+                )
                 .padding(.horizontal, 6)
-                .frame(height: SidebarFooterMetrics.statsHeight)
+                // The row sizes to its content; without explicit clearance
+                // its edges would sit flush against the hairlines.
+                .padding(.vertical, 6)
+                Rectangle().fill(Theme.hairline).frame(height: 1)
             }
             footer
         }
-        // The details panel opens from the meters; with them gone it has no anchor.
+        // The details panel belongs to the meters; with them gone it has no anchor.
         .onChange(of: showsMachineStats) { _, shown in
             if !shown { model.showMachineStats = false }
         }
         .frame(width: width)
         .background(VisualEffectView(material: .sidebar).ignoresSafeArea())
+    }
+
+    /// Scroll anchors. A pane can be listed twice in grouped mode (under its
+    /// space and in an expanded Agents section), so the two rows differ.
+    private enum SidebarScrollID: Hashable {
+        case space(SpaceRef)
+        case pane(PaneRef, inSpaceTree: Bool)
+
+        var isInSpacesSection: Bool {
+            if case .pane(_, inSpaceTree: false) = self { return false }
+            return true
+        }
+    }
+
+    private struct SpaceRevealTarget: Equatable {
+        let space: SpaceRef?
+        let pane: PaneRef?
+        let generation: Int
+        let selectionGeneration: Int
+    }
+
+    /// Where a reveal scrolls: a highlighted row, never a Space row that only
+    /// happens to own the pane. The Space row is highlighted while it is the
+    /// list filter; otherwise the displayed Agent/Terminal row is the target.
+    /// In grouped mode a collapsed space stands in for its hidden rows. A
+    /// collapsed section stays collapsed: the user chose that.
+    private func revealRow(_ target: SpaceRevealTarget) -> SidebarScrollID? {
+        guard let space = target.space, let pane = target.pane else { return nil }
+        if spacesExpanded, model.selectedSpace == space { return .space(space) }
+        if groupBySpace, spacesExpanded,
+           let entry = model.visibleSpaces.first(where: { $0.ref == space }) {
+            guard model.isSpaceExpanded(entry),
+                  model.spaceTreeRows(entry).contains(where: { $0.entry.ref == pane })
+            else { return .space(space) }
+            return .pane(pane, inSpaceTree: true)
+        }
+        if agentsExpanded, model.agentSectionRows.contains(where: { $0.entry.ref == pane }) {
+            return .pane(pane, inSpaceTree: false)
+        }
+        if terminalsExpanded, model.terminalSectionRows.contains(where: { $0.entry.ref == pane }) {
+            return .pane(pane, inSpaceTree: false)
+        }
+        return nil
+    }
+
+    /// Only navigation changes this value. Agent output/status updates may
+    /// redraw the sidebar, but must not undo a user's own scrolling.
+    private var spaceRevealTarget: SpaceRevealTarget {
+        let space = model.displayedPaneSpace.flatMap { space in
+            model.visibleSpaces.contains(where: { $0.ref == space }) ? space : nil
+        }
+        return SpaceRevealTarget(space: space, pane: model.selectedPane,
+                                 generation: model.sidebarRevealGeneration,
+                                 selectionGeneration: model.sidebarSelectionGeneration)
     }
 
     private var terminalsSectionVisible: Bool {
@@ -235,6 +314,7 @@ struct SidebarView: View {
     @ViewBuilder
     private func sectionRow(_ row: AppModel.SidebarRow) -> some View {
         paneRow(row, showsSpace: true, draggable: row.indent == 0)
+            .id(SidebarScrollID.pane(row.entry.ref, inSpaceTree: false))
     }
 
     /// A pane row inside a space's tree: the same rows, without the space line
@@ -243,10 +323,13 @@ struct SidebarView: View {
     @ViewBuilder
     private func treeRow(_ row: AppModel.SidebarRow) -> some View {
         paneRow(row, showsSpace: false, draggable: false)
+            .id(SidebarScrollID.pane(row.entry.ref, inSpaceTree: true))
     }
 
     @ViewBuilder
     private func paneRow(_ row: AppModel.SidebarRow, showsSpace: Bool, draggable: Bool) -> some View {
+        // Inside a space's tree (no space line) the rows are one-line outline rows.
+        let compact = !showsSpace
         switch row.entry {
         case .agent(let entry):
             AgentRowView(
@@ -255,6 +338,7 @@ struct SidebarView: View {
                 indent: row.indent,
                 showsPaneGlyph: row.isChild,
                 showsSpace: showsSpace,
+                compact: compact,
                 draggable: draggable,
                 draggingAgentID: $draggingAgentID,
                 agentDrop: $agentDrop
@@ -266,6 +350,7 @@ struct SidebarView: View {
                 indent: row.indent,
                 showsPaneGlyph: row.isChild,
                 showsSpace: showsSpace,
+                compact: compact,
                 draggable: draggable,
                 draggingTerminalID: $draggingTerminalID,
                 terminalDrop: $terminalDrop
@@ -342,7 +427,7 @@ struct SidebarView: View {
     private var allSpacesRow: some View {
         let selected = model.selectedSpace == nil
         return Button {
-            model.selectSpace(nil)
+            model.selectSpace(nil, revealInSidebar: false)
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: "square.grid.2x2")
@@ -362,6 +447,7 @@ struct SidebarView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(SidebarRowButtonStyle(selected: selected))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private struct TerminalRowView: View {
@@ -373,27 +459,65 @@ struct SidebarView: View {
         var showsPaneGlyph = false
         /// Off inside a space's tree, where the space is the parent row.
         var showsSpace = true
+        /// One line, indented under the space's name (a space's tree).
+        var compact = false
         var draggable = true
         @Binding var draggingTerminalID: String?
         @Binding var terminalDrop: (id: String, after: Bool)?
         @State private var hovered = false
 
         var body: some View {
-            let selected = !model.isFileManagerActive
+            let selected = !model.isDetailCovered
                 && model.selectedPane == entry.ref
                 && model.selectedShellID == nil
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    if showsPaneGlyph { PaneChildGlyph() }
-                    Image(systemName: "terminal")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.textTertiary)
-                    Text(entry.title)
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(Theme.text)
-                        .lineLimit(1)
-                    Spacer(minLength: 0)
+            Group {
+                if compact { compactBody } else { cardBody }
+            }
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
+            )
+            .onHover { hovered = $0 }
+            .sidebarDragChrome(
+                isDragging: draggingTerminalID == entry.id,
+                dropAfter: terminalDrop?.after,
+                isTarget: terminalDrop?.id == entry.id
+            )
+            .overlay { dragHost }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { model.selectAgent(entry.ref, revealInSidebar: false) }
+            .accessibilityLabel(entry.title)
+            .accessibilityAddTraits(selected ? .isSelected : [])
+        }
+
+        private var titleLine: some View {
+            HStack(spacing: 6) {
+                if showsPaneGlyph { PaneChildGlyph() }
+                Image(systemName: "terminal")
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.textTertiary)
+                Text(entry.title)
+                    .font(.system(size: compact ? 13 : 13.5))
+                    .foregroundStyle(Theme.text)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                if compact, model.showsRowDeviceBadges {
+                    DeviceChip(device: entry.device)
                 }
+            }
+        }
+
+        private var compactBody: some View {
+            titleLine
+                .padding(.leading, SidebarDefaults.treeInset + SidebarDefaults.indentWidth * CGFloat(max(0, indent - 1)))
+                .padding(.horizontal, 8)
+                .frame(height: SidebarDefaults.treeRowHeight)
+        }
+
+        private var cardBody: some View {
+            VStack(alignment: .leading, spacing: 4) {
+                titleLine
                 HStack(spacing: 5) {
                     if showsSpace {
                         Image(systemName: "folder")
@@ -414,58 +538,47 @@ struct SidebarView: View {
             .padding(.horizontal, 8)
             .padding(.vertical, 7)
             .frame(height: 51)
-            .contentShape(Rectangle())
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(selected || hovered ? AnyShapeStyle(Theme.itemWashSelected) : AnyShapeStyle(.clear))
+        }
+
+        private var dragHost: some View {
+            TerminalRowDragHost(
+                entryID: entry.id,
+                allowsDrag: draggable,
+                onClick: { model.selectAgent(entry.ref, revealInSidebar: false) },
+                onRename: { model.terminalToRename = entry },
+                onOpenProject: { model.openProject(for: .terminal(entry)) },
+                onClose: { model.requestClosePane(entry.ref, name: entry.title) },
+                onCloseAll: { model.requestCloseAllTerminals() },
+                onDragStart: { draggingTerminalID = $0 },
+                onDragEnd: {
+                    draggingTerminalID = nil
+                    terminalDrop = nil
+                },
+                onDropHover: { after in
+                    // Top-level rows stand for tabs; "after" one means before
+                    // the next top-level row, skipping that tab's children.
+                    terminalDrop = sidebarDropTarget(
+                        onto: entry.id, after: after, items: model.draggableTerminals
+                    )
+                },
+                onHoverExit: {
+                    if terminalDrop?.id == entry.id { terminalDrop = nil }
+                },
+                onDrop: { sourceID, after in
+                    draggingTerminalID = nil
+                    terminalDrop = nil
+                    guard let source = model.visibleTerminals.first(where: { $0.id == sourceID })
+                    else { return }
+                    model.moveTerminal(source, onto: entry, placeAfter: after)
+                }
             )
-            .onHover { hovered = $0 }
-            .sidebarDragChrome(
-                isDragging: draggingTerminalID == entry.id,
-                dropAfter: terminalDrop?.after,
-                isTarget: terminalDrop?.id == entry.id
-            )
-            .overlay {
-                TerminalRowDragHost(
-                    entryID: entry.id,
-                    allowsDrag: draggable,
-                    onClick: { model.selectAgent(entry.ref) },
-                    onRename: { model.terminalToRename = entry },
-                    onClose: { model.requestClosePane(entry.ref, name: entry.title) },
-                    onDragStart: { draggingTerminalID = $0 },
-                    onDragEnd: {
-                        draggingTerminalID = nil
-                        terminalDrop = nil
-                    },
-                    onDropHover: { after in
-                        // Top-level rows stand for tabs; "after" one means before
-                        // the next top-level row, skipping that tab's children.
-                        terminalDrop = sidebarDropTarget(
-                            onto: entry.id, after: after, items: model.draggableTerminals
-                        )
-                    },
-                    onHoverExit: {
-                        if terminalDrop?.id == entry.id { terminalDrop = nil }
-                    },
-                    onDrop: { sourceID, after in
-                        draggingTerminalID = nil
-                        terminalDrop = nil
-                        guard let source = model.visibleTerminals.first(where: { $0.id == sourceID })
-                        else { return }
-                        model.moveTerminal(source, onto: entry, placeAfter: after)
-                    }
-                )
-            }
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { model.selectAgent(entry.ref) }
-            .accessibilityLabel(entry.title)
         }
     }
 
     /// App-owned standalone shell (local login shell or plain ssh), outside
     /// any herdr space.
     private func shellRow(_ session: ShellSession) -> some View {
-        let selected = !model.isFileManagerActive && model.selectedShellID == session.id
+        let selected = !model.isDetailCovered && model.selectedShellID == session.id
         return Button {
             model.selectShell(session.id)
         } label: {
@@ -510,6 +623,8 @@ struct SidebarView: View {
     var showsPaneGlyph = false
     /// Off inside a space's tree, where the space is the parent row.
     var showsSpace = true
+    /// One line, indented under the space's name (a space's tree).
+    var compact = false
     var draggable = true
     @Binding var draggingAgentID: String?
     @Binding var agentDrop: (id: String, after: Bool)?
@@ -519,68 +634,91 @@ struct SidebarView: View {
         let agent = entry.agent
         let statsLines = agent.statsLines
         let supportsHistory = ["claude", "claude-code"].contains(agent.agent.lowercased())
-        let selected = !model.isFileManagerActive
+        let selected = !model.isDetailCovered
             && model.selectedPane == entry.ref
             && model.selectedShellID == nil
         let unread = model.isUnread(entry)
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                if showsPaneGlyph { PaneChildGlyph() }
-                Text(entry.title)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(Theme.text)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                AgentStatusGlyph(status: agent.status, unreadDone: unread)
-            }
-            HStack(spacing: 5) {
-                AgentKindBadge(kind: agent.agent)
-                if showsSpace {
-                    Text("·")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textGhost)
-                    Image(systemName: "folder")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(Theme.textTertiary)
-                    Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.textTertiary)
+        Group {
+            if compact {
+                HStack(spacing: 6) {
+                    if showsPaneGlyph { PaneChildGlyph() }
+                    Text(entry.title)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.text)
                         .lineLimit(1)
-                }
-                Spacer(minLength: 0)
-                if agent.status == .blocked {
-                    Text("needs input")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(Theme.warning)
-                }
-                if model.showsRowDeviceBadges {
-                    DeviceChip(device: entry.device)
-                }
-            }
-            .padding(.trailing, supportsHistory && statsLines.isEmpty ? 24 : 0)
-            // Plugin stats (grazr account, Claude model / context / usage),
-            // one line each, only for the tokens the pane actually carries.
-            ForEach(statsLines, id: \.kind) { line in
-                HStack(spacing: 3) {
-                    // An agent on an account of its own, not the shared rotation.
-                    if line.isPinnedAccount {
-                        Image(systemName: "pin.fill")
-                            .font(.system(size: 8.5))
-                            .help("Pinned to this account; grazr's rotation leaves it alone")
+                    AgentKindBadge(kind: agent.agent)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if model.showsRowDeviceBadges {
+                        DeviceChip(device: entry.device)
                     }
-                    Text(line.displayText)
-                        .font(.system(size: 11, weight: line.kind == .model ? .semibold : .regular))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    AgentStatusGlyph(status: agent.status, unreadDone: unread)
                 }
-                .foregroundStyle(AgentStatsStyle.color(for: line.kind))
-                .padding(.trailing, supportsHistory && line.kind == statsLines.last?.kind ? 24 : 0)
+                .padding(.leading, SidebarDefaults.treeInset + SidebarDefaults.indentWidth * CGFloat(max(0, indent - 1)))
+                .padding(.horizontal, 8)
+                .frame(height: SidebarDefaults.treeRowHeight)
+            } else {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    if showsPaneGlyph { PaneChildGlyph() }
+                    Text(entry.title)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(Theme.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    AgentStatusGlyph(status: agent.status, unreadDone: unread)
+                }
+                HStack(spacing: 5) {
+                    AgentKindBadge(kind: agent.agent)
+                        .lineLimit(1)
+                    if showsSpace {
+                        Text("·")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textGhost)
+                        Image(systemName: "folder")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(Theme.textTertiary)
+                        Text(model.spaceName(deviceID: entry.device.id, workspaceID: agent.workspaceID))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 0)
+                    if agent.status == .blocked {
+                        Text("needs input")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(Theme.warning)
+                    }
+                    if model.showsRowDeviceBadges {
+                        DeviceChip(device: entry.device)
+                    }
+                }
+                .padding(.trailing, supportsHistory && statsLines.isEmpty ? 24 : 0)
+                // Plugin stats (grazr account, Claude model / context / usage),
+                // one line each, only for the tokens the pane actually carries.
+                ForEach(statsLines, id: \.kind) { line in
+                    HStack(spacing: 3) {
+                        // An agent on an account of its own, not the shared rotation.
+                        if line.isPinnedAccount {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 8.5))
+                                .help("Pinned to this account; grazr's rotation leaves it alone")
+                        }
+                        Text(line.displayText)
+                            .font(.system(size: 11, weight: line.kind == .model ? .semibold : .regular))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .foregroundStyle(AgentStatsStyle.color(for: line.kind))
+                    .padding(.trailing, supportsHistory && line.kind == statsLines.last?.kind ? 24 : 0)
+                }
+            }
+            .padding(.leading, SidebarDefaults.indentWidth * CGFloat(indent))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
+            .frame(minHeight: 51)
             }
         }
-        .padding(.leading, SidebarDefaults.indentWidth * CGFloat(indent))
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
-        .frame(minHeight: 51)
         .contentShape(Rectangle())
         .background(
             RoundedRectangle(cornerRadius: 7)
@@ -600,8 +738,9 @@ struct SidebarView: View {
                 pluginActions: model.session(entry.device.id).pluginActions,
                 grazrReport: model.session(entry.device.id).grazrReport,
                 allowsDrag: draggable,
-                onClick: { model.selectAgent(entry.ref) },
+                onClick: { model.selectAgent(entry.ref, revealInSidebar: false) },
                 onRename: { model.agentToRename = entry },
+                onOpenProject: { model.openProject(for: .agent(entry)) },
                 onPluginAction: { model.runPluginAction($0, for: entry) },
                 onGrazrAccounts: { model.grazrAccountsDevice = entry.device },
                 onSwitchGrazrAccount: { model.switchGrazrAccount($0, on: entry.device) },
@@ -615,6 +754,7 @@ struct SidebarView: View {
                 },
                 onMenuOpen: { Task { await model.loadPluginActions(deviceID: entry.device.id) } },
                 onClose: { model.requestClosePane(entry.ref, name: entry.title) },
+                onCloseAll: { model.requestCloseAllAgents() },
                 onDragStart: { draggingAgentID = $0 },
                 onDragEnd: {
                     draggingAgentID = nil
@@ -640,13 +780,15 @@ struct SidebarView: View {
             )
         }
         .accessibilityAddTraits(.isButton)
-        .accessibilityAction { model.selectAgent(entry.ref) }
+        .accessibilityAction { model.selectAgent(entry.ref, revealInSidebar: false) }
         .accessibilityLabel(accessibilityLabel(unread: unread))
+        .accessibilityAddTraits(selected ? .isSelected : [])
         // The drag host covers the row. Place this control above it so a
         // footer click opens this agent's history instead of selecting alone.
         .overlay(alignment: .bottomTrailing) {
-            if supportsHistory {
-                Button { model.toggleConversationHistory(for: entry.ref) } label: {
+            // The one-line tree row has no footer; ⇧⌘H still opens history.
+            if supportsHistory, !compact {
+                Button { model.toggleConversationHistory(for: entry.ref, revealInSidebar: false) } label: {
                     Image(systemName: "text.bubble")
                         .font(.system(size: 11.5))
                         .frame(width: 20, height: 14)
@@ -668,9 +810,8 @@ struct SidebarView: View {
         switch entry.agent.status {
         case .working: parts.append(String(localized: "Working"))
         case .blocked: parts.append(String(localized: "Needs input"))
-        case .done where unread: parts.append(String(localized: "Unread"))
-        case .done: break
-        case .idle, .unknown: break
+        case .done, .idle, .unknown:
+            if unread { parts.append(String(localized: "Unread")) }
         }
         if let account = entry.agent.statsLines.first(where: { $0.kind == .account }) {
             parts.append(account.isPinnedAccount
@@ -683,50 +824,80 @@ struct SidebarView: View {
 
     // MARK: - Footer (device filter)
 
+    /// The device card: the device's icon beside its name, with the selected
+    /// host's figures on a small line under it. Clicking switches devices;
+    /// hovering shows the machine stats panel. Settings sits beside it.
     private var footer: some View {
-        HStack(spacing: 6) {
+        let metersDevice = showsMachineStats ? model.statsDevice : nil
+        return HStack(spacing: 6) {
             Button {
                 model.showDevicePanel.toggle()
             } label: {
-                HStack(spacing: 6) {
-                    if let device = model.filteredDevice {
-                        DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 10)
-                            .foregroundStyle(Theme.textSecondary)
-                    } else {
-                        Image(systemName: "square.stack.3d.up")
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 8) {
+                    Group {
+                        if let device = model.filteredDevice {
+                            DeviceIcon(osID: device.osID, isLocal: device.isLocal, size: 16)
+                        } else {
+                            Image(systemName: "square.stack.3d.up")
+                                .font(.system(size: 15))
+                        }
                     }
-                    Text(model.filteredDevice?.name ?? "All Devices")
-                        .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(Theme.text)
-                    Circle()
-                        .fill(connectionDotColor)
-                        .frame(width: 6, height: 6)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(width: 20)
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(model.filteredDevice?.name ?? "All Devices")
+                                .font(.system(size: 12.5, weight: .medium))
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .layoutPriority(1)
+                            Circle()
+                                .fill(connectionDotColor)
+                                .frame(width: 6, height: 6)
+                        }
+                        if let device = metersDevice {
+                            SidebarMachineStats(stats: model.machineStats, device: device)
+                        }
+                    }
+                    // Without this the column gets only its figures' width and
+                    // the name is cut short while the card still has room.
+                    .layoutPriority(1)
                     Image(systemName: "chevron.up.chevron.down")
                         .font(.system(size: 8.5, weight: .semibold))
                         .foregroundStyle(Theme.textGhost)
                 }
-                .padding(.horizontal, 8)
-                .frame(height: 28)
-                .contentShape(RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 9)
+                .padding(.vertical, 6)
+                .contentShape(RoundedRectangle(cornerRadius: 8))
             }
             .buttonStyle(.plain)
             .background(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(deviceButtonHovered || model.showDevicePanel
                           ? AnyShapeStyle(Theme.itemWashSelected)
                           : AnyShapeStyle(Theme.itemWash))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 6)
+                RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Theme.hairline, lineWidth: deviceButtonHovered ? 1 : 0)
             )
-            .scaleEffect(deviceButtonHovered ? 1.04 : 1.0)
-            .animation(.spring(response: 0.28, dampingFraction: 0.55), value: deviceButtonHovered)
-            .onHover { deviceButtonHovered = $0 }
+            .animation(.easeOut(duration: 0.15), value: deviceButtonHovered)
+            .onHover { inside in
+                deviceButtonHovered = inside
+                if metersDevice != nil { model.setMachineStatsHover(card: inside) }
+            }
+            .help(String(localized: "Switch device"))
+            .accessibilityLabel(deviceCardAccessibilityText(meters: metersDevice))
+            .accessibilityIdentifier(metersDevice == nil ? "sidebar.deviceCard" : "sidebar.machineStats")
+            .accessibilityAction(named: Text("Show machine details")) {
+                if metersDevice != nil { model.showMachineStats = true }
+            }
+            // The card takes the width its name needs before the spacer does;
+            // only a name too long for the sidebar is shortened.
+            .layoutPriority(1)
 
-            Spacer()
+            Spacer(minLength: 0)
 
             SettingsLink {
                 Image(systemName: "gearshape")
@@ -739,7 +910,13 @@ struct SidebarView: View {
             .accessibilityLabel(Text("Settings"))
         }
         .padding(.horizontal, 10)
-        .frame(height: SidebarFooterMetrics.deviceSwitcherHeight)
+        .frame(height: SidebarFooterMetrics.height(showsStats: metersDevice != nil))
+    }
+
+    private func deviceCardAccessibilityText(meters device: Device?) -> String {
+        let name = model.filteredDevice?.name ?? String(localized: "All Devices")
+        guard let device else { return name }
+        return name + ", " + SidebarMachineStats.accessibilityText(stats: model.machineStats, device: device)
     }
 
     private var connectionDotColor: Color {
@@ -760,6 +937,11 @@ enum SidebarDefaults {
     static let groupBySpaceKey = "sidebar.groupBySpace"
     /// Leading inset per level of the pane tree.
     static let indentWidth: CGFloat = 14
+    /// A space's own panes start under its name: the chevron column (20),
+    /// the folder icon (14) and the gap after it (8).
+    static let treeInset: CGFloat = 42
+    /// One-line rows inside a space's tree, as tall as the space row itself.
+    static let treeRowHeight: CGFloat = 30
 }
 
 /// Marks a row as a secondary pane of its tab, split off the pane above it.
@@ -1101,11 +1283,13 @@ private struct SpaceRowView: View {
                 SpaceRowDragHost(
                     entryID: entry.id,
                     label: entry.workspace.label,
-                    onClick: { model.selectSpace(entry.ref) },
+                    onClick: { model.selectSpace(entry.ref, revealInSidebar: false) },
                     onNewAgent: { model.showNewAgent(in: entry.ref) },
                     onNewTerminal: { model.showNewTerminal(in: entry.ref) },
+                    onOpenProject: { model.openProject(entry.ref) },
                     onRename: { model.spaceToRename = entry },
                     onClose: { model.requestCloseSpace(entry) },
+                    onCloseAll: { model.requestCloseAllSpaces() },
                     onDragStart: { draggingSpaceID = $0 },
                     onDragEnd: {
                         draggingSpaceID = nil
@@ -1130,8 +1314,9 @@ private struct SpaceRowView: View {
             }
             // On the content only, so the chevron keeps its own name for VoiceOver.
             .accessibilityAddTraits(.isButton)
-            .accessibilityAction { model.selectSpace(entry.ref) }
+            .accessibilityAction { model.selectSpace(entry.ref, revealInSidebar: false) }
             .accessibilityLabel(accessibilityLabel)
+            .accessibilityAddTraits(selected ? .isSelected : [])
         }
         .frame(height: 30)
         .background(
@@ -1171,3 +1356,4 @@ struct SpinnerView: View {
             .onAppear { spinning = true }
     }
 }
+

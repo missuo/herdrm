@@ -55,6 +55,10 @@ public struct MachineSample: Sendable {
     public var memUsedBytes: UInt64 = 0
     public var swapTotalBytes: UInt64 = 0
     public var swapUsedBytes: UInt64 = 0
+    /// herdr's cgroup on Linux: memory its panes use (anon + kernel) and its cap.
+    /// Nil when herdr runs without a cap, or the host is not Linux.
+    public var agentsMemBytes: UInt64?
+    public var agentsMemLimitBytes: UInt64?
     public var processes: [Int32: MachineProcess] = [:]
     /// Command lines of interpreter processes (node, bun, python…), so the
     /// script they run can name the agent.
@@ -127,6 +131,9 @@ public struct MachineSnapshot: Sendable, Equatable {
     public var memTotalBytes: UInt64
     public var swapUsedBytes: UInt64
     public var swapTotalBytes: UInt64
+    /// herdr's cgroup: what its panes use and its cap (see `MachineSample`).
+    public var agentsMemBytes: UInt64? = nil
+    public var agentsMemLimitBytes: UInt64? = nil
     public var disks: [MachineDisk]
     /// herdr first, then agent kinds by CPU then RSS.
     public var groups: [ProcessGroup]
@@ -151,6 +158,15 @@ public struct MachineSnapshot: Sendable, Equatable {
 
     /// The fullest filesystem — the one that runs out first.
     public var fullestDisk: MachineDisk? { disks.max { $0.fraction < $1.fraction } }
+
+    /// herdr's panes against herdr's memory cap, 0–1. Nil without a cap.
+    public var agentsMemFraction: Double? {
+        guard let used = agentsMemBytes, let limit = agentsMemLimitBytes, limit > 0 else { return nil }
+        return min(1, Double(used) / Double(limit))
+    }
+
+    /// Room for another agent; nil off Linux.
+    public var capacity: HostCapacity? { HostCapacity(snapshot: self) }
 }
 
 // MARK: - Parsing
@@ -212,6 +228,12 @@ public enum MachineStatsParser {
                     let (name, number) = splitKey(value)
                     vm[name] = UInt64(number.split(separator: " ").first ?? "")
                 case "memsize": sample.memTotalBytes = UInt64(value) ?? 0
+                case "agentcg":
+                    let numbers = value.split(separator: " ").compactMap { UInt64($0) }
+                    if numbers.count == 2, numbers[1] > 0 {
+                        sample.agentsMemBytes = numbers[0]
+                        sample.agentsMemLimitBytes = numbers[1]
+                    }
                 case "swap":
                     sample.swapTotalBytes = swapField(value, "total")
                     sample.swapUsedBytes = swapField(value, "used")
@@ -253,7 +275,11 @@ public enum MachineStatsParser {
             // /proc/meminfo reports kB.
             let kib: (String) -> UInt64 = { (vm[$0] ?? 0) * 1024 }
             sample.memTotalBytes = kib("MemTotal")
-            sample.memUsedBytes = sample.memTotalBytes - min(sample.memTotalBytes, kib("MemAvailable"))
+            // MemAvailable needs Linux 3.14+ and is missing in some containers; without
+            // it, estimate as free + buffers + page cache rather than reading 0 free.
+            let available = vm["MemAvailable"] != nil
+                ? kib("MemAvailable") : kib("MemFree") + kib("Buffers") + kib("Cached")
+            sample.memUsedBytes = sample.memTotalBytes - min(sample.memTotalBytes, available)
             sample.swapTotalBytes = kib("SwapTotal")
             sample.swapUsedBytes = sample.swapTotalBytes - min(sample.swapTotalBytes, kib("SwapFree"))
         } else {
@@ -739,6 +765,8 @@ public enum MachineStatsComputer {
             memTotalBytes: current.memTotalBytes,
             swapUsedBytes: current.swapUsedBytes,
             swapTotalBytes: current.swapTotalBytes,
+            agentsMemBytes: current.agentsMemBytes,
+            agentsMemLimitBytes: current.agentsMemLimitBytes,
             disks: current.disks,
             groups: groups,
             mcpServers: mcpByName.values.sorted { heavier($0.usage, $1.usage) },

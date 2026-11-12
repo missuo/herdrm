@@ -1,72 +1,35 @@
-<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
-  <!-- HerdrM app icon — full-bleed square artwork.
-       Layers (groups) for Icon Composer: #background, #sidebar, #glyph.
-       Icon Composer applies the macOS squircle mask itself. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- herdrm app icon: full-bleed square artwork (sidebar + terminal pane on a
+       top-to-bottom blue gradient). Icon Composer applies the squircle mask. -->
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2B2B30"/>
-      <stop offset="1" stop-color="#161618"/>
+      <stop offset="0" stop-color="#0050FF"/>
+      <stop offset="0.5" stop-color="#0078FF"/>
+      <stop offset="1" stop-color="#00A4FF"/>
     </linearGradient>
-    <linearGradient id="side" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#3A3A41" stop-opacity="0.85"/>
-      <stop offset="1" stop-color="#26262B" stop-opacity="0.85"/>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#B4DAFF"/>
     </linearGradient>
-    <linearGradient id="coral" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#F08A66"/>
-      <stop offset="1" stop-color="#D9603F"/>
+    <linearGradient id="soft" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.62"/>
+      <stop offset="1" stop-color="#C6E4FF" stop-opacity="0.42"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0" stop-color="#E2795B" stop-opacity="0.28"/>
-      <stop offset="1" stop-color="#E2795B" stop-opacity="0"/>
-    </radialGradient>
-    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.05"/>
-      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
-    </linearGradient>
+    <filter id="sh" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#002A8C" flood-opacity="0.30"/>
+    </filter>
+    <clipPath id="sq"><rect width="1024" height="1024" rx="230"/></clipPath>
   </defs>
-
-  <g id="background">
-    <rect x="0" y="0" width="1024" height="1024" fill="url(#bg)"/>
-    <!-- subtle top sheen -->
-    <rect x="0" y="0" width="1024" height="420" fill="url(#sheen)"/>
+  <g>
+    <rect width="1024" height="1024" fill="url(#bg)"/>
+    <g stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="3"><line x1="128" y1="0" x2="128" y2="1024"/><line x1="0" y1="128" x2="1024" y2="128"/><line x1="256" y1="0" x2="256" y2="1024"/><line x1="0" y1="256" x2="1024" y2="256"/><line x1="384" y1="0" x2="384" y2="1024"/><line x1="0" y1="384" x2="1024" y2="384"/><line x1="512" y1="0" x2="512" y2="1024"/><line x1="0" y1="512" x2="1024" y2="512"/><line x1="640" y1="0" x2="640" y2="1024"/><line x1="0" y1="640" x2="1024" y2="640"/><line x1="768" y1="0" x2="768" y2="1024"/><line x1="0" y1="768" x2="1024" y2="768"/><line x1="896" y1="0" x2="896" y2="1024"/><line x1="0" y1="896" x2="1024" y2="896"/></g>
+    <circle cx="512" cy="512" r="320" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="3"/>
+    
   </g>
-
-  <g id="sidebar">
-    <!-- sidebar column -->
-    <rect x="0" y="0" width="312" height="1024" fill="url(#side)"/>
-    <rect x="311" y="0" width="3" height="1024" fill="#000000" opacity="0.35"/>
-
-    <!-- agent cards: working / blocked / done -->
-    <g>
-      <rect x="64" y="296" width="192" height="112" rx="34" fill="#FFFFFF" opacity="0.10"/>
-      <rect x="96" y="330" width="76" height="20" rx="10" fill="#E9E9EC" opacity="0.9"/>
-      <rect x="96" y="364" width="48" height="14" rx="7" fill="#A9A9B0" opacity="0.55"/>
-      <circle cx="216" cy="352" r="17" fill="#E2795B"/>
-    </g>
-    <g>
-      <rect x="64" y="456" width="192" height="112" rx="34" fill="#FFFFFF" opacity="0.07"/>
-      <rect x="96" y="490" width="76" height="20" rx="10" fill="#E9E9EC" opacity="0.75"/>
-      <rect x="96" y="524" width="48" height="14" rx="7" fill="#A9A9B0" opacity="0.45"/>
-      <circle cx="216" cy="512" r="17" fill="#E0B36A"/>
-    </g>
-    <g>
-      <rect x="64" y="616" width="192" height="112" rx="34" fill="#FFFFFF" opacity="0.07"/>
-      <rect x="96" y="650" width="76" height="20" rx="10" fill="#E9E9EC" opacity="0.75"/>
-      <rect x="96" y="684" width="48" height="14" rx="7" fill="#A9A9B0" opacity="0.45"/>
-      <circle cx="216" cy="672" r="17" fill="#62C987"/>
-    </g>
-  </g>
-
-  <g id="glyph">
-    <!-- glow behind the prompt -->
-    <circle cx="620" cy="512" r="330" fill="url(#glow)"/>
-
-    <!-- ❯ prompt chevron -->
-    <path d="M 478 296 L 682 512 L 478 728"
-          fill="none" stroke="url(#coral)" stroke-width="96"
-          stroke-linecap="round" stroke-linejoin="round"/>
-
-    <!-- cursor block -->
-    <rect x="738" y="612" width="150" height="116" rx="26" fill="#E9E9EC" opacity="0.92"/>
+  <g filter="url(#sh)">
+    <rect x="232" y="296" width="200" height="432" rx="56" fill="url(#soft)"/>
+    <rect x="462" y="296" width="330" height="432" rx="56" fill="url(#glass)"/>
+    <path d="M552 448 L630 512 L552 576" fill="none" stroke="#0064FF" stroke-width="44" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="652" y="556" width="66" height="36" rx="14" fill="#0064FF" fill-opacity="0.5"/>
   </g>
 </svg>

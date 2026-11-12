@@ -43,6 +43,7 @@ enum Theme {
     static let historyPreviewBackground = dynamic(hex(0xE9E9E9), hex(0x2A2A2A))
     static let statusBarBackground = dynamic(hex(0xF1F1F2), hex(0x141416))
     static let sidebarBorder = dynamic(hex(0xD9D9D9), hex(0x292929))
+    static let cardBackground = dynamic(hex(0xFFFFFF), hex(0x1F1F1F))
     static let hairline = dynamic(hex(0x000000, alpha: 0.08), hex(0xFFFFFF, alpha: 0.06))
 
     /// Distinct tints for device chips (deliberately avoids the status colors).
@@ -86,14 +87,12 @@ struct AgentStatusGlyph: View {
             Image(systemName: "exclamationmark.circle")
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Theme.warning)
-        case .done:
+        case .done, .idle, .unknown:
             if unreadDone {
                 Circle()
                     .fill(Theme.working)
                     .frame(width: 7, height: 7)
             }
-        case .idle, .unknown:
-            EmptyView()
         }
     }
 }

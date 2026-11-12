@@ -5,25 +5,40 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>herdrm</string>
+	<string>Herdrm</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIconName</key>
+	<string>AppIcon</string>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>herdrm</string>
+	<string>Herdrm</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>sb.moe.herdrm-ios.pair</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>herdrm</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.developer-tools</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Herdrm uses the camera to scan the pairing code shown on your Mac.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>herdrm connects to your Macs over SSH on your local network to reach the herdr session running on them.</string>
+	<string>Herdrm connects to your Macs over SSH on your local network to reach the herdr session running on them.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>

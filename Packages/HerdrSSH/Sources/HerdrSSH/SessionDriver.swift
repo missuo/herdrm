@@ -211,6 +211,56 @@ actor SessionDriver {
         }
     }
 
+    /// Public key auth with a private key file's contents (OpenSSH or PEM;
+    /// Ed25519, ECDSA or RSA; optionally passphrase-protected). The key stays
+    /// in this process: libssh2 derives the public half and signs with it.
+    func authenticate(
+        username: String,
+        privateKey: Data,
+        passphrase: String?,
+        timeout: Duration
+    ) async throws {
+        await acquireOperation()
+        defer { releaseOperation() }
+
+        guard valid, !forwarding, !authenticated, let session else {
+            throw SSHError.connectionInvalidated
+        }
+        guard !username.isEmpty, !privateKey.isEmpty else {
+            throw SSHError.authenticationFailed
+        }
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        do {
+            let result = try await repeatUntilComplete(deadline: deadline) {
+                username.withCString { usernamePointer in
+                    privateKey.withUnsafeBytes { keyBytes in
+                        (passphrase ?? "").withCString { passphrasePointer in
+                            libssh2_userauth_publickey_frommemory(
+                                session,
+                                usernamePointer,
+                                strlen(usernamePointer),
+                                nil,
+                                0,
+                                keyBytes.bindMemory(to: CChar.self).baseAddress,
+                                keyBytes.count,
+                                passphrase == nil ? nil : passphrasePointer)
+                        }
+                    }
+                }
+            }
+            guard result == 0 else {
+                throw result == LIBSSH2_ERROR_FILE ? SSHError.privateKeyUnreadable : mapAuthenticationError(result)
+            }
+            authenticated = true
+        } catch {
+            let normalized = normalize(error)
+            if normalized != .authenticationFailed, normalized != .privateKeyUnreadable {
+                invalidateResources()
+            }
+            throw normalized
+        }
+    }
+
     func execute(command: String, input: Data, timeout: Duration) async throws -> SSHExecResult {
         await acquireOperation()
         defer { releaseOperation() }

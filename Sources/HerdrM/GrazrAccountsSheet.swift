@@ -15,12 +15,25 @@ struct GrazrAccountsSheet: View {
     @State private var swapping = false
     /// grazr's word when Refresh could not ask Claude, shown by the button.
     @State private var refreshNote: String?
+    /// The add-account form is up in place of the list.
+    @State private var adding = false
+    @State private var newName = ""
+    @State private var newMode = AddMode.currentLogin
+    @State private var newListed = true
+    @State private var saving = false
+    /// grazr's refusal of the last save, under the name field.
+    @State private var addError: String?
     @AppStorage("grazr.accounts.view") private var view = AccountsView.list
     @AppStorage("grazr.accounts.dialWindow") private var dialWindow = GrazrDialWindow.week
     @AppStorage(AppModel.autoModelSwitchKey) private var autoModelSwitch = false
 
     enum AccountsView: String {
         case list, dial, clock
+    }
+
+    /// grazr's two ways to enrol: the login Claude is on, or a fresh sign-in.
+    enum AddMode {
+        case currentLogin, signIn
     }
 
     private var swapAction: PluginAction? {
@@ -74,7 +87,16 @@ struct GrazrAccountsSheet: View {
                 }
                 .help("Ask Claude for every account's usage now, then reload")
                 .disabled(loading)
-                if loading || swapping {
+                if canAdd {
+                    Button {
+                        showAddForm()
+                    } label: {
+                        Label("Add Account…", systemImage: "person.crop.circle.badge.plus")
+                    }
+                    .help("Save the login Claude is on, or sign in to another account, as a grazr account")
+                    .disabled(adding)
+                }
+                if loading || swapping || saving {
                     ProgressView().controlSize(.small)
                 } else if let refreshNote {
                     Text(refreshNote)
@@ -97,7 +119,7 @@ struct GrazrAccountsSheet: View {
                 Button("Done") { dismiss() }
                     .buttonStyle(.borderedProminent)
                     .tint(Theme.accent)
-                    .keyboardShortcut(.defaultAction)
+                    .keyboardShortcut(adding ? nil : .defaultAction)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -119,7 +141,7 @@ struct GrazrAccountsSheet: View {
         }
         .toggleStyle(.checkbox)
         .controlSize(.small)
-        .help("When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. herdrm answers “Switch to … and continue”. Applies to every device with grazr, while herdrm is open.")
+        .help("When an account’s weekly Fable allowance is spent and usage credits are off, Claude stops and asks. Herdrm answers “Switch to … and continue”. Applies to every device with grazr, while Herdrm is open.")
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
@@ -142,8 +164,15 @@ struct GrazrAccountsSheet: View {
         } else if let report {
             if !report.installed {
                 message(String(localized: "grazr is not installed on \(device.name)."), systemImage: "person.crop.circle.badge.questionmark")
+            } else if adding {
+                addForm
             } else if report.accounts.isEmpty {
-                message(String(localized: "No accounts enrolled yet."), systemImage: "person.crop.circle.badge.plus")
+                VStack(spacing: 12) {
+                    message(String(localized: "No accounts enrolled yet."), systemImage: "person.crop.circle.badge.plus")
+                        .frame(maxHeight: .infinity)
+                    Button("Add Account…") { showAddForm() }
+                        .padding(.bottom, 24)
+                }
             } else if view == .dial || view == .clock {
                 ScrollView {
                     VStack(spacing: 6) {
@@ -190,6 +219,93 @@ struct GrazrAccountsSheet: View {
             }
         } else {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    /// Whether the sheet can offer to add an account: grazr is there and readable.
+    private var canAdd: Bool {
+        failure == nil && report?.installed == true
+    }
+
+    private func showAddForm() {
+        addError = nil
+        adding = true
+    }
+
+    private var trimmedName: String {
+        newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// grazr's enrol menu as a form: a name, which of its two ways to use,
+    /// and whether the name goes into ACCOUNTS so grazr rotates to it.
+    private var addForm: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Add a Claude account")
+                .font(.system(size: 13, weight: .semibold))
+            TextField("Account name", text: $newName, prompt: Text("e.g. work"))
+                .textFieldStyle(.roundedBorder)
+                .onSubmit { add() }
+            if let addError {
+                Text(addError)
+                    .font(.system(size: 11))
+                    .foregroundStyle(Theme.danger)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Picker("How", selection: $newMode) {
+                Text("Save the login this machine uses now").tag(AddMode.currentLogin)
+                Text("Log in to another account").tag(AddMode.signIn)
+            }
+            .pickerStyle(.radioGroup)
+            .labelsHidden()
+            Text(modeHint)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Toggle("List it in ACCOUNTS, so grazr rotates to it", isOn: $newListed)
+                .controlSize(.small)
+                .help("Adds the name to ACCOUNTS in grazr's config.env. Off, the account is enrolled but grazr only switches to it when asked.")
+            HStack {
+                Spacer()
+                Button("Cancel") { adding = false }
+                    .keyboardShortcut(.cancelAction)
+                Button(newMode == .currentLogin ? "Save" : "Log In…") { add() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(trimmedName.isEmpty || saving)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var modeHint: String {
+        switch newMode {
+        case .currentLogin:
+            return String(localized: "grazr keeps a copy of Claude's current sign-in on \(device.name) under this name.")
+        case .signIn:
+            return String(localized: "Opens a terminal on \(device.name) for Claude's sign-in. The account Claude is on now is left untouched.")
+        }
+    }
+
+    private func add() {
+        let name = trimmedName
+        guard !name.isEmpty, !saving else { return }
+        switch newMode {
+        case .currentLogin:
+            saving = true
+            Task {
+                addError = await model.saveGrazrLogin(name: name, listInRotation: newListed, on: device)
+                saving = false
+                if addError == nil {
+                    adding = false
+                    newName = ""
+                    await load()
+                }
+            }
+        case .signIn:
+            // Closes the sheet to show the terminal; the sign-in is Claude's.
+            model.addGrazrAccount(name: name, listInRotation: newListed, on: device)
         }
     }
 

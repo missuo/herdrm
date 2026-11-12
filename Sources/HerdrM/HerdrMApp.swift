@@ -22,6 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Before any session starts, so a reaped socket can never be one of ours.
         SSHTunnel.reapOrphanedForwards()
 
+        // Herdrm on iPhone reaches this Mac through the relay while it's on.
+        MainActor.assumeIsolated { RelayHostController.shared.startIfEnabled() }
+
         // `pkill herdrm` (and launchd) send SIGTERM, whose default action ends the
         // process on the spot: this delegate never hears of it and every ssh child
         // survives. Route it through the normal quit; a second SIGTERM still ends a
@@ -103,12 +106,17 @@ extension FocusedValues {
 
 @main
 struct HerdrMApp: App {
+    /// First, before the delegate (and its AppModel) reads any setting:
+    /// stored properties initialize in declaration order.
+    private let legacyDefaults: Void = LegacyDefaults.migrate()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @AppStorage("app.theme") private var themePreference = "system"
     /// Read here as well as in DetailView and Settings: an @AppStorage on the App
     /// invalidates the commands body, so the menu checkmark follows the setting.
     @AppStorage(TerminalDefaults.tabLayoutKey) private var tabLayoutEnabled = true
     @AppStorage(MachineStatsDefaults.showKey) private var showsMachineStats = true
+    @AppStorage(UsageDefaults.showKey) private var showsUsageStats = false
+    @AppStorage(UsageDefaults.agentsKey) private var usageAgents = UsageDefaults.defaultAgents
     @AppStorage(SidebarDefaults.groupBySpaceKey) private var groupSidebarBySpace = false
     @FocusedValue(\.appModel) private var focusedModel
     @FocusedValue(\.splitAxis) private var focusedSplitAxis
@@ -160,6 +168,20 @@ struct HerdrMApp: App {
             CommandGroup(after: .sidebar) {
                 // Off removes the sidebar meters and stops their sampler (one ssh per remote host).
                 Toggle("Show Machine Stats", isOn: $showsMachineStats)
+                // Off by default: on, the sidebar runs the picked agents' usage
+                // commands on the selected pane's device every five minutes.
+                Toggle("Show Agent Usage", isOn: $showsUsageStats)
+                Menu("Agents in Usage Row") {
+                    let picked = UsageDefaults.providers(from: usageAgents)
+                    ForEach(UsageProvider.allCases, id: \.self) { provider in
+                        Toggle(UsageDefaults.name(provider), isOn: Binding(
+                            get: { picked.contains(provider) },
+                            set: { _ in usageAgents = UsageDefaults.toggling(provider, in: usageAgents) }
+                        ))
+                        // The row always shows at least one agent.
+                        .disabled(picked == [provider])
+                    }
+                }
                 Button("Read full conversation") {
                     if let model = focusedModel, let entry = model.selectedEntry {
                         model.toggleConversationHistory(for: entry.ref)
@@ -368,6 +390,8 @@ struct SettingsView: View {
                 .tabItem { Label("Agents", systemImage: "sparkles") }
             NotificationSettingsView()
                 .tabItem { Label("Notifications", systemImage: "bell") }
+            RelaySettingsView()
+                .tabItem { Label("iPhone", systemImage: "iphone") }
             TailcatSettingsView(model: model)
                 .tabItem { Label("Tailcat", systemImage: "key") }
             AboutSettingsView()
@@ -383,37 +407,10 @@ struct AgentsSettingsView: View {
     @State private var argDrafts: [String: String] = [:]
     @State private var yoloMode = AgentLaunchArgsStore.yoloMode()
 
-    /// Kinds herdr ships manifests for (plus OMP, which starts through its
-    /// lifecycle extension). Kinds a connected server advertises beyond these
-    /// are appended with their raw name.
-    private static let knownKinds: [(kind: String, label: String)] = [
-        ("claude", "Claude"),
-        ("codex", "Codex"),
-        ("droid", "Droid"),
-        ("agy", "Antigravity"),
-        ("cursor", "Cursor"),
-        ("gemini", "Gemini"),
-        ("grok", "Grok"),
-        ("kimi", "Kimi"),
-        ("opencode", "OpenCode"),
-        ("copilot", "Copilot"),
-        ("devin", "Devin"),
-        ("cline", "Cline"),
-        ("kiro", "Kiro"),
-        ("amp", "Amp"),
-        ("hermes", "Hermes"),
-        ("kilo", "Kilo"),
-        ("qodercli", "Qoder"),
-        ("qwen", "Qwen Code"),
-        ("letta", "Letta"),
-        ("maki", "Maki"),
-        ("muse", "Muse"),
-        ("pi", "Pi"),
-        ("omp", "Oh My Pi"),
-    ]
-
+    /// Kinds a connected server advertises beyond `AgentKinds.known` are
+    /// appended with their raw name.
     private var kinds: [(kind: String, label: String)] {
-        var rows = Self.knownKinds
+        var rows = AgentKinds.known
         for session in model.sessions.values {
             for kind in session.agentCatalog.kinds where !rows.contains(where: { $0.kind == kind }) {
                 rows.append((kind, kind))
@@ -477,7 +474,7 @@ struct AgentsSettingsView: View {
             } header: {
                 Text("Binaries on This Mac")
             } footer: {
-                Text("Finder-launched apps don’t inherit your terminal PATH. herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary.")
+                Text("Finder-launched apps don’t inherit your terminal PATH. Herdrm captures it once from a login + interactive shell, then looks up these names. A path here is an escape hatch when detection picks the wrong binary.")
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
@@ -545,6 +542,7 @@ struct TerminalSettingsView: View {
     @AppStorage(TerminalDefaults.lineSpacingKey) private var lineSpacing = TerminalDefaults.defaultLineSpacing
     @AppStorage("terminal.mouseReporting") private var mouseReporting = true
     @AppStorage("terminal.copyOnSelect") private var copyOnSelect = true
+    @AppStorage(TerminalDefaults.optionAsAltKey) private var optionAsAlt = TerminalOptionAsAlt.both
     @AppStorage(TerminalDefaults.tabLayoutKey) private var tabLayout = true
 
     @State private var importMessage: String?
@@ -600,7 +598,7 @@ struct TerminalSettingsView: View {
                 Toggle(isOn: $thinStrokes) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Thin strokes")
-                        Text("Turns off macOS font smoothing, which thickens glyph stems and makes agent output — Claude Code's bold text especially — look heavy and smudged.")
+                        Text("Turns off extra font thickening in the terminal, which can make agent output — especially Claude Code's bold text — look heavy and smudged.")
                             .font(.system(size: 10.5))
                             .foregroundStyle(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -627,6 +625,19 @@ struct TerminalSettingsView: View {
                     }
                 }
 
+                Toggle(isOn: Binding(
+                    get: { optionAsAlt == .both },
+                    set: { optionAsAlt = $0 ? .both : .off }
+                )) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Use Option as Meta key")
+                        Text("Option chords like ⌥B and ⌥F reach the terminal as Esc sequences. Turn off if your keyboard layout types characters with Option, like ⌥L for @ on a German layout.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 Toggle(isOn: $tabLayout) {
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Show every pane of the selected tab")
@@ -646,10 +657,11 @@ struct TerminalSettingsView: View {
                         thinStrokes = true
                         mouseReporting = true
                         copyOnSelect = true
+                        optionAsAlt = .both
                         importMessage = nil
                     }
                     Button("Import from Ghostty…") { importFromGhostty() }
-                        .help("Reads font-family and font-size from ~/.config/ghostty/config. A one-time copy — herdrm's settings stay in charge afterward.")
+                        .help("Reads font-family and font-size from ~/.config/ghostty/config. A one-time copy — Herdrm's settings stay in charge afterward.")
                 }
 
                 if let importMessage {
@@ -773,7 +785,7 @@ struct AppearanceSettingsView: View {
                         Button("Relaunch") {
                             AppLanguage.relaunch()
                         }
-                        .help("Quit and reopen herdrm so the new language takes effect.")
+                        .help("Quit and reopen Herdrm so the new language takes effect.")
                     }
                 }
             }
@@ -889,7 +901,7 @@ struct TailcatSettingsView: View {
 struct AboutSettingsView: View {
     var body: some View {
         Form {
-            Text("herdrm — a native macOS console for herdr.")
+            Text("Herdrm — a native macOS console for herdr.")
                 .font(.system(size: 12.5))
             Text("Devices are managed from the switcher in the sidebar footer.")
                 .font(.system(size: 11.5))

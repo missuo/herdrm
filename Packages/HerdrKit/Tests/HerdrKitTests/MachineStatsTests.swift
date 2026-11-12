@@ -12,10 +12,12 @@ final class MachineStatsTests: XCTestCase {
         uptime: String = "3369422.72",
         cpu: String = "871568343 8347356 167532790 1498856784 100368636 0 9836772 0 0 0",
         procs: [String] = [],
-        args: [String] = []
+        args: [String] = [],
+        extraHeader: [String] = []
     ) -> String {
         """
         @@hm-begin
+        \(extraHeader.joined(separator: "\n"))
         os Linux
         host cloud-dev
         self 177389
@@ -102,6 +104,28 @@ final class MachineStatsTests: XCTestCase {
         XCTAssertEqual(sample.disks.count, 1)
         XCTAssertEqual(sample.disks.first?.mount, "/")
         XCTAssertEqual(try XCTUnwrap(sample.disks.first).fraction, 0.898, accuracy: 0.001)
+    }
+
+    /// Without MemAvailable (Linux before 3.14, some containers) free memory is
+    /// estimated from MemFree + Buffers + Cached instead of reading as none.
+    func testEstimatesAvailableMemoryWithoutMemAvailable() throws {
+        let frame = linuxFrame().replacingOccurrences(
+            of: "mem MemAvailable 23923008",
+            with: "mem MemFree 10000000\nmem Buffers 2000000\nmem Cached 8000000")
+        let sample = try XCTUnwrap(MachineStatsParser.parse(frame))
+        XCTAssertEqual(sample.memUsedBytes, (65_792_224 - 20_000_000) * 1024)
+    }
+
+    func testParsesHerdrCgroupLine() throws {
+        let capped = try XCTUnwrap(MachineStatsParser.parse(linuxFrame(extraHeader: ["agentcg 27917287424 34359738368"])))
+        XCTAssertEqual(capped.agentsMemBytes, 27_917_287_424)
+        XCTAssertEqual(capped.agentsMemLimitBytes, 34_359_738_368)
+        let snapshot = MachineStatsComputer.snapshot(previous: nil, current: capped)
+        XCTAssertEqual(try XCTUnwrap(snapshot.agentsMemFraction), 27_917_287_424 / 34_359_738_368, accuracy: 0.0001)
+        // No line (uncapped herdr, or no herdr) and a zero limit both mean no cap.
+        let uncapped = try XCTUnwrap(MachineStatsParser.parse(linuxFrame()))
+        XCTAssertNil(uncapped.agentsMemBytes)
+        XCTAssertNil(MachineStatsParser.parse(linuxFrame(extraHeader: ["agentcg 5 0"]))?.agentsMemLimitBytes)
     }
 
     func testParsesDarwinFrame() throws {

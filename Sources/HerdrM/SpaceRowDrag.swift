@@ -64,8 +64,10 @@ struct SpaceRowDragHost: View {
     let onClick: () -> Void
     let onNewAgent: () -> Void
     let onNewTerminal: () -> Void
+    let onOpenProject: () -> Void
     let onRename: () -> Void
     let onClose: () -> Void
+    let onCloseAll: () -> Void
     let onDragStart: (String) -> Void
     let onDragEnd: () -> Void
     let onDropHover: (Bool) -> Void
@@ -79,10 +81,12 @@ struct SpaceRowDragHost: View {
             menuItems: [
                 .item(title: String(localized: "New Agent…"), action: onNewAgent),
                 .item(title: String(localized: "New Terminal…"), action: onNewTerminal),
+                .item(title: String(localized: "Project…"), action: onOpenProject),
                 .separator,
                 .item(title: String(localized: "Rename Space…"), action: onRename),
                 .separator,
                 .destructive(title: String(localized: "Close Space \"\(label)\"…"), action: onClose),
+                .destructive(title: String(localized: "Close All Spaces…"), action: onCloseAll),
             ],
             onClick: onClick,
             onDoubleClick: onRename,
@@ -105,6 +109,7 @@ struct AgentRowDragHost: View {
     var allowsDrag = true
     let onClick: () -> Void
     let onRename: () -> Void
+    let onOpenProject: () -> Void
     let onPluginAction: (PluginAction) -> Void
     let onGrazrAccounts: () -> Void
     let onSwitchGrazrAccount: (GrazrAccount) -> Void
@@ -114,6 +119,7 @@ struct AgentRowDragHost: View {
     let onPinGrazrAccount: (GrazrAccount?) -> Void
     let onMenuOpen: () -> Void
     let onClose: () -> Void
+    let onCloseAll: () -> Void
     let onDragStart: (String) -> Void
     let onDragEnd: () -> Void
     let onDropHover: (Bool) -> Void
@@ -142,6 +148,7 @@ struct AgentRowDragHost: View {
     private var menuItems: [SidebarContextMenuItem] {
         var items: [SidebarContextMenuItem] = [
             .item(title: String(localized: "Rename Agent…"), action: onRename),
+            .item(title: String(localized: "Project…"), action: onOpenProject),
         ]
         if !pluginActions.isEmpty {
             items.append(.separator)
@@ -167,6 +174,7 @@ struct AgentRowDragHost: View {
         }
         items.append(.separator)
         items.append(.destructive(title: String(localized: "Close Agent…"), action: onClose))
+        items.append(.destructive(title: String(localized: "Close All Agents…"), action: onCloseAll))
         return items
     }
 
@@ -239,7 +247,9 @@ struct TerminalRowDragHost: View {
     var allowsDrag = true
     let onClick: () -> Void
     let onRename: () -> Void
+    let onOpenProject: () -> Void
     let onClose: () -> Void
+    let onCloseAll: () -> Void
     let onDragStart: (String) -> Void
     let onDragEnd: () -> Void
     let onDropHover: (Bool) -> Void
@@ -252,8 +262,10 @@ struct TerminalRowDragHost: View {
             pasteboardType: SidebarRowDragNSView.terminalPasteboardType,
             menuItems: [
                 .item(title: String(localized: "Rename Terminal…"), action: onRename),
+                .item(title: String(localized: "Project…"), action: onOpenProject),
                 .separator,
                 .destructive(title: String(localized: "Close Terminal…"), action: onClose),
+                .destructive(title: String(localized: "Close All Terminals…"), action: onCloseAll),
             ],
             onClick: onClick,
             onDoubleClick: onRename,
@@ -268,9 +280,9 @@ struct TerminalRowDragHost: View {
 }
 
 final class SidebarRowDragNSView: NSView, NSDraggingSource {
-    static let spacePasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.space-id")
-    static let agentPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.agent-id")
-    static let terminalPasteboardType = NSPasteboard.PasteboardType("dev.bybee.herdrm.terminal-id")
+    static let spacePasteboardType = NSPasteboard.PasteboardType("sb.moe.herdrm.space-id")
+    static let agentPasteboardType = NSPasteboard.PasteboardType("sb.moe.herdrm.agent-id")
+    static let terminalPasteboardType = NSPasteboard.PasteboardType("sb.moe.herdrm.terminal-id")
 
     var pasteboardType = SidebarRowDragNSView.spacePasteboardType
     var entryID = ""

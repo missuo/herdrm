@@ -1,6 +1,6 @@
 name: HerdrM
 options:
-  bundleIdPrefix: dev.bybee
+  bundleIdPrefix: sb.moe
   deploymentTarget:
     macOS: "14.0"
   xcodeVersion: "16.0"
@@ -51,8 +51,8 @@ targets:
     info:
       path: Sources/HerdrM/Info.plist
       properties:
-        CFBundleName: herdrm
-        CFBundleDisplayName: herdrm
+        CFBundleName: Herdrm
+        CFBundleDisplayName: Herdrm
         CFBundleIconName: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
@@ -69,7 +69,7 @@ targets:
         SUEnableAutomaticChecks: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm
+        PRODUCT_BUNDLE_IDENTIFIER: sb.moe.herdrm
         PRODUCT_NAME: herdrm
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         SWIFT_VERSION: "5.10"
@@ -98,6 +98,8 @@ targets:
     deploymentTarget: "18.0"
     sources:
       - Sources/HerdrMobile
+      # Same Icon Composer icon as the macOS app.
+      - path: Sources/HerdrM/AppIcon.icon
     dependencies:
       - package: HerdrKit
       - package: HerdrSSH
@@ -108,8 +110,9 @@ targets:
     info:
       path: Sources/HerdrMobile/Info.plist
       properties:
-        CFBundleName: herdrm
-        CFBundleDisplayName: herdrm
+        CFBundleName: Herdrm
+        CFBundleDisplayName: Herdrm
+        CFBundleIconName: AppIcon
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         LSApplicationCategoryType: public.app-category.developer-tools
@@ -124,12 +127,19 @@ targets:
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
         NSLocalNetworkUsageDescription: >-
-          herdrm connects to your Macs over SSH on your local network to reach
+          Herdrm connects to your Macs over SSH on your local network to reach
           the herdr session running on them.
+        NSCameraUsageDescription: >-
+          Herdrm uses the camera to scan the pairing code shown on your Mac.
+        CFBundleURLTypes:
+          - CFBundleURLName: sb.moe.herdrm-ios.pair
+            CFBundleURLSchemes:
+              - herdrm
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm.ios
+        PRODUCT_BUNDLE_IDENTIFIER: sb.moe.herdrm-ios
         PRODUCT_NAME: HerdrMobile
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "5.10"
@@ -152,7 +162,7 @@ targets:
       - target: HerdrM
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.bybee.herdrm.tests
+        PRODUCT_BUNDLE_IDENTIFIER: sb.moe.herdrm.tests
         GENERATE_INFOPLIST_FILE: YES
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         SWIFT_VERSION: "5.10"

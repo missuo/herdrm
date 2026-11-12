@@ -69,4 +69,13 @@ final class SidebarSectionButtonsUIUXTests: XCTestCase {
         XCTAssertFalse(sidebar.model.showNewAgent)
         XCTAssertFalse(sidebar.model.showNewSpace)
     }
+
+    /// The panel belongs to a pane's Space, so it opens from the pane's titlebar
+    /// and row menu, not from a sidebar action row.
+    func testProjectIsNotASidebarActionRow() throws {
+        let sidebar = try SidebarHarness(spaces: 3, agents: 4, pinnedHeaders: false)
+        let names = sidebar.actionRowNames()
+        XCTAssertTrue(names.contains(String(localized: "Files")), "\(names)")
+        XCTAssertFalse(names.contains(String(localized: "Project")), "\(names)")
+    }
 }

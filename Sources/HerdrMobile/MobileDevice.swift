@@ -11,12 +11,27 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         /// Control plane only on iOS: the tunnel carries the herdr API and
         /// client sockets but no shell, so terminal attach stays SSH-only.
         case tailcat
+        /// A Mac paired by QR code: SSH to its own sshd, inside an end-to-end
+        /// encrypted session through Herdrm's relay. Works without a public IP.
+        case relay
+    }
+
+    /// Where a relay device waits and how to recognize it. The PSK and this
+    /// phone's relay key live in the Keychain (`MobileRelay`).
+    struct Relay: Codable, Hashable {
+        var url: URL
+        var hostID: String
+        /// The Mac's Noise static public key, from the QR code.
+        var hostStatic: Data
     }
 
     enum AuthMethod: String, Codable, CaseIterable {
         /// This phone's Ed25519 key, enrolled in the host's authorized_keys.
         case deviceKey
         case password
+        /// An imported private key (Identities): `identityID`, or nil to try
+        /// them all, starting with the one that worked here last.
+        case identity
     }
 
     var id: UUID
@@ -28,6 +43,10 @@ struct MobileDevice: Codable, Identifiable, Hashable {
     var authMethod: AuthMethod
     /// Socket path override; nil means ~/.config/herdr/herdr.sock on the host.
     var socketPath: String?
+    /// Set for `.relay` devices.
+    var relay: Relay?
+    /// The key for `.identity` auth; nil chooses automatically.
+    var identityID: UUID?
 
     init(
         id: UUID = UUID(),
@@ -37,7 +56,9 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         port: UInt16 = 22,
         username: String = "",
         authMethod: AuthMethod = .deviceKey,
-        socketPath: String? = nil
+        socketPath: String? = nil,
+        relay: Relay? = nil,
+        identityID: UUID? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -47,6 +68,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         self.username = username
         self.authMethod = authMethod
         self.socketPath = socketPath
+        self.relay = relay
+        self.identityID = identityID
     }
 
     /// Devices stored before the tailcat kind existed decode as SSH.
@@ -60,6 +83,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
         authMethod = try container.decodeIfPresent(AuthMethod.self, forKey: .authMethod) ?? .deviceKey
         socketPath = try container.decodeIfPresent(String.self, forKey: .socketPath)
+        relay = try container.decodeIfPresent(Relay.self, forKey: .relay)
+        identityID = try container.decodeIfPresent(UUID.self, forKey: .identityID)
     }
 
     var isTailcat: Bool { kind == .tailcat }
@@ -70,6 +95,8 @@ struct MobileDevice: Codable, Identifiable, Hashable {
             return port == 22 ? "\(username)@\(host)" : "\(username)@\(host):\(port)"
         case .tailcat:
             return String(localized: "Tailcat tunnel")
+        case .relay:
+            return String(localized: "\(username) · through the relay")
         }
     }
 }
@@ -102,7 +129,7 @@ final class MobileDeviceStore {
 /// `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` deliberately keeps them
 /// out of iCloud Keychain and device-to-device migration.
 enum MobileSecretStore {
-    private static let service = "dev.bybee.herdrm.ios.ssh"
+    private static let service = "sb.moe.herdrm-ios.ssh"
 
     static func password(for deviceID: UUID) -> String? {
         var query = baseQuery(deviceID: deviceID)
@@ -152,6 +179,11 @@ enum KnownHostsStore {
         var map = store()
         map["\(host):\(port)|\(algorithm)"] = fingerprint
         UserDefaults.standard.set(map, forKey: key)
+    }
+
+    /// Whether any host key is pinned for `host:port`.
+    static func hasPins(host: String, port: UInt16) -> Bool {
+        store().keys.contains { $0.hasPrefix("\(host):\(port)|") }
     }
 
     static func unpin(host: String, port: UInt16) {

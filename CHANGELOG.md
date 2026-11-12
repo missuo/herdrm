@@ -7,14 +7,282 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-09
+
 ### Added
-- **Accounts in sync across devices.** The Claude Accounts window can keep
-  every device that runs grazr on one account order and one active account.
-  The device that changed last wins: a rotation or a swap on one host reaches
-  the others within a minute, a host that cannot follow (account blocked or
-  not enrolled there) says so, and pins stay untouched. Each device has its
-  own switch, so one can keep rotating on its own. Needs grazr
-  0.4.7+senad.4.
+
+- **SSH devices can open a named herdr session.** Add Device and Edit Device have a *herdr session* field. Leave it empty for the default session, or enter a name started with `herdr --session <name>` on the remote. In Edit Device, *Find Sessions* lists the sessions running on that host. To see two sessions on one host, add the host twice. ([#190](https://github.com/missuo/herdrm/issues/190))
+
+## [0.7.1] - 2026-11-07
+
+### Added
+
+- **Option key can type characters in the terminal.** Settings → Terminal → *Use Option as Meta key* (on by default). Turn it off on layouts that type characters with Option, such as ⌥L → `@` and ⌥N → `~` on German. ⌥⌫ and ⌥← / ⌥→ word editing keep working either way. ([#122](https://github.com/missuo/herdrm/issues/122))
+- **Agent usage in the sidebar.** View → *Show Agent Usage* (off by default) adds a row with Claude and Codex quota windows and OpenCode's token count; View → *Agents in Usage Row* picks which agents it shows. It reads only the selected pane's device, every five minutes while the window is visible. ([#205](https://github.com/missuo/herdrm/pull/205))
+
+### Fixed
+
+- **The highlighted Space is the filter you chose.** All Spaces stays
+  highlighted while the Agent and Terminal lists show every space, even when
+  the right-hand pane belongs to one of them. Selecting a pane from another
+  space (a grouped-sidebar row, the machine-stats panel) switches back to
+  All Spaces instead of leaving the old Space highlighted, and search,
+  notifications and ⌃Tab scroll to the selected Agent or Terminal row.
+- **Clicking into a terminal keeps the sidebar where it is.** Focusing an
+  Agent's or Terminal's input, including switching between split panes, no
+  longer scrolls the sidebar to its Space.
+- **Unread dots survive quitting and reopening Herdrm.** A result you haven't
+  opened keeps its dot after a relaunch without notifying again, results you
+  already read stay read, and results that finished while Herdrm was closed
+  notify once. ([#208](https://github.com/missuo/herdrm/issues/208))
+- **Unread dots no longer vanish while a server reconnects.** On herdr
+  versions that report completion sequences, a brief idle or unknown state
+  during reconnect keeps the dot; on older ones, idle still clears it.
+
+## [0.7.0] - 2026-11-02
+
+> **Herdrm has a new bundle ID: `sb.moe.herdrm`** (it was `dev.bybee.herdrm`).
+> This update installs over the old app as usual, and Herdrm copies your
+> settings over on its first launch. macOS may ask once whether Herdrm can use
+> the passwords and keys it saved before: choose Always Allow. It may also ask
+> for notification permission again.
+>
+> **Herdrm now supports Herdrm for iOS.** Pair your iPhone from Settings →
+> iPhone, then reach this Mac's agents and terminals from the phone on any
+> network, end-to-end encrypted.
+
+### Added
+- **Reach your Mac from iPhone on any network.** Turn on Settings → iPhone on
+  the Mac and scan the code with Herdrm on iPhone (or the Camera app): the
+  phone pairs and connects through Herdrm's relay, without a public IP, port
+  forwarding or SSH setup on the phone. The session is end-to-end encrypted
+  (Noise IKpsk2); the relay can't read it. Pairing installs the phone's SSH key
+  restricted to connections through the relay, and Settings → iPhone lists and
+  removes paired phones. See docs/RELAY.md. A Mac with a public address can
+  give it in Settings → iPhone: the phone then connects directly and uses the
+  relay only as a fallback.
+- **iOS: SSH keys for servers you reach directly.** Add Device → Direct (IP or
+  hostname) signs in with your own private keys: import them under Keys (paste
+  or file; OpenSSH or PEM, Ed25519, ECDSA or RSA, with or without a
+  passphrase), or add one right from Add Device. Automatic tries the key that
+  worked for that server last, then the rest, the way OpenSSH does. Keys stay
+  in this iPhone's Keychain only (no iCloud, no other device), are never shown
+  again after import, and by default need Face ID before use.
+- **iOS: agents open as a chat.** An agent's screen on the phone defaults to a
+  Chat tab: your prompts, the agent's replies, and each tool call as a compact
+  row you can expand for its input and result. The live Terminal is one tap
+  away in the same screen. Works for Claude Code and (best effort) Codex, read
+  from the agent's own transcript on the device over SSH.
+- **iOS: answer an agent's questions with a tap.** When Claude Code stops on a
+  permission prompt, an AskUserQuestion question, or plan approval, the chat
+  shows the question with one button per option; options that take words
+  ("Type something.", "Tell Claude what to change") open a text field.
+  Tapping sends the keys the agent's terminal expects, and the card goes away
+  once the agent moves on. Codex approval prompts get the same card.
+- **iOS: start agents and terminals from the phone.** The + button on a
+  space's screen starts a new agent (Claude and Codex first, every other herdr
+  agent under More Agents) or a new terminal in that space, and opens it.
+
+### Changed
+- **New bundle ID `sb.moe.herdrm`** for the Mac app (and `sb.moe.herdrm-ios`
+  for iOS). Settings carry over from `dev.bybee.herdrm` on first launch;
+  Keychain items keep their names, so saved passwords, SSH keys and paired
+  iPhones stay.
+- **iOS: Server → Space → Agent.** The phone follows the Mac's layout: pick a
+  server, then one of its spaces, then an agent (or a terminal) in it.
+
+### Fixed
+- **iOS: switching apps no longer drops the connection.** Coming back to
+  Herdrm keeps the existing session (and its open terminal) when it still
+  answers, and reconnects only when it doesn't. The app also keeps the
+  connection up for a short while in the background.
+
+## [0.6.25] - 2026-11-02
+
+> **Herdrm may be discontinued.** herdr has released its own official GUI app,
+> which covers what Herdrm set out to do. Herdrm still works with official
+> herdr today, but new development may stop and further releases aren't
+> guaranteed. See [herdr.dev](https://herdr.dev) for the official app.
+
+### Changed
+- **The app is now named Herdrm.** The menu bar, Dock, About window and every
+  message use the capitalized name.
+- **Machine stats live on the device card.** The bottom of the sidebar is one
+  compact card: a larger device icon, the device name, and CPU, RAM and disk
+  figures on a small line under it. Click the card to switch devices; hover it
+  to see the full machine stats panel.
+
+### Added
+- **Close all from the sidebar.** Right-click a space, agent or terminal to
+  close all spaces, all agents or all terminals the sidebar lists (the device
+  filter and the selected space set the scope), after one confirmation.
+
+### Fixed
+- **Panes inside a space line up under its name.** Agents and terminals in a
+  space's tree start under the space's name instead of left of its folder icon.
+- **Panes inside a space are one line tall.** They match the space rows above
+  them; the full cards with model, account and history stay in the Agents and
+  Terminals sections.
+
+## [0.6.24] - 2026-11-02
+
+### Fixed
+- **Read completion dots stay cleared after reconnecting.** Opening a result,
+  or viewing it in the active terminal, remembers its terminal and completion
+  sequence even if a snapshot temporarily omits the agent or restores an older
+  sequence. Replaying that result cannot restore its dot or notification;
+  new completion sequences and replacement terminals still notify normally.
+
+## [0.6.23] - 2026-10-30
+
+### Fixed
+- **Machine stats stays below the title bar.** Long resource and process lists
+  scroll within the available window height instead of covering window controls.
+- **Cancelled project inspections do not report false failures.** If the main
+  remote probe has completed while the optional local-VM probe is still pending,
+  cancellation drops the result instead of parsing it or changing project state
+  to failed.
+- **Restored completion states no longer create duplicate unread results.**
+  Completion sequences, when provided, identify new results across reconnects;
+  legacy servers preserve observed working or blocked activity through temporary
+  unknown states. Badges and completion notifications share snapshot confirmation,
+  and failed event-triggered snapshots retry, backing off, while the device
+  remains connected.
+- **System Mono resolves to the actual system font family.** Terminal rendering
+  uses AppKit's discoverable monospaced family instead of a literal `SF Mono`
+  name that can silently fall back. Size, weight, spacing and named fonts stay
+  unchanged.
+- **Attached terminals repaint when switching light and dark themes.** Existing
+  agent input boxes and message backgrounds follow the new appearance without
+  replacing the connection, changing the terminal grid, or ending the agent.
+- **⌘-click opens the whole wrapped URL (#179).** A long link that wraps
+  across rows, including a labeled `Document (https://…)` link an agent wraps
+  inside its own column, opens in full instead of the clicked row's piece. An
+  OSC 8 link still opens its own target, and ⌘-clicking a link in another
+  split pane selects that pane too.
+
+## [0.6.22] - 2026-10-29
+
+### Added
+- **⌃Tab switches to recent agents and terminals, like ⌘Tab (#156).** One
+  tap goes back to the agent or terminal you were just in, and tapping again
+  flips back. Hold ⌃ and keep pressing Tab to show the list, most recently
+  used first: each Tab steps one further back, ⇧Tab steps forward, releasing ⌃
+  opens the highlighted pane, and Esc cancels. The list stays in the same order
+  while you choose and covers every device, whatever the device filter is set
+  to (as ⌘K does). Each entry shows its name, status, space and device, and
+  can be clicked. Panes on a disconnected device stay in the list, dimmed. The
+  order is remembered across launches.
+
+### Fixed
+- **Claude history finds conversations kept outside `~/.claude` (#173).** When
+  `CLAUDE_CONFIG_DIR` is set only on the agent, by an alias, a wrapper or an
+  account switcher, HerdrM now finds the directory from the running processes
+  on the device, so ⇧⌘H and the prompt rail show the conversation instead of
+  nothing. On SSH devices whose login shell is zsh, history no longer reports
+  a disconnect when the conversation isn't in the first directory it checks.
+- **Files keeps an edited path when a directory reply arrives.** Refreshing or
+  completing a transfer reloads the current directory without submitting an
+  unfinished path. Explicit navigation still shows the resolved directory.
+- **Sidebar rows stay under the pointer.** Clicking spaces, agents or terminals
+  updates selection and the displayed space highlight without recentering the
+  list, including the history button inside an Agent card. Explicit terminal
+  activation, search, notification navigation and restored
+  panes still reveal their owning space without changing the All Spaces filter.
+  Agent-kind labels stay on one line so narrow sidebars keep stable row heights.
+- **Patched terminal fonts keep their own icons.** The bundled Nerd Font
+  symbols now fill in only the icons the chosen font is missing, so a patched
+  font's Powerline separators and icons keep their native proportions.
+- **Thin strokes controls the terminal's font thickening.** Turning the
+  setting off now thickens glyphs again; it had no effect before.
+- **Third-party voice input inserts into the terminal.** Input methods such
+  as Doubao get a valid insertion point when no composition is active.
+- **Cancelling a file operation never signals a reused PID.** The delayed
+  force-kill is bound to the original process.
+- **Unread completion dots clear when opened.** Selecting an agent or its
+  current space acknowledges the result immediately. Results visible in the
+  active terminal do not gain unread dots; background results stay unread.
+  Automatic selection while Files covers the terminal, and opening another
+  agent or shell from Files, leave the unseen result unread.
+- **New Agent keeps the viewed space in All Spaces.** The global creation
+  action inherits the viewed remote pane's device and space when no space
+  filter is selected, matching New Terminal.
+- **Reconnect a device's dropped SSH terminals together.** One click restores
+  the disconnected attaches on that device, preserving healthy terminals and
+  panes closed normally or taken over by another client.
+- **New Agent choices stay visible and clickable.** The agent picker keeps
+  room for its rows instead of collapsing when the Recent list is full.
+- **First-open terminal focus follows the selected agent.** Clicking another
+  agent releases the previous terminal immediately and focuses the new view
+  when it mounts. Other newly created panes no longer take the keyboard.
+
+## [0.6.21] - 2026-10-21
+
+### Fixed
+- **New terminals and agents keep the chosen remote space.** Opening either
+  sheet from a remote space's menu or the current selection no longer resets
+  the space while initializing the device picker. Manually changing devices
+  still resets the space for the newly chosen device.
+- **SSH agent choices reflect installed CLIs.** New Agent checks the remote
+  login-shell PATH instead of listing every supported manifest. Failed checks
+  show the existing retry action; local binary overrides remain local.
+
+## [0.6.20] - 2026-10-21
+
+### Changed
+- **New app icon.** A sidebar and a terminal pane on a blue gradient, deep at
+  the top and lighter toward the bottom. The iOS app now ships the same icon;
+  it had none before.
+
+## [0.6.19] - 2026-10-21
+
+### Added
+- **Real thumbnails inside Claude's `[Image #N]` boxes.** Images you paste or
+  drop into a Claude pane now show as pictures in the bordered box above the
+  prompt, on Local and SSH devices alike. HerdrM draws them itself from the
+  image it delivered, so the preview no longer depends on Claude detecting a
+  picture-capable terminal. When HerdrM cannot tell which image a box belongs
+  to, it draws nothing rather than guessing.
+- **Add a Claude account from the Claude Accounts window.** "Add Account…"
+  offers grazr's two ways to enrol without a terminal menu: save the login
+  this machine uses now, or log in to another account, which opens a terminal
+  on the device for Claude's sign-in and leaves the current login untouched.
+  The name can be listed in ACCOUNTS at the same time, so grazr rotates to it;
+  grazr's refusals, such as a name already in use, show in the form.
+- **Project panel.** Each space has a Project view in the right pane, opened
+  from the Project toggle in the pane titlebar or "Project…" in the agent,
+  terminal and space row menus. It probes the space's device and lists the
+  project's hot-reload servers with their ports, bind addresses, systemd units
+  and log files. Docker Compose
+  projects and containers show health and published ports, alongside the
+  host's load, memory and Docker version. Local Parallels, VMPal and Lima VMs
+  can be attached, declared or suggested for the project. Its URLs can be
+  opened or copied, or overridden with the public address actually used.
+  Overrides, attached containers and VMs, hidden listeners, remembered linked
+  hosts and a custom project root persist per project in HerdrM's own store.
+  The view is a config page of cards: an architecture overview shows the Mac,
+  the host and its hot-reload, Docker and VM lanes with their linked hosts,
+  followed by one card per section. Containers appear as tiles that reveal a
+  detail strip when selected, and the layout holds up in narrow panes.
+  Status refreshes every 15 seconds while the panel is visible. The panel is read-only
+  in this release; start, stop and logs come next.
+- **Select and transfer several files at once.** Use Command-click, Shift-click
+  or Select All in either Files pane, then upload or download the selection
+  in order. Choose one policy for existing files, see queue progress and a
+  completion summary, or cancel the remaining transfers. A failed file is
+  reported without preventing later files from being copied.
+- **See how full a host is before starting an agent there.** The machine-stats
+  panel shows a Linux host's room for another agent: free memory, swap, load
+  per CPU, and how close herdr's panes are to herdr's own memory cap. When a
+  host is critically full, New Agent asks before starting there; Start Anyway
+  always proceeds, and a host that can't be read (macOS, offline, slow) never
+  blocks a start. The memory lines scale with the host's RAM, so a small VPS
+  isn't flagged just for being small.
+- **Sort files by name, size or modification time.** Click a column heading
+  in either Files pane to sort it; click again to reverse the direction.
+  Folders stay first, and each pane keeps its own order when refreshing or
+  changing folders. The active heading shows an arrow and announces its
+  direction to VoiceOver.
 
 ## [0.6.18] - 2026-10-17
 

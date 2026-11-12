@@ -17,15 +17,15 @@ enum MachineStatsDefaults {
     static let showKey = "sidebar.showMachineStats"
 }
 
-/// CPU / RAM / DISK meters for the selected pane's host, in the sidebar footer
-/// just above the device switcher. Clicking opens `MachineStatsPanel`. Runs the
-/// sampler while it is on screen and the window is visible.
+/// The selected pane's host at a glance, one small line under the device name
+/// on the sidebar's device card: `CPU 12%  RAM 48%  DISK 63%`, plus AGENTS
+/// (herdr's panes against herdr's memory cap) on a Linux host that caps herdr,
+/// and a warning when that host has no room for another agent. Not a control:
+/// hovering the card shows `MachineStatsPanel`, clicking it switches devices.
+/// Runs the sampler while it is on screen and the window is visible.
 struct SidebarMachineStats: View {
     @ObservedObject var stats: MachineStatsModel
     let device: Device
-    let isOpen: Bool
-    let toggle: () -> Void
-    @State private var hovered = false
     @State private var windowVisible = true
 
     private struct WatchKey: Hashable {
@@ -34,33 +34,27 @@ struct SidebarMachineStats: View {
     }
 
     var body: some View {
-        Button(action: toggle) {
-            HStack(spacing: 12) {
-                SidebarMeter(label: "CPU", percent: snapshot?.cpuPercent)
-                SidebarMeter(label: "RAM", percent: snapshot.map { $0.memFraction * 100 })
-                SidebarMeter(label: "DISK", percent: snapshot?.fullestDisk.map { $0.fraction * 100 })
-                if case .failed(let message) = stats.state, snapshot == nil {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.warning)
-                        .help(message)
-                }
+        HStack(spacing: 7) {
+            SidebarFigure(label: "CPU", percent: snapshot?.cpuPercent)
+            SidebarFigure(label: "RAM", percent: snapshot.map { $0.memFraction * 100 })
+            SidebarFigure(label: "DISK", percent: snapshot?.fullestDisk.map { $0.fraction * 100 })
+            if let agents = snapshot?.agentsMemFraction {
+                SidebarFigure(label: "AGENTS", percent: agents * 100)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(hovered || isOpen ? AnyShapeStyle(Theme.itemWash) : AnyShapeStyle(.clear))
-            )
-            .contentShape(Rectangle())
+            if let capacity = snapshot?.capacity, capacity.level == .critical {
+                Image(systemName: "exclamationmark.octagon.fill")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(Theme.danger)
+                    .help(HostCapacityFormat.summary(capacity, device: device.name))
+            } else if case .failed(let message) = stats.state, snapshot == nil {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(Theme.warning)
+                    .help(message)
+            }
         }
-        .buttonStyle(.plain)
-        .focusEffectDisabled()
-        .onHover { hovered = $0 }
-        .help(String(localized: "\(device.name) health — click for details"))
-        .accessibilityLabel(accessibilityText)
-        .accessibilityIdentifier("sidebar.machineStats")
+        .lineLimit(1)
+        .fixedSize()
         .background(WindowVisibilityReader(isVisible: $windowVisible))
         .task(id: WatchKey(device: device, visible: windowVisible)) {
             guard windowVisible else { return }
@@ -72,8 +66,11 @@ struct SidebarMachineStats: View {
         stats.deviceID == device.id ? stats.snapshot : nil
     }
 
-    private var accessibilityText: String {
-        guard let snapshot else { return String(localized: "\(device.name) health") }
+    /// What VoiceOver reads for the figures, as part of the device card's name.
+    static func accessibilityText(stats: MachineStatsModel, device: Device) -> String {
+        guard stats.deviceID == device.id, let snapshot = stats.snapshot else {
+            return String(localized: "\(device.name) health")
+        }
         let cpu = snapshot.cpuPercent.map(MachineStatsFormat.percent) ?? "—"
         let ram = MachineStatsFormat.percent(snapshot.memFraction * 100)
         let disk = snapshot.fullestDisk.map { MachineStatsFormat.percent($0.fraction * 100) } ?? "—"
@@ -81,45 +78,29 @@ struct SidebarMachineStats: View {
     }
 }
 
-/// One compact meter column: `CPU … 34%` over a level-tinted bar that fills its
-/// share of the row. Equal-width columns so the block adapts to the sidebar width.
-private struct SidebarMeter: View {
+/// `CPU 12%`: a small label and its figure, tinted once the resource runs low.
+private struct SidebarFigure: View {
     let label: String
     let percent: Double?
 
     var body: some View {
         let value = percent.map { min(100, max(0, $0)) }
-        let tint = value.map(levelColor) ?? Theme.textGhost
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                Text(label)
-                    .font(.system(size: 9, weight: .semibold))
-                    .kerning(0.2)
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer(minLength: 2)
-                Text(value.map(MachineStatsFormat.percent) ?? "—")
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(value.map { $0 >= 75 ? tint : Theme.textSecondary } ?? Theme.textGhost)
-                    .lineLimit(1)
-            }
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Theme.textGhost.opacity(0.22))
-                    Capsule()
-                        .fill(tint)
-                        .frame(width: max((value ?? 0) > 0 ? 3 : 0, proxy.size.width * (value ?? 0) / 100))
-                }
-            }
-            .frame(height: 4)
+        HStack(spacing: 3) {
+            Text(label)
+                .font(.system(size: 9, weight: .semibold))
+                .kerning(0.2)
+                .foregroundStyle(Theme.textTertiary)
+            Text(value.map(MachineStatsFormat.percent) ?? "—")
+                .font(.system(size: 10.5).monospacedDigit())
+                .foregroundStyle(value.map { $0 >= 75 ? levelColor($0) : Theme.textSecondary } ?? Theme.textGhost)
         }
-        .frame(maxWidth: .infinity)
         .animation(.easeOut(duration: 0.35), value: value ?? -1)
     }
 }
 
 /// Reports whether the hosting window is on screen, so the sampler stops while
 /// the window is minimized, hidden, or fully covered.
-private struct WindowVisibilityReader: NSViewRepresentable {
+struct WindowVisibilityReader: NSViewRepresentable {
     @Binding var isVisible: Bool
 
     func makeNSView(context: Context) -> VisibilityView {
@@ -182,6 +163,27 @@ struct MachineStatsPanel: View {
     private let instanceLimit = 8
 
     var body: some View {
+        // A ScrollView takes all the height it is offered; only scroll when
+        // the content doesn't fit, so a short panel keeps its own height.
+        ViewThatFits(in: .vertical) {
+            content
+            ScrollView { content }
+        }
+        .padding(5)
+        .frame(width: 340)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.hairline, lineWidth: 1))
+        .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
+        .task(id: agentPaneSignature) {
+            await stats.resolvePanes(
+                service: model.service(for: device),
+                deviceID: device.id,
+                paneIDs: agents.map(\.paneID)
+            )
+        }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             Rectangle().fill(Theme.hairline).frame(height: 1).padding(.vertical, 6)
@@ -198,18 +200,6 @@ struct MachineStatsPanel: View {
             } else {
                 placeholder
             }
-        }
-        .padding(5)
-        .frame(width: 340)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Theme.hairline, lineWidth: 1))
-        .shadow(color: .black.opacity(0.25), radius: 18, y: 8)
-        .task(id: agentPaneSignature) {
-            await stats.resolvePanes(
-                service: model.service(for: device),
-                deviceID: device.id,
-                paneIDs: agents.map(\.paneID)
-            )
         }
     }
 
@@ -297,6 +287,24 @@ struct MachineStatsPanel: View {
                 value: String(localized: "\(MachineStatsFormat.bytes(snapshot.memUsedBytes)) of \(MachineStatsFormat.bytes(snapshot.memTotalBytes))"),
                 percent: snapshot.memFraction * 100
             )
+            if let used = snapshot.agentsMemBytes, let limit = snapshot.agentsMemLimitBytes,
+               let fraction = snapshot.agentsMemFraction {
+                ResourceBar(
+                    title: String(localized: "Agents"),
+                    value: String(localized: "\(MachineStatsFormat.bytes(used)) of \(MachineStatsFormat.bytes(limit))"),
+                    percent: fraction * 100
+                )
+            }
+            if let capacity = snapshot.capacity, capacity.level != .ok {
+                Label(
+                    HostCapacityFormat.reasons(capacity),
+                    systemImage: capacity.level == .critical ? "exclamationmark.octagon.fill" : "exclamationmark.triangle"
+                )
+                .font(.system(size: 11))
+                .foregroundStyle(capacity.level == .critical ? Theme.danger : Theme.warning)
+                .help(HostCapacityFormat.levelHelp(capacity.level))
+                .accessibilityIdentifier("machineStats.capacity")
+            }
             if snapshot.swapTotalBytes > 0, snapshot.swapUsedBytes > 0 {
                 ResourceBar(
                     title: String(localized: "Swap"),

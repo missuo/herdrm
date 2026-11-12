@@ -314,6 +314,26 @@ final class GrazrAccountsTests: XCTestCase {
     #if os(macOS)
     /// The reader script itself, against grazr's real file layout in a
     /// throwaway home: what it reports, and that nothing else leaves.
+    /// Names that need quoting come back whole: `list_in_rotation` writes
+    /// `ACCOUNTS="work \"my work\""`, and the reader splits it the way grazr does.
+    func testTheReaderKeepsAQuotedNameInACCOUNTSWhole() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grazr-reader-quoted-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let config = home.appendingPathComponent(".config/herdr/plugins/config/wazum.grazr")
+        try FileManager.default.createDirectory(at: config, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: home.appendingPathComponent(".local/state/herdr/plugins/wazum.grazr/accounts"),
+            withIntermediateDirectories: true)
+        try #"ACCOUNTS="work \"my work\" spare"  # rotation order"#
+            .write(to: config.appendingPathComponent("config.env"), atomically: true, encoding: .utf8)
+
+        let environment = "HOME='\(home.path)' XDG_STATE_HOME= XDG_CONFIG_HOME= CLAUDE_CONFIG_DIR= "
+        let output = try await DeviceFileService(device: .local).run(environment + Grazr.readerCommand)
+        let report = try JSONDecoder().decode(GrazrReport.self, from: output)
+        XCTAssertEqual(report.order, ["work", "my work", "spare"])
+    }
+
     func testTheReaderReportsGrazrsFilesAndNothingSecret() async throws {
         let home = FileManager.default.temporaryDirectory
             .appendingPathComponent("grazr-reader-\(UUID().uuidString)")
@@ -500,7 +520,7 @@ final class GrazrAccountsTests: XCTestCase {
 
         // Re-authenticating: grazr's enrol, pre-answered with "l" and the
         // account's name, and refused when the browser signed in elsewhere.
-        _ = try await DeviceFileService(device: .local).run(environment + Grazr.installReauthCommand)
+        _ = try await DeviceFileService(device: .local).run(environment + Grazr.installEnrolCommand)
         func reauthenticating(signedInAs login: String) async throws -> String {
             let output = try await DeviceFileService(device: .local).run(
                 environment + "export LOGIN=\(login) PATH=\"$HOME/.local/bin:$PATH\"; "
@@ -515,6 +535,118 @@ final class GrazrAccountsTests: XCTestCase {
         let elsewhere = try await reauthenticating(signedInAs: "uuid-work")
         XCTAssertTrue(elsewhere.contains("That login is uuid-work@x, not home's@x, so nothing changed"), elsewhere)
         XCTAssertFalse(elsewhere.contains("Enrolled"), elsewhere)
+    }
+
+    /// Adding an account from the sheet: grazr's enrol pre-answered, "s" for
+    /// the login Claude is on (headless), "l" for a fresh sign-in (in a
+    /// terminal), and the name listed in ACCOUNTS so grazr rotates to it.
+    func testAddingAnAccountRunsGrazrsEnrolAndListsItInACCOUNTS() async throws {
+        let home = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grazr-add-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: home) }
+        let root = home.appendingPathComponent("plugins/wazum.grazr")
+        let bin = home.appendingPathComponent(".local/bin")
+        let configDir = home.appendingPathComponent(".config/herdr/plugins/config/wazum.grazr")
+        let configPath = configDir.appendingPathComponent("config.env")
+        for directory in [root, bin, configDir] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        func write(_ text: String, to url: URL) throws {
+            try text.write(to: url, atomically: true, encoding: .utf8)
+        }
+        try write("""
+        #!/bin/sh
+        printf '{"result":{"plugins":[{"plugin_id":"wazum.grazr","plugin_root":"%s"}]}}' '\(root.path)'
+        """, to: bin.appendingPathComponent("herdr"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: bin.appendingPathComponent("herdr").path)
+        try write("", to: root.appendingPathComponent("accounts.py"))
+        try write("", to: root.appendingPathComponent("core.py"))
+        try write("""
+        import json, os
+        def _config_path():
+            return os.path.join(os.environ["HERDR_PLUGIN_CONFIG_DIR"], "config.env")
+        def read_key():
+            return "q"
+        def _enrol_from(runtime, source):
+            name = input("account name: ")
+            if name == "taken":
+                print("Could not enrol: The name 'taken' is already used by another account")
+                return 1
+            print("Enrolled %s from %s" % (name, "the live login" if source is None else os.path.basename(source)))
+            return 0
+        def main(argv):
+            choice = read_key()
+            print("choice: " + choice)
+            if choice == "s":
+                return _enrol_from(None, None)
+            if choice == "l":
+                source = os.path.join(os.environ["HERDR_PLUGIN_STATE_DIR"], "enrol-1")
+                os.makedirs(source, exist_ok=True)
+                with open(os.path.join(source, ".claude.json"), "w") as handle:
+                    json.dump({"oauthAccount": {"accountUuid": "uuid-new"}}, handle)
+                return _enrol_from(None, source)
+            return 0
+        """, to: root.appendingPathComponent("grazr.py"))
+        try write("ACCOUNTS=\"work\"  # the order\nSESSION_THRESHOLD=15\n", to: configPath)
+
+        let environment = "export HOME='\(home.path)' XDG_STATE_HOME= XDG_CONFIG_HOME=; "
+        func save(_ name: String, listed: Bool) async throws -> GrazrSwitchResult {
+            let output = try await DeviceFileService(device: .local)
+                .run(environment + Grazr.saveLoginCommand(name: name, listInRotation: listed))
+            return try JSONDecoder().decode(GrazrSwitchResult.self, from: output)
+        }
+        func config() throws -> String { try String(contentsOf: configPath, encoding: .utf8) }
+
+        // The login Claude is on, saved under a name and listed, with the
+        // rest of config.env left as it was.
+        let saved = try await save("my work", listed: true)
+        XCTAssertEqual(saved, GrazrSwitchResult(
+            ok: true,
+            output: "choice: s\naccount name: my work\nEnrolled my work from the live login\nListed in ACCOUNTS: work, my work\n"
+        ))
+        XCTAssertEqual(try config(), "ACCOUNTS=\"work \\\"my work\\\"\"  # the order\nSESSION_THRESHOLD=15\n")
+
+        // grazr's refusal is the summary, and nothing is listed.
+        let refused = try await save("taken", listed: true)
+        XCTAssertFalse(refused.ok)
+        XCTAssertEqual(refused.summary, "Could not enrol: The name 'taken' is already used by another account")
+        XCTAssertEqual(try config(), "ACCOUNTS=\"work \\\"my work\\\"\"  # the order\nSESSION_THRESHOLD=15\n")
+
+        // Enrolled without listing, then listed; a quote in the name survives
+        // the double quoting grazr's parser needs.
+        let unlisted = try await save("home's@x", listed: false)
+        XCTAssertEqual(unlisted.summary, "Enrolled home's@x from the live login")
+        XCTAssertEqual(try config(), "ACCOUNTS=\"work \\\"my work\\\"\"  # the order\nSESSION_THRESHOLD=15\n")
+        let listed = try await save("home's@x", listed: true)
+        XCTAssertEqual(listed.summary, "Listed in ACCOUNTS: work, my work, home's@x")
+        let again = try await save("work", listed: true)
+        XCTAssertEqual(again.summary, "work is already in ACCOUNTS")
+        let parsed = try await DeviceFileService(device: .local).run(
+            environment + "python3 -c 'import shlex, sys; line = open(sys.argv[1]).readline(); "
+                + "print(shlex.split(shlex.split(line, comments=True)[0].partition(\"=\")[2]))' \(HerdrService.shellQuoted(configPath.path))"
+        )
+        XCTAssertEqual(String(decoding: parsed, as: UTF8.self), "['work', 'my work', \"home's@x\"]\n")
+
+        // No config.env yet: one is written with just the list.
+        try FileManager.default.removeItem(at: configPath)
+        _ = try await save("solo", listed: true)
+        XCTAssertEqual(try config(), "ACCOUNTS=\"solo\"\n")
+
+        // A fresh sign-in runs in a terminal: "l", the name, then listed.
+        // Re-authenticating an account runs the same script without listing.
+        _ = try await DeviceFileService(device: .local).run(environment + Grazr.installEnrolCommand)
+        func terminal(_ invocation: String) async throws -> String {
+            let output = try await DeviceFileService(device: .local).run(
+                environment + "export PATH=\"$HOME/.local/bin:$PATH\"; (\(invocation)) </dev/null; true"
+            )
+            return String(decoding: output, as: UTF8.self)
+        }
+        let signedIn = try await terminal(Grazr.enrolInvocation(name: "spare", listInRotation: true))
+        XCTAssertTrue(signedIn.contains("choice: l\naccount name: spare\nEnrolled spare from enrol-1\nListed in ACCOUNTS: solo, spare\n"), signedIn)
+        let renewed = try await terminal(Grazr.reauthInvocation(accountID: "uuid-new", name: "spare"))
+        XCTAssertTrue(renewed.contains("Enrolled spare from enrol-1\n"), renewed)
+        XCTAssertFalse(renewed.contains("Listed"), renewed)
+        XCTAssertEqual(try config(), "ACCOUNTS=\"solo spare\"\n")
     }
 
     /// Pins and token expiry come through; the token itself, kept beside the

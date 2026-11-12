@@ -73,6 +73,46 @@ final class ClaudeHistoryProviderTests: XCTestCase {
         XCTAssertEqual(page.availability, "source_missing")
     }
 
+    /// An alias, wrapper or account switcher sets `CLAUDE_CONFIG_DIR` on the `claude`
+    /// process alone, so HerdrM's own environment never has it.
+    func testFindsTheTranscriptInAConfigDirectorySetOnlyOnTheAgentProcess() async throws {
+        try prompt("u1", parent: nil, "first").write(to: transcript, atomically: true, encoding: .utf8)
+        unsetenv("CLAUDE_CONFIG_DIR")
+        // macOS hides the environment of its own binaries from `ps`, so the stand-in
+        // agent is a re-signed copy of sleep, the way `claude` is a third-party binary.
+        let sleep = configDirectory.appendingPathComponent("agent")
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/sleep"), to: sleep)
+        let sign = try Process.run(URL(fileURLWithPath: "/usr/bin/codesign"), arguments: ["-s", "-", "-f", sleep.path])
+        sign.waitUntilExit()
+        let agent = Process()
+        agent.executableURL = sleep
+        agent.arguments = ["30"]
+        agent.environment = ["CLAUDE_CONFIG_DIR": configDirectory.path]
+        try agent.run()
+        defer { agent.terminate() }
+
+        let store = ClaudeTranscriptStore()
+        let page = try await provider(store: store).read(target: "w:p", expectedSessionID: sessionID, window: .latest, limits: .init())
+        XCTAssertEqual(page.availability, "ready")
+        XCTAssertEqual(page.messages.map(\.id), ["u1"])
+        await store.stopAll()
+    }
+
+    /// sshd runs the command in the login shell; zsh aborts it on the first glob that
+    /// matches nothing, before the next directory is tried.
+    func testRemoteCommandRunsUnderShWhateverTheLoginShell() throws {
+        let home = configDirectory.appendingPathComponent("home")
+        try FileManager.default.createDirectory(at: home.appendingPathComponent(".claude/projects/-tmp-other"), withIntermediateDirectories: true)
+        let zsh = Process()
+        zsh.executableURL = URL(fileURLWithPath: "/bin/zsh")
+        zsh.arguments = ["-c", ClaudeTranscriptReader.remoteCommand(sessionID: sessionID)]
+        zsh.environment = ["HOME": home.path, "PATH": "/usr/bin:/bin"]
+        zsh.standardError = FileHandle.nullDevice
+        try zsh.run()
+        zsh.waitUntilExit()
+        XCTAssertEqual(zsh.terminationStatus, ClaudeTranscriptReader.missingStatus)
+    }
+
     func testUnsupportedDevicesAndSessionIDsNeverStartAReader() async throws {
         let store = ClaudeTranscriptStore()
         let tailcat = Device(name: "tc", kind: .tailcat)
