@@ -10,16 +10,12 @@ the Sparkle update description — a release without a section here fails CI.
 ### Added
 
 - **Worktrees grouped under their repository.** When herdr opens a git worktree as its own space, the Spaces list shows it indented under the repository's main checkout, with a branch icon, as herdr's sidebar does. Dragging the main checkout moves its worktrees with it, and a space dropped on a group lands before or after the whole group. Spaces that aren't herdr worktrees keep their order. ([#74](https://github.com/missuo/herdrm/issues/74))
+- **herdr's own status symbols.** Settings → Appearance → *Use herdr status symbols* marks agents the way herdr's sidebar does: × needs input, ◐ working, ✓ done and not yet read, ○ idle, · unknown. Off by default, which keeps the spinner and unread dot. ([#77](https://github.com/missuo/herdrm/issues/77))
+- **Claude accounts in sync across devices.** For grazr users with the same Claude accounts on several hosts: the Claude Accounts window has *Keep accounts in sync across devices* (off by default). It keeps every device that runs grazr on one account order and one active account. The device that changed last wins, on this Mac's clock, so a host whose clock runs fast or slow doesn't win by mistake. A rotation or swap on one host reaches the others within a minute. A host that can't follow says why: the account is blocked there, not enrolled, pinned to an agent, or out of headroom there. HerdrM doesn't switch a host to an account it would only rotate away from, and pins are left alone. Names in a host's ACCOUNTS that the sync can't match are kept. Each device has its own switch, and the first push waits for a preview and Apply. ([#155](https://github.com/missuo/herdrm/pull/155), thanks @senadaruc!)
 
 ### Fixed
 
 - **No more Keychain prompts for "dev.bybee.herdrm.relay".** Herdrm's Keychain items still carried the old bundle ID in their names. On first launch, Herdrm moves the relay keys, SSH passwords and tailcat credentials to `sb.moe.herdrm.*` and deletes the old items. macOS may ask once for the login keychain password while they move: choose Always Allow. After that, nothing under the old name is read again.
-
-### Added
-
-- **herdr's own status symbols.** Settings → Appearance → *Use herdr status symbols* marks agents the way herdr's sidebar does: × needs input, ◐ working, ✓ done and not yet read, ○ idle, · unknown. Off by default, which keeps the spinner and unread dot. ([#77](https://github.com/missuo/herdrm/issues/77))
-
-- **Claude accounts in sync across devices.** For grazr users with the same Claude accounts on several hosts: the Claude Accounts window has *Keep accounts in sync across devices* (off by default). It keeps every device that runs grazr on one account order and one active account. The device that changed last wins, on this Mac's clock, so a host whose clock runs fast or slow doesn't win by mistake. A rotation or swap on one host reaches the others within a minute. A host that can't follow says why: the account is blocked there, not enrolled, pinned to an agent, or out of headroom there. HerdrM doesn't switch a host to an account it would only rotate away from, and pins are left alone. Names in a host's ACCOUNTS that the sync can't match are kept. Each device has its own switch, and the first push waits for a preview and Apply. ([#155](https://github.com/missuo/herdrm/pull/155), thanks @senadaruc!)
 
 ## [0.7.2] - 2026-11-09
 
