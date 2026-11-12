@@ -62,7 +62,8 @@ enum AccessibilityProbe {
             role: attribute(element, kAXRoleAttribute) as? String ?? "",
             name: name,
             identifier: attribute(element, kAXIdentifierAttribute) as? String,
-            value: attribute(element, kAXValueAttribute) as? String,
+            value: (attribute(element, kAXValueAttribute) as? String)
+                ?? (attribute(element, kAXValueAttribute) as? NSNumber).map(\.stringValue),
             isEnabled: attribute(element, kAXEnabledAttribute) as? Bool,
             isSelected: attribute(element, kAXSelectedAttribute) as? Bool,
             frame: frame(of: element),
