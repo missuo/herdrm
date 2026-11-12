@@ -10066,6 +10066,38 @@
           }
         }
       }
+    },
+    "Use herdr status symbols": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Use herdr status symbols"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "使用 herdr 状态符号"
+          }
+        }
+      }
+    },
+    "Mark agents the way herdr's sidebar does: × needs input, ◐ working, ✓ done and not yet read, ○ idle, · unknown.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Mark agents the way herdr's sidebar does: × needs input, ◐ working, ✓ done and not yet read, ○ idle, · unknown."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "按 herdr 侧边栏的方式标记 Agent：× 需要输入，◐ 运行中，✓ 已完成未查看，○ 空闲，· 未知。"
+          }
+        }
+      }
     }
   },
   "version": "1.0"

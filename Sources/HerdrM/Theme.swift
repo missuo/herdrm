@@ -74,11 +74,40 @@ enum Theme {
 
 /// Codex-style conversation marks: spinner while running, a filled unread
 /// dot after a finish you have not opened, nothing once you have looked.
+/// With Settings › Appearance › *herdr status symbols* on, herdr's own
+/// symbols instead (× ◐ ✓ ○ ·), as its sidebar draws them.
 struct AgentStatusGlyph: View {
     let status: AgentStatus
     var unreadDone: Bool = false
+    @AppStorage(SidebarDefaults.statusSymbolsKey) private var symbols = false
+
+    /// herdr's symbol for a status, as `status_icon` picks it in its
+    /// "distinct symbols" style. A finish counts as done until it is read,
+    /// the way herdr keeps done until you view the pane; then it is idle.
+    static func herdrSymbol(_ status: AgentStatus, unreadDone: Bool) -> (symbol: String, color: Color) {
+        switch status {
+        case .blocked: return ("×", Theme.warning)
+        case .working: return ("◐", Theme.working)
+        case .done, .idle, .unknown:
+            if unreadDone { return ("✓", Theme.success) }
+            return status == .unknown ? ("·", Theme.textGhost) : ("○", Theme.textTertiary)
+        }
+    }
 
     var body: some View {
+        if symbols {
+            let mark = Self.herdrSymbol(status, unreadDone: unreadDone)
+            Text(verbatim: mark.symbol)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(mark.color)
+                .frame(width: 12, height: 12)
+                .accessibilityHidden(true)
+        } else {
+            codexMark
+        }
+    }
+
+    @ViewBuilder private var codexMark: some View {
         switch status {
         case .working:
             SpinnerView(color: Theme.working)
