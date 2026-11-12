@@ -7,7 +7,11 @@ import Security
 public struct RelayKeychain: Sendable {
     public let service: String
 
-    public init(service: String = "dev.bybee.herdrm.relay") {
+    /// The Mac's relay secrets. Named after the old bundle id until 0.7.3;
+    /// `KeychainServiceMigration` moves them.
+    public static let defaultService = "sb.moe.herdrm.relay"
+
+    public init(service: String = RelayKeychain.defaultService) {
         self.service = service
     }
 

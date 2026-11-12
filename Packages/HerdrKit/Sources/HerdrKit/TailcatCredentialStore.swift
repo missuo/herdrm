@@ -5,7 +5,7 @@ import Security
 /// a bearer credential — anyone holding it can drive the exposed herdr — so
 /// it never touches devices.json; only the Keychain holds it.
 public enum TailcatCredentialStore {
-    static let service = "dev.bybee.herdrm.tailcat-token"
+    static let service = "sb.moe.herdrm.tailcat-token"
 
     public static func token(for deviceID: UUID) throws -> String? {
         var query = baseQuery(deviceID: deviceID)

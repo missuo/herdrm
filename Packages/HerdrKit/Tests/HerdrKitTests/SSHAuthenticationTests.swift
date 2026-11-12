@@ -56,7 +56,7 @@ final class SSHAuthenticationTests: XCTestCase {
         let deviceID = UUID()
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "dev.bybee.herdrm.ssh-password",
+            kSecAttrService as String: SSHCredentialStore.passwordService,
             kSecAttrAccount as String: deviceID.uuidString,
         ]
         defer {

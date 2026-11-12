@@ -7,6 +7,10 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Fixed
+
+- **No more Keychain prompts for "dev.bybee.herdrm.relay".** Herdrm's Keychain items still carried the old bundle ID in their names. On first launch, Herdrm moves the relay keys, SSH passwords and tailcat credentials to `sb.moe.herdrm.*` and deletes the old items. macOS may ask once for the login keychain password while they move: choose Always Allow. After that, nothing under the old name is read again.
+
 ### Added
 
 - **herdr's own status symbols.** Settings → Appearance → *Use herdr status symbols* marks agents the way herdr's sidebar does: × needs input, ◐ working, ✓ done and not yet read, ○ idle, · unknown. Off by default, which keeps the spinner and unread dot. ([#77](https://github.com/missuo/herdrm/issues/77))
