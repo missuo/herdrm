@@ -7,6 +7,10 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+### Added
+
+- **Worktrees grouped under their repository.** When herdr opens a git worktree as its own space, the Spaces list shows it indented under the repository's main checkout, with a branch icon, as herdr's sidebar does. Dragging the main checkout moves its worktrees with it, and a space dropped on a group lands before or after the whole group. Spaces that aren't herdr worktrees keep their order. ([#74](https://github.com/missuo/herdrm/issues/74))
+
 ### Fixed
 
 - **No more Keychain prompts for "dev.bybee.herdrm.relay".** Herdrm's Keychain items still carried the old bundle ID in their names. On first launch, Herdrm moves the relay keys, SSH passwords and tailcat credentials to `sb.moe.herdrm.*` and deletes the old items. macOS may ask once for the login keychain password while they move: choose Always Allow. After that, nothing under the old name is read again.

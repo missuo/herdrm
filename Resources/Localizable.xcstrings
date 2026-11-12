@@ -10066,6 +10066,22 @@
           }
         }
       }
+    },
+    "worktree of %@": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "worktree of %@"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "%@ 的 worktree"
+          }
+        }
+      }
     }
   },
   "version": "1.0"
