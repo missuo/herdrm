@@ -656,14 +656,21 @@ final class AppModel: ObservableObject {
     struct SpaceEntry: Identifiable {
         let device: Device
         let workspace: WorkspaceInfo
+        /// A linked git worktree listed under its repository's main checkout.
+        var indented = false
 
         var id: String { "\(device.id.uuidString)-\(workspace.workspaceID)" }
         var ref: SpaceRef { SpaceRef(deviceID: device.id, workspaceID: workspace.workspaceID) }
     }
 
+    /// Each device's spaces in sidebar order: herdr's, with a repository's
+    /// worktrees under its main checkout the way herdr's sidebar groups them.
     var visibleSpaces: [SpaceEntry] {
         devicesInScope.flatMap { device in
-            session(device.id).workspaces.map { SpaceEntry(device: device, workspace: $0) }
+            let workspaces = session(device.id).workspaces
+            return WorktreeGroups.entries(workspaces).map {
+                SpaceEntry(device: device, workspace: workspaces[$0.index], indented: $0.indented)
+            }
         }
     }
 
@@ -3065,12 +3072,12 @@ final class AppModel: ObservableObject {
     /// Cross-device drops are ignored; herdr remains the source of truth after refresh.
     func moveSpace(_ source: SpaceEntry, onto target: SpaceEntry, placeAfter: Bool) {
         guard source.device.id == target.device.id else { return }
-        let orderedIDs = session(source.device.id).workspaces.map(\.workspaceID)
-        guard let plan = WorkspaceReorder.plan(
+        // A main checkout brings its worktrees; a drop never splits a group.
+        guard let plan = WorktreeGroups.plan(
             moving: source.workspace.workspaceID,
             onto: target.workspace.workspaceID,
             placeAfter: placeAfter,
-            orderedIDs: orderedIDs
+            workspaces: session(source.device.id).workspaces
         ) else { return }
 
         if let current = sessions[source.device.id]?.workspaces {

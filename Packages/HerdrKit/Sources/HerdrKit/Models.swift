@@ -189,6 +189,9 @@ public struct WorkspaceInfo: Codable, Sendable, Identifiable, Equatable {
     public let tabCount: Int?
     public let activeTabID: String?
     public let agentStatusRaw: String?
+    /// Set when herdr opened the workspace for a git checkout it tracks: the
+    /// repository's main checkout, or a linked worktree of it.
+    public var worktree: WorkspaceWorktree? = nil
 
     public var id: String { workspaceID }
     public var status: AgentStatus { AgentStatus(wire: agentStatusRaw) }
@@ -202,6 +205,34 @@ public struct WorkspaceInfo: Codable, Sendable, Identifiable, Equatable {
         case tabCount = "tab_count"
         case activeTabID = "active_tab_id"
         case agentStatusRaw = "agent_status"
+        case worktree
+    }
+}
+
+/// herdr's `WorkspaceWorktreeInfo`: which repository a workspace's checkout
+/// belongs to, and whether it is a linked worktree or the main checkout.
+public struct WorkspaceWorktree: Codable, Sendable, Equatable {
+    /// Shared by every checkout of one repository.
+    public let repoKey: String
+    public let repoName: String
+    public let repoRoot: String
+    public let checkoutPath: String
+    public let isLinkedWorktree: Bool
+
+    public init(repoKey: String, repoName: String, repoRoot: String, checkoutPath: String, isLinkedWorktree: Bool) {
+        self.repoKey = repoKey
+        self.repoName = repoName
+        self.repoRoot = repoRoot
+        self.checkoutPath = checkoutPath
+        self.isLinkedWorktree = isLinkedWorktree
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case repoKey = "repo_key"
+        case repoName = "repo_name"
+        case repoRoot = "repo_root"
+        case checkoutPath = "checkout_path"
+        case isLinkedWorktree = "is_linked_worktree"
     }
 }
 
