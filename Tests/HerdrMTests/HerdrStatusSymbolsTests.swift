@@ -57,7 +57,7 @@ final class HerdrStatusSymbolsTests: XCTestCase {
     /// The sidebar with the option on, each status once (fake Agents 1–5).
     func testSidebarShowsHerdrSymbolsDemo() throws {
         UserDefaults.standard.set(true, forKey: SidebarDefaults.statusSymbolsKey)
-        let sidebar = try SidebarHarness(spaces: 1, agents: 5, pinnedHeaders: false, height: 420)
+        let sidebar = try SidebarHarness(spaces: 1, agents: 5, pinnedHeaders: false, height: 900)
         let model = sidebar.model
         let deviceID = try XCTUnwrap(model.visibleAgents.first).device.id
         var agents = try XCTUnwrap(model.sessions[deviceID]?.agents)
