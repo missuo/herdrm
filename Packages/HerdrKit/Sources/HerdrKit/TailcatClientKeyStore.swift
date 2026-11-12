@@ -12,7 +12,7 @@ import Security
 /// the embedded Go runtime generates, decodes, and derives the public key, so
 /// the format always matches what `tailcat genkey --client` produces.
 public enum TailcatClientKeyStore {
-    static let service = "dev.bybee.herdrm.tailcat-client-key"
+    static let service = "sb.moe.herdrm.tailcat-client-key"
     static let account = "client-key"
 
     /// The client key, generated and saved on first use. A stored key is

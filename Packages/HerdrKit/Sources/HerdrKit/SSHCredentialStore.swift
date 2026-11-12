@@ -7,8 +7,8 @@ public enum SSHCredentialStore {
     public static let authorizationIDEnvironmentKey = "HERDRM_SSH_AUTHORIZATION_ID"
     public static let persistenceDescription = "Saved in your macOS login Keychain"
 
-    private static let passwordService = "dev.bybee.herdrm.ssh-password"
-    private static let authorizationService = "dev.bybee.herdrm.ssh-authorization"
+    static let passwordService = "sb.moe.herdrm.ssh-password"
+    static let authorizationService = "sb.moe.herdrm.ssh-authorization"
 
     public static func password(for deviceID: UUID) throws -> String? {
         if let password = try keychainPassword(for: deviceID) { return password }
