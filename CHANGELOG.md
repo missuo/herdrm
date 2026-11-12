@@ -7,6 +7,8 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-11-12
+
 ### Added
 
 - **Worktrees grouped under their repository.** When herdr opens a git worktree as its own space, the Spaces list shows it indented under the repository's main checkout, with a branch icon, as herdr's sidebar does. Dragging the main checkout moves its worktrees with it, and a space dropped on a group lands before or after the whole group. Spaces that aren't herdr worktrees keep their order. ([#74](https://github.com/missuo/herdrm/issues/74))
