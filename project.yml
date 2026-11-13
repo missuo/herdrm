@@ -46,6 +46,10 @@ targets:
         product: HerdrTailcat
       - package: GhosttyTerminal
         product: GhosttyTerminal
+      # Same pinned package: the iTerm2-Color-Schemes theme catalog (MIT),
+      # compiled-in Swift data, no extra download.
+      - package: GhosttyTerminal
+        product: GhosttyTheme
       - package: Sparkle
       - package: StickySectionHeaders
     info:

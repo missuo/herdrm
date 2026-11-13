@@ -39,7 +39,14 @@ enum Theme {
     static let itemWash = dynamic(hex(0x141414, alpha: 0.06), hex(0xF0F0F0, alpha: 0.06))
     static let itemWashSelected = dynamic(hex(0x141414, alpha: 0.07), hex(0xF0F0F0, alpha: 0.07))
     static let contentBackground = dynamic(hex(0xF6F6F6), hex(0x181818))
-    static let terminalBackground = dynamic(hex(0xFFFFFF), hex(0x101012))
+    /// The terminal's own background, so padding and overlays around it match:
+    /// the selected theme's (issue #77), or HerdrM's light/dark default.
+    static var terminalBackground: Color {
+        TerminalThemeLibrary.selected.map { Color(nsColor: $0.backgroundColor) } ?? defaultTerminalBackground
+    }
+    /// HerdrM's own terminal palette background and text (TerminalDefaults' hexes).
+    static let defaultTerminalBackground = dynamic(hex(0xFFFFFF), hex(0x101012))
+    static let defaultTerminalForeground = dynamic(hex(0x3A3A3A), hex(0xD6D6D6))
     static let historyPreviewBackground = dynamic(hex(0xE9E9E9), hex(0x2A2A2A))
     static let statusBarBackground = dynamic(hex(0xF1F1F2), hex(0x141416))
     static let sidebarBorder = dynamic(hex(0xD9D9D9), hex(0x292929))

@@ -230,6 +230,8 @@ Early-stage software, PRs genuinely welcome — small and single-purpose lands f
 - [waku](https://github.com/egoist/waku) — sidebar design reference.
 - [libghostty-spm](https://github.com/Lakr233/libghostty-spm) — the Ghostty terminal engine
   (Metal), by [@Lakr233](https://github.com/Lakr233).
+- [iTerm2-Color-Schemes](https://github.com/mbadolato/iTerm2-Color-Schemes) — the built-in
+  terminal themes, through libghostty-spm's theme catalog.
 - [Sparkle](https://sparkle-project.org) — auto-updates.
 - [Lobe Icons](https://github.com/lobehub/lobe-icons) / [Simple Icons](https://simpleicons.org) — brand icons.
 
