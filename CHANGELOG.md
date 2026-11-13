@@ -7,6 +7,8 @@ the Sparkle update description — a release without a section here fails CI.
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-11-13
+
 ### Added
 
 - **Terminal themes.** Settings → Terminal → *Theme* picks from 485 built-in themes (iTerm2-Color-Schemes), any theme in `~/.config/ghostty/themes`, or a Ghostty theme file you import. The terminal previews a theme as soon as you pick it, and the area around the terminal takes the theme's background. *HerdrM Default* keeps the current palette, which follows light/dark mode. *Import from Ghostty…* now also brings over the `theme` from your Ghostty config. ([#77](https://github.com/missuo/herdrm/issues/77))
