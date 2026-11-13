@@ -1,5 +1,6 @@
 import AppKit
 import GhosttyTerminal
+import GhosttyTheme
 import HerdrKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -165,8 +166,16 @@ enum GhosttyRuntime {
 
     static let controller = TerminalController(
         configSource: .none,
-        theme: makeTheme()
+        theme: defaultTheme
     )
+
+    private static let defaultTheme = makeTheme()
+
+    /// Installs the selected theme (issue #77), or HerdrM's light/dark palette
+    /// for nil. Runs from every view update; the controller dedupes.
+    static func applyTheme(_ theme: GhosttyThemeDefinition?) {
+        controller.setTheme(theme?.toTerminalTheme() ?? defaultTheme)
+    }
 
     /// Font settings are hot-applied; surfaces pick the change up without a
     /// rebuild, so this runs from every view update — the controller dedupes.
@@ -490,8 +499,13 @@ final class LineBreakTerminalView: AppTerminalView {
     /// When false, mouse button events always stay local even if the TUI
     /// requested mouse reporting (Shift bypasses it either way).
     var mouseReportingEnabled = true
+    /// Whether the terminal's background is dark (drives the light ANSI adapter).
     var appliedDarkAppearance: Bool? {
         didSet { if appliedDarkAppearance != oldValue { placeThumbnailOverlays() } }
+    }
+    /// The terminal's background as `#RRGGBB`: the theme's or HerdrM's default.
+    var appliedBackgroundHex: String? {
+        didSet { if appliedBackgroundHex != oldValue { placeThumbnailOverlays() } }
     }
     /// The live surface, captured by the coordinator's lifecycle delegate —
     /// `AppTerminalView.surface` is internal, so selection queries come in here.
@@ -1494,9 +1508,9 @@ final class LineBreakTerminalView: AppTerminalView {
 
     /// The pane's own background, so the overlay covers the mosaic completely.
     private var thumbnailBackground: NSColor {
-        Self.color(hex: appliedDarkAppearance == true
+        Self.color(hex: appliedBackgroundHex ?? (appliedDarkAppearance == true
             ? TerminalDefaults.darkBackgroundHex
-            : TerminalDefaults.lightBackgroundHex)
+            : TerminalDefaults.lightBackgroundHex))
     }
 
     /// "#RRGGBB" to an sRGB colour.
@@ -2319,6 +2333,7 @@ struct AttachTerminalView: NSViewRepresentable {
     /// Copies a local selection to the clipboard on mouse release.
     var copyOnSelect: Bool = true
     var optionAsAlt: TerminalOptionAsAlt = .both
+    var themeID: String = TerminalThemeID.default
     /// False while kept alive behind another view: Ghostty then stops drawing
     /// frames for it (output is still parsed), so busy background agents do
     /// not cost full-window Metal renders.
@@ -2419,7 +2434,8 @@ struct AttachTerminalView: NSViewRepresentable {
             dark: dark,
             mouseReporting: mouseReporting,
             copyOnSelect: copyOnSelect,
-            optionAsAlt: optionAsAlt
+            optionAsAlt: optionAsAlt,
+            themeID: themeID
         )
     }
 
@@ -2487,8 +2503,11 @@ func applyTerminalAppearance(
     _ view: LineBreakTerminalView,
     fontName: String, fontSize: Double, thinStrokes: Bool,
     fontWeight: Double, lineSpacing: Double, dark: Bool, mouseReporting: Bool,
-    copyOnSelect: Bool, optionAsAlt: TerminalOptionAsAlt = .both
+    copyOnSelect: Bool, optionAsAlt: TerminalOptionAsAlt = .both,
+    themeID: String = TerminalThemeID.default
 ) {
+    let theme = TerminalThemeLibrary.definition(for: themeID)
+    GhosttyRuntime.applyTheme(theme)
     GhosttyRuntime.applyFontSettings(
         fontName: fontName,
         fontSize: fontSize,
@@ -2501,9 +2520,11 @@ func applyTerminalAppearance(
     view.mouseReportingEnabled = mouseReporting
     view.scrollRowHeight = CGFloat(fontSize * lineSpacing * 1.3)
     // Colors are theme-only; keep the rest above this early return.
-    guard view.appliedDarkAppearance != dark else { return }
-    view.appliedDarkAppearance = dark
-    view.processHost?.setLightColorsEnabled(!dark)
+    let (background, darkBackground) = TerminalThemeLibrary.effectiveBackground(theme: theme, dark: dark)
+    guard view.appliedDarkAppearance != darkBackground || view.appliedBackgroundHex != background else { return }
+    view.appliedBackgroundHex = background
+    view.appliedDarkAppearance = darkBackground
+    view.processHost?.setLightColorsEnabled(!darkBackground)
 }
 
 /// A kept-alive agent/terminal attach, registered by its `AttachedEntry.id`. Unlike a
@@ -2619,6 +2640,7 @@ struct ShellTerminalView: NSViewRepresentable {
     var mouseReporting: Bool = true
     var copyOnSelect: Bool = true
     var optionAsAlt: TerminalOptionAsAlt = .both
+    var themeID: String = TerminalThemeID.default
     /// See `AttachTerminalView.isVisible`.
     var isVisible: Bool = true
     var onAttachmentError: (String) -> Void = { _ in }
@@ -2660,7 +2682,8 @@ struct ShellTerminalView: NSViewRepresentable {
             dark: dark,
             mouseReporting: mouseReporting,
             copyOnSelect: copyOnSelect,
-            optionAsAlt: optionAsAlt
+            optionAsAlt: optionAsAlt,
+            themeID: themeID
         )
 
         let command = HerdrService(device: device, autoStartLocalServer: false)
@@ -2699,7 +2722,8 @@ struct ShellTerminalView: NSViewRepresentable {
             dark: dark,
             mouseReporting: mouseReporting,
             copyOnSelect: copyOnSelect,
-            optionAsAlt: optionAsAlt
+            optionAsAlt: optionAsAlt,
+            themeID: themeID
         )
     }
 

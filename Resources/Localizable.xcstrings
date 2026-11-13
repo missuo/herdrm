@@ -2353,6 +2353,246 @@
         }
       }
     },
+    "The file couldn't be read as text.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "The file couldn't be read as text."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "无法以文本形式读取该文件。"
+          }
+        }
+      }
+    },
+    "This isn't a Ghostty theme file: it needs at least a background and a foreground color.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "This isn't a Ghostty theme file: it needs at least a background and a foreground color."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "这不是 Ghostty 主题文件：至少需要背景色和前景色。"
+          }
+        }
+      }
+    },
+    "HerdrM Default": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HerdrM Default"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "HerdrM 默认"
+          }
+        }
+      }
+    },
+    "Search themes": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Search themes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "搜索主题"
+          }
+        }
+      }
+    },
+    "Import…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Import…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "导入…"
+          }
+        }
+      }
+    },
+    "Add a Ghostty theme file, such as one from iterm2colorschemes.com or ~/.config/ghostty/themes.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Add a Ghostty theme file, such as one from iterm2colorschemes.com or ~/.config/ghostty/themes."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "添加 Ghostty 主题文件，例如来自 iterm2colorschemes.com 或 ~/.config/ghostty/themes 的文件。"
+          }
+        }
+      }
+    },
+    "Follows the app's light or dark appearance": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Follows the app's light or dark appearance"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "跟随应用的浅色或深色外观"
+          }
+        }
+      }
+    },
+    "Imported": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Imported"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "已导入"
+          }
+        }
+      }
+    },
+    "From ~/.config/ghostty/themes": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "From ~/.config/ghostty/themes"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "来自 ~/.config/ghostty/themes"
+          }
+        }
+      }
+    },
+    "Built-in": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Built-in"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "内置"
+          }
+        }
+      }
+    },
+    "Remove Theme": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Remove Theme"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "移除主题"
+          }
+        }
+      }
+    },
+    "Choose a Ghostty theme file": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose a Ghostty theme file"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择 Ghostty 主题文件"
+          }
+        }
+      }
+    },
+    "Choose…": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose…"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择…"
+          }
+        }
+      }
+    },
+    "Choose terminal theme": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Choose terminal theme"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "选择终端主题"
+          }
+        }
+      }
+    },
+    "Reads font-family, font-size and theme from ~/.config/ghostty/config. A one-time copy — Herdrm's settings stay in charge afterward.": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Reads font-family, font-size and theme from ~/.config/ghostty/config. A one-time copy — Herdrm's settings stay in charge afterward."
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "从 ~/.config/ghostty/config 读取 font-family、font-size 和 theme。只复制一次，之后以 Herdrm 自己的设置为准。"
+          }
+        }
+      }
+    },
     "Thin strokes": {
       "localizations": {
         "en": {
@@ -2465,18 +2705,18 @@
         }
       }
     },
-    "The terminal follows the app theme.": {
+    "The terminal's default theme follows the app theme. Pick another in Terminal settings.": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "The terminal follows the app theme."
+            "value": "The terminal's default theme follows the app theme. Pick another in Terminal settings."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "终端外观跟随应用主题。"
+            "value": "终端的默认主题跟随应用主题。可在“终端”设置中选择其他主题。"
           }
         }
       }

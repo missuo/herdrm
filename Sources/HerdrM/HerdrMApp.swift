@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import GhosttyTheme
 import HerdrKit
 import Sparkle
 import SwiftUI
@@ -552,15 +553,33 @@ struct TerminalSettingsView: View {
     @AppStorage("terminal.copyOnSelect") private var copyOnSelect = true
     @AppStorage(TerminalDefaults.optionAsAltKey) private var optionAsAlt = TerminalOptionAsAlt.both
     @AppStorage(TerminalDefaults.tabLayoutKey) private var tabLayout = true
+    @AppStorage(TerminalThemeID.defaultsKey) private var themeID = TerminalThemeID.default
 
     @State private var importMessage: String?
     @State private var importSucceeded = false
+    @State private var showingThemes = false
+
+    private var selectedTheme: GhosttyThemeDefinition? { TerminalThemeLibrary.definition(for: themeID) }
 
     private let families = TerminalDefaults.monospacedFamilies()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Form {
+                LabeledContent("Theme") {
+                    HStack(spacing: 8) {
+                        TerminalThemeSwatch(theme: selectedTheme)
+                        Text(verbatim: selectedTheme?.name ?? String(localized: "HerdrM Default"))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Button(String(localized: "Choose…")) { showingThemes = true }
+                            .accessibilityLabel(String(localized: "Choose terminal theme"))
+                    }
+                }
+                .sheet(isPresented: $showingThemes) {
+                    TerminalThemePickerSheet(selection: $themeID)
+                }
+
                 Picker("Font", selection: $fontName) {
                     Text("System Mono (SF Mono)").tag("")
                     Divider()
@@ -666,10 +685,11 @@ struct TerminalSettingsView: View {
                         mouseReporting = true
                         copyOnSelect = true
                         optionAsAlt = .both
+                        themeID = TerminalThemeID.default
                         importMessage = nil
                     }
                     Button("Import from Ghostty…") { importFromGhostty() }
-                        .help("Reads font-family and font-size from ~/.config/ghostty/config. A one-time copy — Herdrm's settings stay in charge afterward.")
+                        .help("Reads font-family, font-size and theme from ~/.config/ghostty/config. A one-time copy — Herdrm's settings stay in charge afterward.")
                 }
 
                 if let importMessage {
@@ -688,6 +708,7 @@ struct TerminalSettingsView: View {
                     .foregroundStyle(.secondary)
                 Text("❯ herdr agent attach w1:p1 — 中文 ABC 0123")
                     .font(Font(TerminalDefaults.font(name: fontName, size: fontSize, weight: fontWeight)))
+                    .foregroundStyle(selectedTheme.map { Color(nsColor: $0.foregroundColor) } ?? Theme.defaultTerminalForeground)
                     .lineLimit(1)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -731,12 +752,21 @@ struct TerminalSettingsView: View {
             fontSize = clamped
             applied.append(String(format: "size %.1f pt", clamped))
         }
+        let dark = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        if let name = config.themeName(dark: dark) {
+            if let id = TerminalThemeLibrary.id(forGhosttyThemeNamed: name) {
+                themeID = id
+                applied.append("theme \(name)")
+            } else {
+                skipped.append("theme “\(name)” wasn't found")
+            }
+        }
 
         if applied.isEmpty && skipped.isEmpty {
             importSucceeded = false
             importMessage = String(
                 localized: "ghostty.import.empty",
-                defaultValue: "Ghostty config has no font settings to import."
+                defaultValue: "Ghostty config has no font or theme settings to import."
             )
         } else if applied.isEmpty {
             importSucceeded = false
@@ -764,7 +794,7 @@ struct AppearanceSettingsView: View {
                 Text(String(localized: "theme.dark", defaultValue: "Dark")).tag("dark")
             }
             .pickerStyle(.segmented)
-            Text("The terminal follows the app theme.")
+            Text("The terminal's default theme follows the app theme. Pick another in Terminal settings.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

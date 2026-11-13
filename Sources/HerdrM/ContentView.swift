@@ -601,6 +601,7 @@ struct DetailView: View {
     @AppStorage("terminal.mouseReporting") private var terminalMouseReporting = true
     @AppStorage("terminal.copyOnSelect") private var terminalCopyOnSelect = true
     @AppStorage(TerminalDefaults.optionAsAltKey) private var terminalOptionAsAlt = TerminalOptionAsAlt.both
+    @AppStorage(TerminalThemeID.defaultsKey) private var terminalThemeID = TerminalThemeID.default
     @Environment(\.colorScheme) private var colorScheme
     /// Per-entry attach state, keyed by `AttachedEntry.id`. `endedAttach` holds the exit
     /// code of a dead attach (nil code = no status, e.g. killed by a signal); a present
@@ -633,6 +634,7 @@ struct DetailView: View {
                     mouseReporting: terminalMouseReporting,
                     copyOnSelect: terminalCopyOnSelect,
                     optionAsAlt: terminalOptionAsAlt,
+                    themeID: terminalThemeID,
                     isVisible: model.selectedShellID == session.id && !model.isDetailCovered,
                     onAttachmentError: { model.actionError = $0 },
                     onAttachmentUploadingChanged: { uploadingAttachment = $0 },
@@ -700,6 +702,7 @@ struct DetailView: View {
                     mouseReporting: terminalMouseReporting,
                     copyOnSelect: terminalCopyOnSelect,
                     optionAsAlt: terminalOptionAsAlt,
+                    themeID: terminalThemeID,
                     isVisible: model.selectedShellID == nil && !model.isDetailCovered,
                     onExit: { _ in model.shellSplitAxis = nil },
                     onViewReady: {
@@ -894,6 +897,7 @@ struct DetailView: View {
                 mouseReporting: terminalMouseReporting,
                 copyOnSelect: terminalCopyOnSelect,
                 optionAsAlt: terminalOptionAsAlt,
+                themeID: terminalThemeID,
                 // A selected shell or a covering detail mode hides the attach side.
                 isVisible: isVisible && model.selectedShellID == nil && !model.isDetailCovered,
                 historyService: model.service(for: session.device),
